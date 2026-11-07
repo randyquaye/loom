@@ -1,0 +1,892 @@
+/*
+ * Spacing grid (shared with home.css and settings.css):
+ * panel padding --s-4 (16), section gap --s-3 (12), control gap --s-2 (8),
+ * list rows calc(--s-3 / 2) (6) vertical.
+ */
+
+/* ---------- shared panel chrome ---------- */
+
+.panel-pill {
+  flex-shrink: 0;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface-1);
+  color: var(--text-muted);
+  font: var(--fs-xs) / 1.6 var(--font);
+}
+
+.panel-pill[data-tone='danger'] {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+.panel-pill[data-tone='warn'] {
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+  color: var(--warn);
+}
+
+.panel-empty {
+  padding: var(--s-3) var(--s-4);
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+
+/* ---------- file tree ---------- */
+
+.tree-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Short segmented chrome; scrolling content remains on the solid panel surface. */
+.explorer-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: var(--s-2) var(--s-4);
+}
+
+.explorer-refresh {
+  flex: none;
+}
+
+.tree-panel .explorer-tabs {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: var(--s-2);
+  margin: 0;
+  padding: var(--s-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface-1);
+  box-shadow: var(--edge-highlight);
+}
+
+.explorer-tabs > button {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  min-width: 0;
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-1);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  transition:
+    background var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease);
+}
+
+.explorer-tabs > button:hover {
+  background: var(--surface-1);
+  color: var(--text);
+}
+
+.explorer-tabs > button[aria-selected='true'] {
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: var(--shadow-1), var(--edge-highlight);
+}
+
+.explorer-count {
+  flex: none;
+  min-width: var(--s-4);
+  padding: 0 var(--s-1);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font: var(--fs-xs) / 1.5 var(--mono);
+  text-align: center;
+}
+
+.tree-panel .explorer-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--panel-solid);
+  animation: explorer-tab-in var(--dur-1) var(--ease);
+}
+
+.tree-panel .explorer-content[hidden] {
+  display: none;
+}
+
+@keyframes explorer-tab-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Scrolling content is opaque; glass stays on the panel chrome (heads, pane frame). */
+.tree-panel .tree {
+  padding: var(--s-2);
+  background: var(--panel-solid);
+}
+
+.tree-panel .tree-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: calc(var(--s-3) / 2) var(--s-2) calc(var(--s-3) / 2)
+    calc(var(--s-2) + var(--depth, 0) * var(--s-3));
+  font: var(--fs-sm) / 1.5 var(--mono);
+}
+
+.tree-panel .tree-on {
+  background: var(--accent-2-a18);
+  color: var(--text);
+  box-shadow: inset 2px 0 0 var(--accent-2);
+}
+
+.tree-caret {
+  display: inline-flex;
+  flex-shrink: 0;
+  justify-content: center;
+  width: var(--s-3);
+  color: var(--text-faint);
+  transition: transform var(--dur-1) var(--ease);
+}
+
+.tree-caret[data-open='true'] {
+  transform: rotate(90deg);
+}
+
+.tree-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tree-panel .tree-dir {
+  color: var(--text);
+}
+
+.tree-panel .tree-loading,
+.tree-panel .tree-subempty {
+  color: var(--text-faint);
+}
+
+.tree-panel .tree-loading:hover,
+.tree-panel .tree-subempty:hover {
+  background: none;
+  color: var(--text-faint);
+}
+
+.tree-panel .tree-load-error {
+  color: var(--danger);
+}
+
+.tree-spinner {
+  flex: none;
+  width: var(--s-3);
+  height: var(--s-3);
+  border: 1px solid var(--border-strong);
+  border-top-color: var(--text-faint);
+  border-radius: var(--r-pill);
+  animation: tree-spin calc(var(--dur-2) * 3) linear infinite;
+}
+
+@keyframes tree-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.change-chip {
+  flex: none;
+  min-width: calc(var(--s-4) + var(--s-2));
+  padding: 0 var(--s-1);
+  border-radius: var(--s-1);
+  background: var(--surface-1);
+  color: var(--warn);
+  font: var(--fs-xs) / 1.5 var(--mono);
+  text-align: center;
+}
+
+.change-chip[data-status='added'],
+.change-chip[data-status='untracked'] {
+  background: var(--ok-a08);
+  color: var(--ok);
+}
+
+.change-chip[data-status='deleted'] {
+  background: var(--danger-a08);
+  color: var(--danger);
+}
+
+.change-path {
+  flex: 1;
+  font-family: var(--mono);
+}
+
+/* Mouse clicks never paint focus chrome; keyboard focus stays visible inside
+ * the scroll viewport, including on an already selected row or tab. */
+.tree-panel button:focus {
+  outline: none;
+}
+
+body:not([data-modality='keyboard']) .tree-panel button:focus-visible {
+  box-shadow: none;
+}
+
+body[data-modality='keyboard'] .tree-panel button:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: -2px;
+}
+
+/* ---------- viewer (self-contained: mounts in either column) ---------- */
+
+.viewer-host {
+  flex: 1;
+  min-width: 0;
+  border-top: none;
+}
+
+.viewer-host .viewer-head {
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.viewer-host .viewer-body {
+  min-width: 0;
+  background: var(--panel-solid);
+}
+
+/* Prose reads at a measure; code and diff views keep the full pane width. */
+.md-view {
+  width: 100%;
+  max-width: 920px;
+  margin-inline: auto;
+}
+
+.viewer-host[data-mode='diff'] .viewer-body {
+  display: flex;
+  flex-direction: column;
+  container-type: inline-size;
+}
+
+/* One scroll owner, like chat output: no wrapping and no pane-width growth. */
+.diff-body {
+  flex: none;
+  width: max-content;
+  min-width: 100%;
+  padding: var(--s-2) 0;
+  font: var(--fs-sm) / 1.5 var(--mono);
+}
+
+.diff-row {
+  display: flex;
+  min-height: 1.5em;
+  padding-right: var(--s-4);
+  color: var(--text-muted);
+  white-space: pre;
+}
+
+.diff-gutter {
+  flex: none;
+  width: var(--s-6);
+  color: var(--text-faint);
+  text-align: center;
+  user-select: none;
+}
+
+/* Gutter slots stay laid out even before hover/focus. */
+.diff-comment-gutter {
+  display: inline-flex;
+  flex: none;
+  justify-content: center;
+  width: var(--s-6);
+}
+
+.diff-line-number {
+  flex: none;
+  width: calc(var(--s-6) + var(--s-4));
+  padding-right: var(--s-2);
+  color: var(--text-faint);
+  text-align: right;
+  user-select: none;
+}
+
+.diff-comment-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--s-5);
+  height: 1.5em;
+  padding: 0;
+  border-radius: var(--s-1);
+  color: var(--text-faint);
+  opacity: 0;
+  transition:
+    opacity var(--dur-1) var(--ease),
+    background var(--dur-1) var(--ease);
+}
+
+.diff-row:hover .diff-comment-add,
+.diff-comment-add[aria-expanded='true'],
+.diff-comment-add:focus-visible {
+  opacity: 1;
+}
+
+.diff-comment-add:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* Keep prose at the viewport width, even beside an unwrapped long diff line. */
+.diff-comment-row,
+.diff-comment-form {
+  position: sticky;
+  left: 0;
+  width: min(100cqw, calc(var(--s-6) * 24));
+  padding: var(--s-2) var(--s-4) var(--s-2) var(--s-6);
+  background: var(--panel-solid);
+  color: var(--text);
+  font: var(--fs-sm) / 1.5 var(--font);
+  white-space: normal;
+  animation: diff-comment-in var(--dur-2) var(--ease);
+}
+
+.diff-comment-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.diff-comment-glyph {
+  flex: none;
+  width: var(--s-4);
+  height: var(--s-4);
+  margin-top: var(--s-1);
+  color: var(--text-faint);
+}
+
+.diff-comment-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.diff-comment-body {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.diff-comment-time,
+.diff-comment-hint {
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+.diff-comment-remove {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--s-5);
+  height: var(--s-5);
+  padding: 0;
+  border-radius: var(--r-1);
+  color: var(--text-faint);
+  font-size: var(--fs-lg);
+}
+
+.diff-comment-remove:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.diff-comment-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.diff-comment-form textarea {
+  width: 100%;
+  min-height: calc(var(--s-6) * 2);
+  padding: var(--s-2);
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: var(--r-1);
+  background: var(--panel-solid);
+  color: var(--text);
+  font: inherit;
+}
+
+.diff-comment-form textarea::placeholder {
+  color: var(--text-faint);
+}
+
+.diff-comment-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.diff-comment-hint {
+  flex: 1;
+}
+
+.diff-body button:focus,
+.diff-body textarea:focus {
+  outline: none;
+}
+
+body:not([data-modality='keyboard']) .diff-body :focus-visible {
+  box-shadow: none;
+}
+
+body[data-modality='keyboard'] .diff-body :focus-visible {
+  outline: calc(var(--s-1) / 2) solid var(--accent-2);
+  outline-offset: calc(var(--s-1) / -2);
+  box-shadow: none;
+}
+
+@keyframes diff-comment-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--s-1));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.diff-text {
+  flex: none;
+}
+
+.diff-row[data-kind='header'],
+.diff-row[data-kind='note'] {
+  color: var(--text-faint);
+}
+
+.diff-row[data-kind='hunk'] {
+  background: var(--surface-1);
+  color: var(--text-faint);
+}
+
+.diff-row[data-kind='add'] {
+  background: var(--ok-a08);
+  color: var(--ok);
+}
+
+.diff-row[data-kind='add'] > .diff-gutter {
+  color: var(--ok);
+}
+
+.diff-row[data-kind='del'] {
+  background: var(--danger-a08);
+  color: var(--danger);
+}
+
+.diff-row[data-kind='del'] > .diff-gutter {
+  color: var(--danger);
+}
+
+/* Long paths shrink the directory (ellipsized) and never the basename. */
+.viewer-path {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.viewer-dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-faint);
+}
+
+.viewer-name {
+  flex: none;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.viewer-empty {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s-4);
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+
+/* ---------- diagnostics drawer ---------- */
+
+.diag-drawer {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--hairline);
+  background: var(--panel-solid);
+}
+
+.diag-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-4);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.diag-clean {
+  color: var(--text-faint);
+}
+
+.diag-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--s-3);
+  padding: calc(var(--s-3) / 2) var(--s-2);
+  border-radius: var(--r-1);
+  text-align: left;
+}
+
+.diag-toggle:hover {
+  background: var(--surface-1);
+  color: var(--text);
+}
+
+.diag-count {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.diag-drawer .diag-list {
+  padding: 0 var(--s-2) var(--s-2);
+  border-top: none;
+  animation: diag-in var(--dur-2) var(--ease);
+}
+
+@keyframes diag-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--s-1));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.diag-drawer .diag {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  padding: calc(var(--s-3) / 2) var(--s-2);
+  border-radius: var(--r-1);
+  color: var(--text);
+  font: var(--fs-sm) / 1.5 var(--mono);
+}
+
+.diag-drawer .diag:hover {
+  background: var(--surface-1);
+}
+
+.diag-loc {
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+
+.diag-msg {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sev-dot {
+  flex-shrink: 0;
+  align-self: center;
+  width: var(--s-2);
+  height: var(--s-2);
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.sev-dot[data-severity='error'] {
+  background: var(--danger);
+}
+
+.sev-dot[data-severity='warning'] {
+  background: var(--warn);
+}
+
+.sev-dot[data-severity='info'] {
+  background: var(--info);
+}
+
+/* ---------- terminal ---------- */
+
+/* Row handle between the tree and the terminal; the column handle's affordance, turned 90deg. */
+.splitter.splitter-y {
+  flex: none;
+  width: auto;
+  height: 8px;
+  cursor: row-resize;
+}
+
+.splitter.splitter-y::after {
+  inset: 3px var(--s-5);
+}
+
+body.is-resizing.is-resizing-y {
+  cursor: row-resize;
+}
+
+/* Height comes from the stored size inline; shrinkable so a stale value never overflows the pane. */
+.term-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 120px;
+  /* A real divider: on one flat surface the 5% hairline read as no divider at all. */
+  border-top: 1px solid var(--border-strong);
+}
+
+/* Collapsed to the tab bar: the tree takes everything else. */
+.term-panel[data-collapsed='true'] {
+  flex: none;
+  min-height: 0;
+}
+
+/* One compact row of attached tabs: same hover/active treatment as .tab / .tab-on. */
+.term-tabs {
+  display: flex;
+  flex: none;
+  align-items: flex-end;
+  gap: var(--s-1);
+  padding: var(--s-1) var(--s-2) 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.term-tablist {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s-1);
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.term-tab {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-1);
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--r-2) var(--r-2) 0 0;
+  color: var(--text-muted);
+  transition:
+    background var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease);
+}
+
+.term-tab:hover {
+  background: var(--surface-1);
+  color: var(--text);
+}
+
+.term-tab[data-on='true'] {
+  border-color: var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.term-tab-main {
+  padding: var(--s-1) var(--s-3);
+  border: none;
+  color: inherit;
+  font: var(--fs-xs) / 1.5 var(--mono);
+  white-space: nowrap;
+}
+
+.term-tab:has(.term-tab-close) .term-tab-main {
+  padding-right: 0;
+}
+
+/* Hidden but laid out (no width jump); shown on hover, active, or keyboard focus. */
+.term-tab-close {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--s-4);
+  height: var(--s-4);
+  margin-right: var(--s-1);
+  padding: 0;
+  border-radius: var(--r-1);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  line-height: 1;
+  opacity: 0;
+  transition:
+    opacity var(--dur-1) var(--ease),
+    background var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease);
+}
+
+.term-tab:hover .term-tab-close,
+.term-tab[data-on='true'] .term-tab-close,
+body[data-modality='keyboard'] .term-tab:focus-within .term-tab-close {
+  opacity: 1;
+}
+
+.term-tab-close:hover,
+.term-tab-add:hover,
+.term-tab-collapse:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.term-tab-add {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--s-5);
+  height: var(--s-5);
+  margin-bottom: 2px;
+  padding: 0;
+  border-radius: var(--r-1);
+  color: var(--text-muted);
+  font-size: var(--fs-md);
+  line-height: 1;
+  transition:
+    background var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease);
+}
+
+/* Pinned to the bar's right end; the chevron points the way the panel will move. */
+.term-tab-collapse {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--s-5);
+  height: var(--s-5);
+  margin-bottom: 2px;
+  margin-left: auto;
+  padding: 0;
+  border-radius: var(--r-1);
+  color: var(--text-muted);
+}
+
+.term-tab-collapse .icon {
+  transition: transform var(--dur-1) var(--ease);
+}
+
+.term-tab-collapse[aria-expanded='false'] .icon {
+  transform: rotate(180deg);
+}
+
+.term-rename-anchor {
+  position: fixed;
+  z-index: 55;
+}
+
+.popover.term-rename {
+  min-width: 0;
+  width: 192px;
+}
+
+.term-rename .input {
+  width: 100%;
+}
+
+body:not([data-modality='keyboard']) .term-tabs button:focus-visible {
+  box-shadow: none;
+}
+
+body[data-modality='keyboard'] .term-tabs button:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: -2px;
+}
+
+/* The hosts' frame: anchors the floating actions below the tab row. */
+.term-body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.term-body[hidden],
+.term-panel .xterm-host[hidden] {
+  display: none;
+}
+
+/* Controls float over the terminal instead of costing it a header row. */
+.term-actions {
+  position: absolute;
+  top: var(--s-2);
+  right: var(--s-2);
+  z-index: 2;
+  display: flex;
+  gap: var(--s-1);
+  opacity: 0.55;
+}
+
+.term-body:hover .term-actions,
+.term-actions:focus-within {
+  opacity: 1;
+}
+
+body:not([data-modality='keyboard']) .term-actions button:focus-visible {
+  box-shadow: none;
+}
+
+body[data-modality='keyboard'] .term-actions button:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: -2px;
+}
+
+/* Opaque, and without a second top border under the panel's own. */
+.term-panel .xterm-host {
+  border-top: none;
+  background: var(--panel-solid);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tree-panel .explorer-content,
+  .tree-panel .tree-spinner,
+  .diff-comment-row,
+  .diff-comment-form {
+    animation: none;
+  }
+
+  .tree-panel button,
+  .tree-panel .tree-caret,
+  .diff-body button,
+  .term-tab-collapse .icon {
+    transition: none;
+  }
+}

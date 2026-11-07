@@ -1,0 +1,2 @@
+export const MAX_WORKSPACES_PER_PROJECT = 5
+export const MAX_SESSIONS_PER_WORKSPACE = 5

@@ -1,0 +1,542 @@
+/*
+ * Sidebar chrome (workstream A). Tokens only. Spacing grid: 8px baseline; panel padding 16 (--s-4),
+ * section gap 12 (--s-3), control gap 8 (--s-2), list rows 6px vertical. Row hover fills sit 8px in
+ * from the panel edge so their text lands on the 16px panel line.
+ */
+
+/* Top nav (New / Home / Search): the footer's row style, mirrored above the project list.
+   The extra top padding clears the macOS traffic lights, which the full-bleed shell
+   no longer pads around; they are pinned at 12,12 by the BrowserWindow options. */
+.side-nav {
+  padding: var(--s-6) var(--s-2) var(--s-2);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.side-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4) var(--s-1);
+}
+
+.section-head .section-label {
+  padding: 0;
+}
+
+/* Group headings: one step below --fs-xs (the smallest token) and bold; colour and tracking kept. */
+.sidebar .section-label {
+  font-size: calc(var(--fs-xs) - 1px);
+  font-weight: 700;
+}
+
+.section-head .icon-btn {
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease);
+}
+
+.section-head:hover .icon-btn,
+.section-head .icon-btn:focus-visible {
+  opacity: 1;
+}
+
+.sidebar .project-block {
+  padding: 0 var(--s-2) var(--s-1);
+}
+
+.sidebar .project-row {
+  gap: var(--s-2);
+  padding: 6px var(--s-2);
+  font-size: var(--fs-md);
+  color: var(--text);
+  transition: background var(--dur-1) var(--ease);
+}
+
+/* Glyph + name + caret toggle the project's live workspaces; the "+" stays a sibling button. */
+.sidebar .project-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  padding: 0;
+  border: none;
+  text-align: left;
+}
+
+.project-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-toggle .dropdown-caret {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  transition: transform var(--dur-1) var(--ease);
+}
+
+.project-toggle[aria-expanded='false'] .dropdown-caret {
+  transform: rotate(-45deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-toggle .dropdown-caret {
+    transition: none;
+  }
+}
+
+/* Light height animation for the workspace list; 0fr collapses without measuring. */
+.project-workspaces {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--dur-1) var(--ease);
+}
+
+.project-workspaces[data-collapsed='true'] {
+  grid-template-rows: 0fr;
+}
+
+.project-workspaces-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+body:not([data-modality='keyboard']) .project-toggle:focus-visible,
+body:not([data-modality='keyboard']) .side-foot-btn:focus-visible {
+  box-shadow: none;
+}
+
+body[data-modality='keyboard'] .project-toggle:focus-visible,
+body[data-modality='keyboard'] .side-foot-btn:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: -2px;
+}
+
+.project-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 0;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.project-row[data-selected='true'] .project-glyph {
+  background: var(--accent-grad);
+  color: var(--text);
+}
+
+.row-action {
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease);
+}
+
+.project-row:hover .row-action,
+.row-action:focus-visible,
+.row-action[aria-expanded='true'] {
+  opacity: 1;
+}
+
+.sidebar .ws-row {
+  position: relative;
+  padding: 6px var(--s-2) 6px 34px;
+  font-size: var(--fs-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition:
+    background var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease);
+}
+
+.sidebar .ws-row[data-active='true'] {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* Accent marks state, not decoration: a dot on the active workspace only. */
+.sidebar .ws-row[data-active='true']::before {
+  content: '';
+  position: absolute;
+  left: 18px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 50%;
+  background: var(--accent-1);
+}
+
+/* Workspace row + "⋯" menu: reserve both the menu and state slot in every bootstrap state. */
+.sidebar .ws-item {
+  position: relative;
+  display: flex;
+}
+
+/* Lift the row with an open menu above later rows (each row is positioned). */
+.sidebar .ws-item[data-menu='true'] {
+  z-index: 2;
+}
+
+.sidebar .ws-item .ws-row {
+  flex: 1;
+  min-width: 0;
+  padding-right: calc(var(--s-6) * 2);
+}
+
+.sidebar .ws-item[data-archived='true'] .ws-row {
+  color: var(--text-faint);
+}
+
+/* Keep the row's hover fill while the pointer is on its "⋯" (a sibling, not a child). */
+.sidebar .ws-item:hover .ws-row:not([data-active='true']) {
+  background: var(--surface-1);
+  color: var(--text);
+}
+
+.sidebar .ws-more-wrap {
+  position: absolute;
+  top: 0;
+  right: var(--s-6);
+  bottom: 0;
+  align-items: center;
+}
+
+.sidebar .ws-state-slot {
+  position: absolute;
+  top: 0;
+  right: var(--s-2);
+  bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--s-4);
+}
+
+.ws-state-glyph {
+  width: var(--s-2);
+  height: var(--s-2);
+  border-radius: 50%;
+}
+
+.ws-state-spinner {
+  border: calc(var(--s-1) / 2) solid var(--warn);
+  border-top-color: transparent;
+  animation: ws-bootstrap-spin var(--dur-2) linear infinite;
+}
+
+.ws-state-error {
+  background: var(--danger);
+}
+
+@keyframes ws-bootstrap-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ws-state-spinner {
+    animation: none;
+  }
+}
+
+.ws-more {
+  opacity: 0;
+  transition:
+    opacity var(--dur-1) var(--ease),
+    background var(--dur-1) var(--ease);
+}
+
+.ws-item:hover .ws-more,
+.ws-more:focus-visible,
+.ws-more[aria-expanded='true'] {
+  opacity: 1;
+}
+
+/* Row actions menus (workspace and project "⋯") are portalled to body by RowMenu, so they float
+   over the scrolling list; they sit on the solid panel rather than glass for that reason. */
+.row-menu-anchor {
+  position: fixed;
+  z-index: 55;
+}
+
+.popover.row-menu {
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  background: var(--panel-solid);
+  backdrop-filter: none;
+  box-shadow: var(--shadow-2);
+}
+
+.popover.ws-menu {
+  min-width: 160px;
+}
+
+/* Portalled checkpoint overlays keep the workspace trigger's anchor without scroll clipping. */
+.checkpoints-anchor {
+  position: fixed;
+  z-index: 50;
+  width: min(calc(var(--s-6) * 10), calc(100vw - var(--s-6)));
+}
+
+.checkpoints-anchor .checkpoints-menu {
+  position: relative;
+  top: auto;
+  left: auto;
+  min-width: 0;
+  width: 100%;
+  max-height: inherit;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.checkpoints-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--hairline);
+  font-weight: 600;
+}
+
+.checkpoints-head .btn {
+  padding: var(--s-1) var(--s-2);
+  font-size: var(--fs-sm);
+}
+
+.checkpoints-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s-2);
+  background: var(--panel-solid);
+}
+
+.checkpoint-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2);
+  border-radius: var(--r-1);
+}
+
+.checkpoint-row:hover,
+.checkpoint-row:focus-within {
+  background: var(--surface-1);
+}
+
+.checkpoint-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.checkpoint-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+.checkpoint-time {
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+.checkpoint-row .icon-btn {
+  flex: none;
+}
+
+.checkpoints-empty {
+  padding: var(--s-2);
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
+}
+
+.checkpoint-confirm .ws-confirm,
+.project-remove .ws-confirm {
+  overflow-wrap: anywhere;
+}
+
+.project-remove .ws-confirm + .ws-confirm {
+  margin-top: var(--s-2);
+}
+
+.project-remove ul.ws-confirm {
+  padding-left: var(--s-4);
+}
+
+body:not([data-modality='keyboard']) .ws-item button:focus-visible,
+body:not([data-modality='keyboard']) .checkpoints-menu button:focus-visible,
+body:not([data-modality='keyboard']) .checkpoint-confirm button:focus-visible,
+body:not([data-modality='keyboard']) .project-remove button:focus-visible {
+  box-shadow: none;
+}
+
+body[data-modality='keyboard'] .ws-item button:focus-visible,
+body[data-modality='keyboard'] .checkpoints-menu button:focus-visible,
+body[data-modality='keyboard'] .checkpoint-confirm button:focus-visible,
+body[data-modality='keyboard'] .project-remove button:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: -2px;
+}
+
+/* Settings nav (replaces the tree on the settings route): project-row footprint as buttons;
+   the current page takes the active workspace fill and the selected-project glyph. */
+.sidebar .settings-nav-row {
+  width: 100%;
+  text-align: left;
+}
+
+.sidebar .settings-nav-row[data-active='true'] {
+  background: var(--surface-2);
+}
+
+.settings-nav-row[data-active='true'] .project-glyph {
+  background: var(--accent-grad);
+  color: var(--text);
+}
+
+.settings-nav-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body:not([data-modality='keyboard']) .settings-nav-row:focus-visible {
+  box-shadow: none;
+}
+
+body[data-modality='keyboard'] .settings-nav-row:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: -2px;
+}
+
+/* "Archived · n" disclosure: section-label type on a workspace-row footprint. */
+.sidebar .ws-archived-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  padding: 6px var(--s-2) 6px 18px;
+  border-radius: var(--r-2);
+  text-align: left;
+}
+
+.sidebar .ws-archived-toggle:hover {
+  background: var(--surface-1);
+  color: var(--text-muted);
+}
+
+.ws-archived-toggle .dropdown-caret {
+  width: 6px;
+  height: 6px;
+  margin-right: var(--s-1);
+  transition: transform var(--dur-1) var(--ease);
+}
+
+.ws-archived-toggle[aria-expanded='false'] .dropdown-caret {
+  transform: rotate(-45deg);
+}
+
+.ws-archived-count {
+  letter-spacing: 0;
+}
+
+.ws-confirm {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.ws-confirm strong {
+  color: var(--text);
+}
+
+.ws-check {
+  display: flex;
+  gap: var(--s-2);
+  align-items: flex-start;
+  margin-top: var(--s-2);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+}
+
+.ws-check input {
+  flex: none;
+  margin-top: 3px;
+  accent-color: var(--accent-1);
+}
+
+.side-empty {
+  padding: var(--s-2) var(--s-4);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.side-error {
+  color: var(--danger);
+}
+
+/* Footer: the Settings row on the same 8px inset as project rows; provider detail lives in Settings. */
+.side-foot {
+  padding: var(--s-2);
+  border-top: 1px solid var(--hairline);
+}
+
+.side-foot-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  padding: 6px var(--s-2);
+  border-radius: var(--r-2);
+  color: var(--text-muted);
+  font-size: var(--fs-md);
+}
+
+.side-foot-btn:hover:not(:disabled),
+.side-foot-btn[data-active='true'] {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.side-foot-glyph {
+  display: inline-flex;
+  justify-content: center;
+  width: 18px;
+  font-size: var(--fs-lg);
+  line-height: 1;
+}
+
+.side-foot-dot {
+  flex: none;
+  width: var(--s-2);
+  height: var(--s-2);
+  border-radius: 50%;
+  background: var(--warn);
+}

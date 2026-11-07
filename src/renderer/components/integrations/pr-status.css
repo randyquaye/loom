@@ -1,0 +1,137 @@
+/* Workspace PR chip + popover. Tokens only; 8px grid: chip gap 8, popover padding 16,
+ * section gap 8, check rows 6/8. Glass frame from .popover; the check list sits solid. */
+
+.pr-status-none {
+  flex: none;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.pr-status-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-2);
+  white-space: nowrap;
+}
+
+.pr-status-chip:hover,
+.pr-status-chip[aria-expanded='true'] {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.pr-status-number {
+  font-family: var(--mono);
+}
+
+.pr-status-glyph {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.pr-status-glyph[data-tone='ok'],
+.pr-status-review[data-tone='ok'] {
+  color: var(--ok);
+}
+
+.pr-status-glyph[data-tone='warn'],
+.pr-status-review[data-tone='warn'] {
+  color: var(--warn);
+}
+
+.pr-status-glyph[data-tone='danger'],
+.pr-status-review[data-tone='danger'] {
+  color: var(--danger);
+}
+
+.pr-status-draft {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 0;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font: var(--fs-xs) / 1.6 var(--font);
+}
+
+/* Qualified to outrank .popover's own padding and min-width. */
+.popover.pr-status-popover {
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  width: 360px;
+  padding: var(--s-4);
+  box-shadow: var(--shadow-3), var(--edge-highlight);
+  font-size: var(--fs-sm);
+}
+
+.pr-status-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.pr-status-title {
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.pr-status-title .pr-status-number {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.pr-status-refs {
+  overflow: hidden;
+  color: var(--text-muted);
+  font: var(--fs-xs) var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pr-status-line {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.pr-status-checks {
+  max-height: 240px;
+  margin: 0;
+  padding: var(--s-1);
+  overflow-y: auto;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-1);
+  background: var(--panel-solid);
+  list-style: none;
+}
+
+.pr-status-check {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  padding: 6px var(--s-2);
+}
+
+.pr-status-check-name {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pr-status-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  padding-top: var(--s-1);
+}

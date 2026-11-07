@@ -1,0 +1,132 @@
+/*
+ * Project menu under the New Workspace picker (conductor anatomy) and the Clone GitHub repo
+ * modal. Tokens only; 8px grid: popover inset 8, rows share .list-option, field gap 16.
+ */
+
+.popover.pm-menu {
+  min-width: 320px;
+  max-width: 440px;
+}
+
+.pm-menu .icon {
+  color: var(--text-muted);
+}
+
+.pm-recents {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.pm-path {
+  font: var(--fs-sm) var(--mono);
+}
+
+/* ---------- clone modal ---------- */
+
+.clone-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.clone-list {
+  max-height: 200px;
+  overflow-y: auto;
+  padding: var(--s-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface-1);
+}
+
+.clone-row {
+  color: var(--text-muted);
+}
+
+.clone-row[data-active='true'],
+.clone-row[aria-selected='true'] {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.clone-row-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.clone-name {
+  color: var(--text);
+}
+
+.clone-path {
+  font: var(--fs-xs) var(--mono);
+  color: var(--text-faint);
+}
+
+.clone-dot {
+  flex: none;
+  width: var(--s-2);
+  height: var(--s-2);
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.clone-dot[data-provider='github'] {
+  background: var(--text);
+}
+
+.clone-dot[data-provider='gitlab'] {
+  background: var(--warn);
+}
+
+.clone-dot[data-provider='bitbucket'] {
+  background: var(--info);
+}
+
+.clone-empty {
+  padding: var(--s-3);
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+.clone-location {
+  display: flex;
+  gap: var(--s-2);
+}
+
+.clone-location .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.clone-kbd {
+  margin-left: var(--s-1);
+  font-size: var(--fs-xs);
+  opacity: 0.8;
+}
+
+.clone-exists {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.clone-exists p {
+  margin: 0;
+}
+
+.clone-exists-title {
+  color: var(--text);
+}
+
+.clone-exists-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}

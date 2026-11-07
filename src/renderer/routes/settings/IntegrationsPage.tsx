@@ -1,0 +1,204 @@
+import { useCallback, useEffect, useState } from 'react'
+import type { GithubStatus, IntegrationsStatus, SecretPresence } from '../../../shared/ipc-contract'
+import { Field } from '../../components/ui/Field'
+import { Modal } from '../../components/ui/Modal'
+import { useToasts } from '../../components/ui/Toast'
+
+// Integration states differ from provider states, so they get their own mappers.
+function githubTone(status: GithubStatus): 'ok' | 'warn' | 'danger' {
+  if (status.state === 'ready') return 'ok'
+  if (status.state === 'error') return 'danger'
+  return 'warn'
+}
+
+function githubText(status: GithubStatus): string {
+  switch (status.state) {
+    case 'ready':
+      return 'Ready'
+    case 'not-installed':
+      return 'GitHub CLI not installed'
+    case 'not-authenticated':
+      return 'Sign in required'
+    case 'error':
+      return 'Unavailable'
+  }
+}
+
+// Linear's state follows the stored key; null is "not checked yet".
+function linearTone(presence: SecretPresence | null): 'ok' | 'warn' | 'idle' {
+  if (presence === null) return 'idle'
+  return presence.present ? 'ok' : 'warn'
+}
+
+function linearText(presence: SecretPresence | null): string {
+  if (presence === null) return 'Checking…'
+  return presence.present ? 'Ready' : 'API key required'
+}
+
+/** Settings "Integrations": GitHub CLI status and the Linear API key. */
+export function IntegrationsPage() {
+  const push = useToasts((s) => s.push)
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState('')
+  const [integrations, setIntegrations] = useState<IntegrationsStatus | null>(null)
+  const [integrationsError, setIntegrationsError] = useState<string | null>(null)
+  const [linearKey, setLinearKey] = useState<SecretPresence | null>(null)
+
+  function refreshIntegrations() {
+    window.loom.linear
+      .hasKey()
+      .then(setLinearKey)
+      .catch((err: unknown) => push(`Could not check linear key: ${String(err)}`, 'err'))
+    window.loom.integrations
+      .status()
+      .then((status) => {
+        setIntegrations(status)
+        setIntegrationsError(null)
+      })
+      .catch((err: unknown) => setIntegrationsError(String(err)))
+  }
+
+  useEffect(() => {
+    let live = true
+    window.loom.linear
+      .hasKey()
+      .then((p) => {
+        if (live) setLinearKey(p)
+      })
+      .catch(() => {
+        // Leave the row at "Checking…"; integrations.status() surfaces the failure below.
+      })
+    window.loom.integrations
+      .status()
+      .then((status) => {
+        if (live) setIntegrations(status)
+      })
+      .catch((err: unknown) => {
+        if (live) setIntegrationsError(String(err))
+      })
+    return () => {
+      live = false
+    }
+  }, [])
+
+  // Modal re-runs its focus effect whenever onClose changes identity, so keep it stable.
+  const closeEditor = useCallback(() => {
+    setEditing(false)
+    setValue('')
+  }, [])
+
+  function save() {
+    if (!editing || !value) return
+    window.loom.linear
+      .setKey(value)
+      .then(() => {
+        push('Saved linear key')
+        closeEditor()
+        refreshIntegrations()
+      })
+      .catch((e: unknown) => push(`Could not save linear key: ${String(e)}`, 'err'))
+  }
+
+  function remove() {
+    window.loom.linear
+      .deleteKey()
+      .then(() => {
+        push('Removed linear key')
+        refreshIntegrations()
+      })
+      .catch((e: unknown) => push(`Could not remove linear key: ${String(e)}`, 'err'))
+  }
+
+  return (
+    <>
+      <section className="settings-section">
+        <div className="settings-label">Integrations</div>
+        <div className="settings-list">
+          <div className="settings-row">
+            <span
+              className="settings-dot"
+              data-tone={
+                integrationsError !== null
+                  ? 'danger'
+                  : integrations === null
+                    ? 'idle'
+                    : githubTone(integrations.github)
+              }
+              aria-hidden="true"
+            />
+            <div className="settings-provider">
+              <span className="settings-name">github</span>
+              <span className="settings-state">
+                {integrationsError !== null
+                  ? 'Unavailable'
+                  : integrations === null
+                    ? 'Checking…'
+                    : githubText(integrations.github)}
+              </span>
+            </div>
+            <span className="settings-mask">
+              {integrations?.github.state === 'ready' ? integrations.github.account : null}
+            </span>
+          </div>
+          <div className="settings-row">
+            <span className="settings-dot" data-tone={linearTone(linearKey)} aria-hidden="true" />
+            <div className="settings-provider">
+              <span className="settings-name">linear</span>
+              <span className="settings-state">{linearText(linearKey)}</span>
+            </div>
+            <span className="settings-mask">
+              {linearKey?.present ? (linearKey.masked ?? 'stored') : 'not set'}
+            </span>
+            <button className="btn" onClick={() => setEditing(true)}>
+              {linearKey?.present ? 'Replace' : 'Add'}
+            </button>
+            <button className="btn btn-ghost" disabled={!linearKey?.present} onClick={remove}>
+              Remove
+            </button>
+          </div>
+        </div>
+        {integrationsError !== null && (
+          <p className="settings-note" role="alert">
+            Couldn’t check integrations: {integrationsError}
+          </p>
+        )}
+        <p className="settings-note">
+          Loom stores no GitHub credential: the <code>gh</code> CLI keeps it in the macOS keyring. Run{' '}
+          <code>gh auth login</code> in a terminal to sign in. The Linear API key is stored encrypted in the
+          macOS Keychain and never leaves this machine except to api.linear.app.
+        </p>
+      </section>
+      <Modal
+        open={editing}
+        title="Linear API key"
+        onClose={closeEditor}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={closeEditor}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" disabled={!value} onClick={save}>
+              Save
+            </button>
+          </>
+        }
+      >
+        <Field
+          label="API key"
+          hint="Stored encrypted in the macOS Keychain. Create one in Linear → Settings → API."
+        >
+          <input
+            className="input"
+            type="password"
+            autoFocus
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') save()
+            }}
+          />
+        </Field>
+      </Modal>
+    </>
+  )
+}

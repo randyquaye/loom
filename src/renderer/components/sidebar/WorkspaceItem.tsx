@@ -1,0 +1,207 @@
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject
+} from 'react'
+import { createPortal } from 'react-dom'
+import type { WorkspaceRow } from '../../../shared/ipc-contract'
+import { useProjects } from '../../state/projects'
+import { useUi } from '../../state/ui'
+import { Popover } from '../ui/Popover'
+import { useToasts } from '../ui/Toast'
+import { CheckpointsMenu } from './CheckpointsMenu'
+
+/** Gap between trigger and menu, and the menu's minimum inset from the window edge. */
+const GAP = 4
+const EDGE = 8
+
+/**
+ * Sidebar row actions menu, portalled to body so it floats over `.side-scroll` instead of
+ * becoming part of its scrolling content. Right-aligned under the trigger (flipped above it when
+ * there is no room below), clamped inside the window, and closed by Escape, an outside press,
+ * a resize or any scroll that moves the trigger.
+ */
+export function RowMenu({
+  anchorRef,
+  onClose,
+  className,
+  children
+}: {
+  anchorRef: RefObject<HTMLButtonElement | null>
+  onClose: () => void
+  className?: string
+  children: ReactNode
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const wrap = wrapRef.current
+    const rect = anchorRef.current?.getBoundingClientRect()
+    const menu = wrap?.querySelector('.popover')
+    if (wrap === null || rect === undefined || menu === null || menu === undefined) return
+    const { width, height } = menu.getBoundingClientRect()
+    const below = rect.bottom + GAP
+    const top = below + height + EDGE > window.innerHeight ? rect.top - GAP - height : below
+    wrap.style.left = `${Math.max(EDGE, Math.min(rect.right - width, window.innerWidth - width - EDGE))}px`
+    wrap.style.top = `${Math.max(EDGE, Math.min(top, window.innerHeight - height - EDGE))}px`
+  }, [anchorRef])
+
+  useEffect(() => {
+    const onScroll = (e: Event) => {
+      const anchor = anchorRef.current
+      if (anchor !== null && e.target instanceof Node && e.target.contains(anchor)) onClose()
+    }
+    document.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onClose)
+    return () => {
+      document.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onClose)
+    }
+  }, [anchorRef, onClose])
+
+  return createPortal(
+    <div ref={wrapRef} className="popover-wrap row-menu-anchor">
+      <Popover
+        open
+        onClose={onClose}
+        anchorRef={anchorRef}
+        className={`row-menu${className === undefined ? '' : ` ${className}`}`}
+      >
+        {children}
+      </Popover>
+    </div>,
+    document.body
+  )
+}
+
+/** One sidebar workspace row plus its hover/focus "⋯" actions and checkpoints. */
+export function WorkspaceItem({
+  workspace,
+  active,
+  onDelete
+}: {
+  workspace: WorkspaceRow
+  active: boolean
+  onDelete: () => void
+}) {
+  const navigate = useUi((s) => s.navigate)
+  const setArchived = useProjects((s) => s.setArchived)
+  const push = useToasts((s) => s.push)
+  const [menu, setMenu] = useState(false)
+  const [checkpointsOpen, setCheckpointsOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const closeMenu = useCallback(() => {
+    setMenu(false)
+    setCheckpointsOpen(false)
+    triggerRef.current?.focus()
+  }, [])
+
+  const open = () => navigate({ name: 'workspace', workspaceId: workspace.id })
+  const statusTitle =
+    workspace.state === 'initializing'
+      ? 'Initializing workspace…'
+      : workspace.state === 'setting_up'
+        ? 'Running setup script…'
+        : workspace.state === 'error'
+          ? `Workspace setup failed — see the setup log${workspace.setupLogPath ? `: ${workspace.setupLogPath}` : ''}`
+          : null
+
+  function toggleArchived() {
+    closeMenu()
+    const next = !workspace.archived
+    const verb = next ? 'archive' : 'unarchive'
+    setArchived(workspace.id, next)
+      .then(() => push(`${next ? 'Archived' : 'Unarchived'} ${workspace.name}`))
+      .catch((err: unknown) => push(`Could not ${verb} ${workspace.name}: ${String(err)}`, 'err'))
+  }
+
+  return (
+    <div className="ws-item" data-archived={workspace.archived} data-menu={menu}>
+      <button
+        type="button"
+        className="ws-row"
+        data-active={active}
+        aria-current={active ? 'page' : undefined}
+        onClick={open}
+      >
+        {workspace.name}
+        <span className="ws-state-slot">
+          {statusTitle !== null && (
+            <span
+              className={`ws-state-glyph${workspace.state === 'error' ? ' ws-state-error' : ' ws-state-spinner'}`}
+              role="img"
+              title={statusTitle}
+              aria-label={statusTitle}
+            />
+          )}
+        </span>
+      </button>
+      <div className="popover-wrap ws-more-wrap">
+        <button
+          ref={triggerRef}
+          type="button"
+          className="icon-btn ws-more"
+          aria-label={`Actions for ${workspace.name}`}
+          aria-haspopup="menu"
+          aria-expanded={menu}
+          onClick={() => {
+            if (menu) closeMenu()
+            else setMenu(true)
+          }}
+        >
+          ⋯
+        </button>
+        {menu && !checkpointsOpen && (
+          <RowMenu anchorRef={triggerRef} onClose={closeMenu} className="ws-menu">
+            <button
+              type="button"
+              role="menuitem"
+              className="list-option popover-item"
+              onClick={() => {
+                closeMenu()
+                open()
+              }}
+            >
+              Open
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="list-option popover-item"
+              onClick={() => setCheckpointsOpen(true)}
+            >
+              Checkpoints…
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="list-option popover-item"
+              onClick={toggleArchived}
+            >
+              {workspace.archived ? 'Unarchive' : 'Archive'}
+            </button>
+            <div className="popover-sep" role="separator" />
+            <button
+              type="button"
+              role="menuitem"
+              className="list-option popover-item popover-item-danger"
+              onClick={() => {
+                closeMenu()
+                onDelete()
+              }}
+            >
+              Delete…
+            </button>
+          </RowMenu>
+        )}
+        {checkpointsOpen && (
+          <CheckpointsMenu workspace={workspace} anchorRef={triggerRef} onClose={closeMenu} />
+        )}
+      </div>
+    </div>
+  )
+}

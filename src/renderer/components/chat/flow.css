@@ -1,0 +1,889 @@
+/*
+ * Flow surfaces (workstream A): modal forms, command palette extras, workspace chrome, session tabs,
+ * composer. Tokens only.
+ * Spacing grid: 8px baseline; panel padding 16 (--s-4), section/field gap 12 (--s-3), control gap 8
+ * (--s-2). Modal body 16 and footer 12/16 come from ui.css and are not overridden here.
+ * Component css is injected before ui.css (App is imported first), so overrides need extra specificity.
+ */
+
+/* ---------- modal forms ---------- */
+
+.form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--s-3);
+}
+
+.form-stack .segmented {
+  align-self: flex-start;
+}
+
+.input.mono {
+  font: var(--fs-sm) var(--mono);
+}
+
+.modal-foot .field-hint {
+  align-self: center;
+}
+
+/* ---------- command palette ---------- */
+
+.palette .palette-input {
+  border-bottom: 1px solid var(--hairline);
+}
+
+.palette .palette-item {
+  font-size: var(--fs-md);
+  transition: background var(--dur-1) var(--ease);
+}
+
+.palette-hint {
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
+}
+
+.palette-empty {
+  padding: var(--s-4);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.palette-foot {
+  align-items: center;
+}
+
+.palette-foot > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+/* ---------- workspace chrome ---------- */
+
+.workspace-topbar.topbar {
+  flex: none;
+  flex-wrap: wrap;
+}
+
+.workspace-topbar .workspace-topbar-actions {
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.workspace-run-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.workspace-topbar .workspace-run-action {
+  flex: none;
+  padding: var(--s-2);
+}
+
+.workspace-topbar .workspace-run-action[data-default='true'] {
+  color: var(--accent-1);
+  border-color: var(--accent-2-a32);
+  background: var(--accent-3-a16);
+}
+
+.workspace-topbar .workspace-run-action[data-default='true']:hover:not(:disabled) {
+  background: var(--accent-2-a18);
+  border-color: var(--accent-2);
+}
+
+.workspace-run-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--s-4);
+  font-size: var(--fs-sm);
+}
+
+body:not([data-modality='keyboard']) .workspace-topbar button:focus-visible {
+  box-shadow: none;
+}
+
+body[data-modality='keyboard'] .workspace-topbar button:focus-visible {
+  outline: calc(var(--s-1) / 2) solid var(--accent-2);
+  outline-offset: calc(var(--s-1) / -2);
+}
+
+.workspace-bootstrap-status {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--hairline);
+  background: var(--panel-solid);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.workspace-bootstrap-status[data-state='error'] {
+  color: var(--danger);
+}
+
+.workspace-bootstrap-label {
+  flex: none;
+  white-space: nowrap;
+}
+
+.workspace-setup-log {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+
+/* ---------- session tabs: 40px strip ---------- */
+
+.tabs.session-tabs {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.session-tabs .tab {
+  flex: none;
+  max-width: 220px;
+}
+
+/* Session tab = chrome wrapper (.tab) holding the tab button and its close button. The pinned
+   viewer tab uses the same wrapper/button/close structure. */
+.session-tabs .session-tab,
+.tabs-row > .tab-pin {
+  gap: var(--s-1);
+  padding-right: var(--s-2);
+}
+
+.session-tabs .tab-main,
+.tab-pin .tab-main {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  padding: 0;
+  border: none;
+  color: inherit;
+}
+
+/* Hidden but laid out (no width jump); shown on hover, or when keyboard focus is in the tab. */
+.session-tabs .tab-close,
+.tab-pin .tab-close {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--s-4);
+  height: var(--s-4);
+  padding: 0;
+  border-radius: var(--s-1);
+  color: var(--text-muted);
+  font-size: var(--fs-md);
+  line-height: 1;
+  opacity: 0;
+}
+
+.session-tabs .session-tab:hover .tab-close,
+.tab-pin:hover .tab-close,
+body[data-modality='keyboard'] .session-tabs .session-tab:focus-within .tab-close,
+body[data-modality='keyboard'] .tab-pin:focus-within .tab-close {
+  opacity: 1;
+}
+
+.session-tabs .tab-close:hover,
+.tab-pin .tab-close:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.session-tabs .tab-label,
+.tab-pin .tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-tabs .tab-draft {
+  font-style: italic;
+}
+
+/* Minimal provider mark: the same identity dot Settings and the model picker use. */
+.tab-backend-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.tab-backend-dot[data-backend='codex'] {
+  background: var(--provider-codex);
+}
+
+.tab-backend-dot[data-backend='claude'] {
+  background: var(--provider-claude);
+}
+
+.tab-backend-dot[data-backend='gemini'] {
+  background: var(--provider-gemini);
+}
+
+.tab-backend-dot[data-backend='qwen'] {
+  background: var(--provider-qwen);
+}
+
+.session-tabs .tab-add {
+  align-self: stretch;
+  justify-content: center;
+  width: 32px;
+  padding: 0;
+  font-size: var(--fs-lg);
+}
+
+/* ---------- recent chats ---------- */
+
+/* Pinned to the strip's far end: tabs grow from the left, the trigger stays right. */
+.session-tabs .tab-history {
+  margin-left: auto;
+}
+
+.session-tabs .tab-history[aria-expanded='true'] {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.recent-chats-anchor {
+  position: fixed;
+  z-index: 55;
+  width: min(360px, calc(100vw - var(--s-6)));
+}
+
+.popover.recent-chats {
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  max-height: inherit;
+  overflow: hidden;
+  padding: 0;
+}
+
+.recent-chats-head {
+  flex: none;
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--hairline);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.recent-chats-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s-2);
+}
+
+.recent-chats-row {
+  padding: var(--s-2);
+  color: var(--text);
+}
+
+.recent-chats-row:disabled {
+  background: none;
+  cursor: default;
+}
+
+.recent-chats-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.recent-chats-title,
+.recent-chats-model {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-chats-model {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.recent-chats-time {
+  flex: none;
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+.recent-chats-empty {
+  padding: var(--s-4);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+/* Programmatic menu focus follows input modality, including after the IPC load. */
+body:not([data-modality='keyboard']) .tab-history:focus-visible,
+.recent-chats-row:focus-visible {
+  box-shadow: none;
+}
+
+/* ---------- session tab context menu ---------- */
+
+.session-tab-menu-anchor {
+  position: fixed;
+  z-index: 55;
+}
+
+/* Overlays scrolling content, so it sits on the solid panel rather than glass. */
+.popover.session-tab-menu {
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  background: var(--panel-solid);
+  backdrop-filter: none;
+  box-shadow: var(--shadow-2);
+}
+
+.session-tab-menu .list-option {
+  padding: var(--s-2) var(--s-3);
+}
+
+/* ---------- composer ---------- */
+
+/* Same solid surface as .chat-list so transcript and prompt box read as one flat panel. */
+.main > .composer {
+  background: var(--panel-solid);
+}
+
+.composer.composer-start {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+}
+
+/* StartComposer owns the enhanced empty state. MessageList keeps its fallback for empty
+   existing sessions; suppress that sibling only while the start composer is present. */
+.chat-empty:has(+ .composer-start) {
+  display: none;
+}
+
+.composer-start-empty {
+  min-height: 0;
+  overflow-y: auto;
+  text-align: center;
+}
+
+.composer-start .quick-chips {
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--s-2);
+}
+
+.composer-start .chip {
+  padding: var(--s-2) var(--s-4);
+}
+
+.composer-start .chip[aria-busy='true'] {
+  border-color: var(--accent-2-a32);
+  background: var(--accent-3-a16);
+  color: var(--text);
+  opacity: 1;
+  cursor: progress;
+}
+
+.composer-start-hint {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.composer-start-input {
+  flex: none;
+}
+
+/* The input sits on the conversation's own surface: no separate fill, no edge highlight. */
+.composer .composer-box {
+  /* Match the transcript's reading width so composer and prose align. */
+  width: 100%;
+  max-width: 920px;
+  margin-inline: auto;
+}
+
+.composer fieldset.composer-box {
+  min-width: 0;
+  margin: 0 auto;
+}
+
+.composer .composer-box textarea {
+  max-height: 40vh;
+  resize: none;
+}
+
+.composer .composer-footer {
+  padding-top: var(--s-2);
+}
+
+/* Two fixed chip rows, then scrolling: queue changes never move the input or transcript. */
+.composer-queue-slot {
+  width: 100%;
+  max-width: 920px;
+  /* Collapses to nothing when empty so the input stays flush under the transcript. */
+  height: auto;
+  margin-inline: auto;
+}
+
+.composer-queue:empty {
+  display: none;
+}
+
+.composer-queue {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  max-height: calc(var(--s-6) * 2 + var(--s-2) * 2);
+  margin: 0;
+  padding: 0 0 var(--s-2);
+  overflow-y: auto;
+  list-style: none;
+}
+
+.composer-queue-chip {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  height: var(--s-6);
+  padding-inline: var(--s-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-1);
+  background: var(--panel-solid);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  animation: composer-queue-in var(--dur-2) var(--ease);
+}
+
+.composer-queue-index,
+.composer-queue-tag {
+  flex: none;
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+.composer-queue-index {
+  min-width: var(--s-4);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-queue-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-queue-remove {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--s-5);
+  height: var(--s-5);
+  padding: 0;
+  border-radius: var(--r-1);
+  color: var(--text-faint);
+  font-size: var(--fs-lg);
+}
+
+.composer-queue-remove:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+@keyframes composer-queue-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--s-1));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------- attachments ---------- */
+
+/* Same placement as the queue slot: fixed chip rows above the input, collapsing when empty. */
+.composer-attach-slot {
+  width: 100%;
+  max-width: 920px;
+  height: auto;
+  margin-inline: auto;
+}
+
+.composer-attach:empty {
+  display: none;
+}
+
+.composer-attach {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  max-height: calc(var(--s-6) * 2 + var(--s-2) * 2);
+  margin: 0;
+  padding: 0 0 var(--s-2);
+  overflow-y: auto;
+  list-style: none;
+}
+
+.composer-attach-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-1);
+  max-width: 100%;
+  height: var(--s-6);
+  padding-inline: var(--s-2) var(--s-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-1);
+  background: var(--panel-solid);
+  color: var(--text);
+  font: var(--fs-xs) var(--mono);
+  animation: composer-queue-in var(--dur-1) var(--ease);
+}
+
+.composer-attach-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Marks paths outside the worktree by glyph, not colour alone. */
+.composer-attach-ext {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.composer-attach-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.composer-attach-remove {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--s-5);
+  height: var(--s-5);
+  padding: 0;
+  border-radius: var(--r-1);
+  color: var(--text-faint);
+  font: var(--fs-lg) var(--font);
+}
+
+.composer-attach-remove:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.composer-attach-wrap {
+  flex: none;
+}
+
+.composer .composer-attach-btn {
+  padding: var(--s-1) var(--s-2);
+}
+
+.composer-attach-glyph {
+  display: block;
+  width: var(--s-4);
+  height: var(--s-4);
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.4;
+}
+
+.composer-attach-picker {
+  position: absolute;
+  bottom: calc(100% + var(--s-2));
+  left: 0;
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  width: 440px;
+  max-width: 70vw;
+  overflow: hidden;
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-2), var(--edge-highlight);
+  animation: modal-in var(--dur-1) var(--ease);
+}
+
+.composer-attach-search {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.composer-attach-search-glyph {
+  color: var(--text-faint);
+  font-size: var(--fs-lg);
+  line-height: 1;
+}
+
+.composer-attach-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: none;
+  color: var(--text);
+  font: var(--fs-md) var(--font);
+}
+
+.composer-attach-search input::placeholder {
+  color: var(--text-faint);
+}
+
+.composer-attach-list {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: var(--s-1);
+}
+
+/* Geometry comes from .list-option in ui.css. */
+.composer-attach-row {
+  color: var(--text);
+}
+
+.composer-attach-row[data-active='true'] {
+  background: var(--surface-2);
+}
+
+.composer-attach-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font: var(--fs-sm) var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-attach-check {
+  flex: none;
+  width: var(--s-4);
+  color: var(--accent-1);
+  text-align: center;
+}
+
+.composer-attach-empty,
+.composer-attach-more {
+  padding: var(--s-2) 10px;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.composer-attach-more {
+  color: var(--text-faint);
+}
+
+.composer-attach-sep {
+  height: 1px;
+  margin: var(--s-1) calc(-1 * var(--s-1));
+  background: var(--hairline);
+}
+
+/* Pinned viewer header: attach the open file to the active session. */
+.viewer-head .viewer-attach {
+  flex: none;
+  padding: var(--s-1) var(--s-3);
+  font-size: var(--fs-sm);
+}
+
+.composer .composer-tool {
+  padding: var(--s-1) var(--s-3);
+  font-size: var(--fs-sm);
+}
+
+/* The slot is always reserved, so the ring appearing never shifts the footer. */
+.context-donut-slot {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--s-4);
+  height: var(--s-4);
+}
+
+.context-donut {
+  display: block;
+  transform: rotate(-90deg);
+}
+
+.context-donut circle {
+  fill: none;
+  stroke-width: 2;
+}
+
+.context-donut-track {
+  stroke: var(--surface-2);
+}
+
+.context-donut-arc {
+  stroke: var(--ok);
+  transition: stroke-dashoffset var(--dur-1) var(--ease);
+}
+
+.context-donut[data-tone='warn'] .context-donut-arc {
+  stroke: var(--warn);
+}
+
+.context-donut[data-tone='danger'] .context-donut-arc {
+  stroke: var(--danger);
+}
+
+.composer .send-btn {
+  flex: none;
+  transition: filter var(--dur-1) var(--ease);
+}
+
+.composer .send-btn:disabled {
+  box-shadow: none;
+}
+
+.composer-session .send-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  width: calc(var(--s-6) * 3);
+  height: var(--s-6);
+  border-radius: var(--r-pill);
+  font-size: var(--fs-sm);
+}
+
+.composer-session .send-btn > span {
+  font-size: var(--fs-lg);
+}
+
+.composer-cancel[data-visible='false'],
+.composer-sendnow[data-visible='false'] {
+  visibility: hidden;
+}
+
+body:not([data-modality='keyboard']) .composer :focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+body[data-modality='keyboard'] .composer :focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-queue-chip,
+  .composer-attach-chip,
+  .composer-attach-picker {
+    animation: none;
+  }
+
+  .composer .chip,
+  .composer .send-btn,
+  .composer .composer-queue-remove,
+  .composer .composer-attach-remove {
+    transition: none;
+  }
+}
+
+/* ---------- subagent rows (transcript) ---------- */
+
+.chat-subagent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.chat-subagent-head .chat-row-label {
+  flex-shrink: 0;
+  max-width: 50%;
+}
+
+.chat-subagent-glyph {
+  font-size: var(--fs-md);
+  line-height: 1;
+}
+
+.chat-subagent[data-state='fail'] > .chat-row .chat-row-icon {
+  color: var(--danger);
+}
+
+.chat-subagent-badge {
+  flex: none;
+  padding: 0 var(--s-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-1);
+  font: var(--fs-xs) / 1.5 var(--mono);
+  color: var(--text-faint);
+}
+
+.chat-chip.chat-chip-ok {
+  background: var(--ok-a08);
+  color: var(--ok);
+}
+
+.chat-subagent-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding-left: var(--s-3);
+  border-left: 2px solid var(--border-strong);
+}
+
+.chat-subagent-caption {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+
+.chat-subagent-brief {
+  max-height: 200px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-subagent-empty {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}

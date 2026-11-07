@@ -1,0 +1,356 @@
+/* Settings is a full-surface route: .main.elevated, a page header, then a scrolling body.
+   8px grid: panel padding 16, section gap 12, control gap 8, list row 6px x 8px at 48px min height.
+   Section content is held to a 760px reading measure, left-aligned; hairlines run full width. */
+
+.settings-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding: var(--s-4);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.settings-page-title {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-xl);
+  font-weight: 600;
+}
+
+.settings-page-desc {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+/* Opaque scrolling body; rounds the shell's bottom corners since it is the last child. */
+.settings-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border-radius: 0 0 var(--r-4) var(--r-4);
+  background: var(--panel-solid);
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-4) var(--s-2);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.settings-section > * {
+  width: 100%;
+  max-width: 760px;
+}
+
+/* Label and notes indent one row-pad so their text lines up with row content, not the hover fill. */
+.settings-label {
+  padding: 0 var(--s-2);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.settings-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 48px;
+  padding: 6px var(--s-2);
+  border-radius: var(--r-2);
+}
+
+.settings-row:hover {
+  background: var(--surface-1);
+}
+
+.settings-dot {
+  flex-shrink: 0;
+  width: var(--s-2);
+  height: var(--s-2);
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.settings-dot[data-tone='ok'] {
+  background: var(--ok);
+}
+
+.settings-dot[data-tone='warn'] {
+  background: var(--warn);
+}
+
+.settings-dot[data-tone='danger'] {
+  background: var(--danger);
+}
+
+.settings-provider {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-name {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.settings-state {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.settings-mask {
+  font: var(--fs-sm) var(--mono);
+  color: var(--text-faint);
+}
+
+.settings-note {
+  margin: 0;
+  padding: 0 var(--s-2);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.settings-note code {
+  padding: 1px var(--s-1);
+  border-radius: var(--s-1);
+  background: var(--surface-2);
+  font: var(--fs-xs) var(--mono);
+  color: var(--text);
+}
+
+/* ---------- shortcuts ---------- */
+
+.shortcut-list {
+  margin: 0;
+}
+
+.shortcut-row {
+  min-height: 40px;
+}
+
+.shortcut-keys {
+  display: flex;
+  flex: 0 0 160px;
+  gap: var(--s-1);
+}
+
+.shortcut-label {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+/* ---------- project prompts: one collapsible panel per flow ---------- */
+
+.prompt-panel {
+  border-bottom: 1px solid var(--hairline);
+}
+
+.prompt-panel-head {
+  width: 100%;
+  text-align: left;
+}
+
+.prompt-panel-title {
+  font-weight: 600;
+}
+
+.prompt-panel-caret {
+  flex: none;
+  margin-right: var(--s-1);
+  transition: transform var(--dur-1) var(--ease);
+}
+
+.prompt-panel-head[aria-expanded='false'] .prompt-panel-caret {
+  transform: rotate(-45deg);
+}
+
+.prompt-panel-body {
+  padding: 0 var(--s-2) var(--s-3);
+  animation: prompt-panel-in 160ms ease-out;
+}
+
+@keyframes prompt-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(var(--s-1) * -1));
+  }
+}
+
+.prompt-panel-body textarea.input {
+  width: 100%;
+  min-height: calc(var(--s-6) * 2);
+  resize: vertical;
+  padding: var(--s-2);
+  background: var(--panel-solid);
+  line-height: 1.5;
+  transition: border-color var(--dur-1) var(--ease);
+}
+
+.prompt-panel-body textarea::placeholder {
+  color: var(--text-faint);
+  opacity: 1;
+}
+
+.project-prompts-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.project-prompts-save {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.project-prompts-dirty {
+  width: var(--s-2);
+  height: var(--s-2);
+  border-radius: var(--r-pill);
+  background: currentColor;
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease);
+}
+
+.project-prompts-dirty[data-dirty='true'] {
+  opacity: 0.65;
+}
+
+body:not([data-modality='keyboard']) .prompt-panels :focus-visible,
+body:not([data-modality='keyboard']) .project-prompts-footer :focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+body[data-modality='keyboard'] .prompt-panels :focus-visible,
+body[data-modality='keyboard'] .project-prompts-footer :focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prompt-panel-caret,
+  .prompt-panel-body textarea.input,
+  .project-prompts-save,
+  .project-prompts-dirty {
+    transition: none;
+  }
+
+  .prompt-panel-body {
+    animation: none;
+  }
+}
+
+/* ---------- default models: ordered loadout ---------- */
+
+.loadout-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.loadout-row {
+  min-height: 40px;
+  cursor: grab;
+}
+
+.loadout-row[data-dragging='true'] {
+  opacity: 0.5;
+}
+
+/* Drop target: an accent line where the dragged entry will land. */
+.loadout-row[data-over='true'] {
+  box-shadow: inset 0 2px 0 var(--accent-2);
+}
+
+.loadout-grip {
+  flex: none;
+  width: var(--s-3);
+  color: var(--text-faint);
+  text-align: center;
+}
+
+.loadout-pos {
+  flex: none;
+  width: var(--s-4);
+  color: var(--text-faint);
+  font: var(--fs-xs) var(--mono);
+  text-align: right;
+}
+
+.loadout-model {
+  flex: none;
+  max-width: 50%;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loadout-meta {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+/* The first entry's marker sits inline with the name (reference anatomy), not in a side column. */
+.loadout-default {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 0;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font: var(--fs-xs) / 1.6 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.loadout-empty {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  cursor: default;
+}
+
+.loadout-add {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 0 var(--s-2);
+}
+
+.loadout-add-model {
+  flex: 1;
+  min-width: 0;
+}
+
+.loadout-add-effort {
+  flex: 0 0 120px;
+}
+
+.loadout-add .dropdown {
+  min-width: 0;
+}
+
+/* ---------- environment variables ---------- */
+
+.settings-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+
+/* Variable names are case-significant identifiers, not provider names. */
+.settings-name.env-name {
+  font-family: var(--mono);
+  text-transform: none;
+}

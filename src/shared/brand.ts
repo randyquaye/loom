@@ -1,0 +1,5 @@
+export const APP_NAME = 'Loom'
+export const CONTEXT_DIR = '.context'
+export const WORKTREE_BRANCH_PREFIX = 'loom/'
+export const REPOS_DIR = 'repos'
+export const WORKSPACES_DIR = 'workspaces'

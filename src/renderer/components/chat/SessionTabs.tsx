@@ -1,0 +1,209 @@
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import type { SessionRow } from '../../../shared/ipc-contract'
+import { MAX_SESSIONS_PER_WORKSPACE } from '../../../shared/limits'
+import type { Effort } from '../../../shared/models'
+import { useSessions } from '../../state/sessions'
+import { useUi } from '../../state/ui'
+import { Popover } from '../ui/Popover'
+import { useToasts } from '../ui/Toast'
+import { RecentChats } from './RecentChats'
+import './flow.css'
+
+/**
+ * Session tabs, same attached family as the pinned viewer tab. While the viewer
+ * is showing, no session tab reads as selected; clicking any tab (including the
+ * current one) returns to the chat via onSelect. An empty-string active id is
+ * the compose sentinel and renders as a draft "New session" tab. Each session
+ * tab carries a close button (hover or keyboard focus), which closes the session
+ * without confirmation; the worktree is untouched. Right-click, Shift+F10 or the
+ * menu key on a session tab opens its Export / Fork / Close menu.
+ */
+export function SessionTabs({
+  workspaceId,
+  chatShown,
+  onSelect
+}: {
+  workspaceId: string
+  chatShown: boolean
+  onSelect: () => void
+}) {
+  const sessions = useSessions((s) => s.sessionsByWorkspace[workspaceId]) ?? []
+  const activeId = useSessions((s) => s.activeSessionByWorkspace[workspaceId] ?? null)
+  const setActive = useSessions((s) => s.setActive)
+  const closeSession = useSessions((s) => s.close)
+  const push = useToasts((s) => s.push)
+  const openNewSession = useUi((s) => s.openNewSession)
+  const atCap = sessions.length >= MAX_SESSIONS_PER_WORKSPACE
+  const drafting = activeId === '' || (activeId === null && sessions.length === 0)
+  const [menu, setMenu] = useState<{ session: SessionRow; x: number; y: number } | null>(null)
+  const closeMenu = useCallback(() => setMenu(null), [])
+
+  function closeTab(session: SessionRow) {
+    closeSession(workspaceId, session.id)
+      .then(() => useUi.getState().saveComposeDraft(session.id, ''))
+      .catch((err: unknown) => push(`Could not close session: ${String(err)}`, 'err'))
+  }
+
+  function exportTab(session: SessionRow) {
+    window.loom.sessions
+      .exportMarkdown(session.id)
+      .then((path) => {
+        if (path !== null) push(`Exported to ${path}`)
+      })
+      .catch((err: unknown) => push(`Export failed: ${String(err)}`, 'err'))
+  }
+
+  function forkTab(session: SessionRow) {
+    window.loom.sessions
+      .fork({
+        workspaceId,
+        backend: session.backend,
+        model: session.model,
+        effort: session.effort as Effort,
+        sourceSessionId: session.id
+      })
+      .then(async (row) => {
+        await useSessions.getState().load(workspaceId)
+        useSessions.getState().setActive(workspaceId, row.id)
+        push('Forked session')
+      })
+      .catch((err: unknown) => push(`Fork failed: ${String(err)}`, 'err'))
+  }
+
+  return (
+    <div className="tabs session-tabs" role="tablist" aria-label="Sessions">
+      {sessions.map((session) => {
+        const on = chatShown && session.id === activeId
+        return (
+          // The wrapper carries the tab chrome so the close button is a sibling, not a nested button.
+          <div
+            key={session.id}
+            className={`tab session-tab${on ? ' tab-on' : ''}`}
+            role="presentation"
+            onContextMenu={(e) => {
+              e.preventDefault()
+              setMenu({ session, x: e.clientX, y: e.clientY })
+            }}
+          >
+            <button
+              role="tab"
+              aria-selected={on}
+              aria-haspopup="menu"
+              className="tab-main"
+              title={`${session.backend} · ${session.model} · ${session.effort}`}
+              onClick={() => {
+                setActive(workspaceId, session.id)
+                onSelect()
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== 'ContextMenu' && !(e.key === 'F10' && e.shiftKey)) return
+                // Also suppresses the contextmenu event the key would fire, so the menu opens once.
+                e.preventDefault()
+                const rect = e.currentTarget.getBoundingClientRect()
+                setMenu({ session, x: rect.left, y: rect.bottom })
+              }}
+            >
+              <span className="tab-backend-dot" data-backend={session.backend} aria-hidden="true" />
+              <span className="tab-label">{session.title}</span>
+            </button>
+            <button
+              type="button"
+              className="tab-close"
+              aria-label={`Close ${session.title}`}
+              title="Close session"
+              onClick={() => closeTab(session)}
+            >
+              ×
+            </button>
+          </div>
+        )
+      })}
+      {drafting && (
+        <button
+          role="tab"
+          aria-selected={chatShown}
+          className={`tab tab-draft${chatShown ? ' tab-on' : ''}`}
+          onClick={onSelect}
+        >
+          <span className="tab-label">New session</span>
+        </button>
+      )}
+      <button
+        className="tab tab-add"
+        title={atCap ? 'Session limit reached' : 'New session'}
+        aria-label="New session"
+        disabled={atCap || drafting}
+        onClick={() => {
+          openNewSession(workspaceId)
+          onSelect()
+        }}
+      >
+        +
+      </button>
+      <RecentChats key={workspaceId} workspaceId={workspaceId} atCap={atCap} onSelect={onSelect} />
+      {menu !== null && (
+        <TabMenu key={`${menu.session.id}:${menu.x}:${menu.y}`} x={menu.x} y={menu.y} onClose={closeMenu}>
+          {(
+            [
+              ['Export as Markdown', exportTab],
+              ['Fork session', forkTab],
+              ['Close session', closeTab]
+            ] as const
+          ).map(([label, run]) => (
+            <button
+              key={label}
+              type="button"
+              role="menuitem"
+              className="list-option popover-item"
+              onClick={() => {
+                closeMenu()
+                run(menu.session)
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </TabMenu>
+      )}
+    </div>
+  )
+}
+
+const EDGE = 8
+
+/**
+ * Popover pinned at a viewport point. It is measured before paint and nudged back inside the
+ * window, so a menu opened near the right or bottom edge never renders off-screen.
+ */
+function TabMenu({
+  x,
+  y,
+  onClose,
+  children
+}: {
+  x: number
+  y: number
+  onClose: () => void
+  children: ReactNode
+}) {
+  const anchorRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current
+    const menu = anchor?.querySelector('.popover')
+    if (anchor === null || menu === null || menu === undefined) return
+    const { width, height } = menu.getBoundingClientRect()
+    anchor.style.left = `${Math.max(EDGE, Math.min(x, window.innerWidth - width - EDGE))}px`
+    anchor.style.top = `${Math.max(EDGE, Math.min(y, window.innerHeight - height - EDGE))}px`
+  }, [x, y])
+
+  return createPortal(
+    <div ref={anchorRef} className="popover-wrap session-tab-menu-anchor" style={{ left: x, top: y }}>
+      <Popover open onClose={onClose} className="session-tab-menu">
+        {children}
+      </Popover>
+    </div>,
+    document.body
+  )
+}

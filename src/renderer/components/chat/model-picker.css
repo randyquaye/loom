@@ -1,0 +1,204 @@
+/*
+ * Model picker popover. Tokens only. Same anatomy and rhythm as the command palette and themed
+ * dropdown: 4px list inset, shared .list-option rows, 8px control gap, 12px/16px section padding.
+ */
+
+.model-picker-wrap {
+  flex: none;
+}
+
+/* Trigger: compact rounded-rect chip in the composer footer (not a pill, to read as a control). */
+.model-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  max-width: 280px;
+  padding: 6px var(--s-3);
+  border-radius: var(--r-1);
+  background: var(--surface-1);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+.model-pill:hover,
+.model-pill[aria-expanded='true'] {
+  background: var(--surface-2);
+}
+
+.model-pill-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-pill-effort {
+  color: var(--text-muted);
+}
+
+.model-pill .dropdown-caret {
+  margin-left: 2px;
+}
+
+.provider-dot {
+  flex: none;
+  width: var(--s-2);
+  height: var(--s-2);
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.provider-codex {
+  background: var(--provider-codex);
+}
+
+.provider-claude {
+  background: var(--provider-claude);
+}
+
+.provider-gemini {
+  background: var(--provider-gemini);
+}
+
+.provider-qwen {
+  background: var(--provider-qwen);
+}
+
+/* ---------- popover ---------- */
+
+.model-picker {
+  position: absolute;
+  bottom: calc(100% + var(--s-2));
+  left: 0;
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  width: 360px;
+  overflow: hidden;
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-3), var(--edge-highlight);
+  animation: modal-in var(--dur-1) var(--ease);
+}
+
+.model-list {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: var(--s-1);
+}
+
+/* Geometry (padding, radius, type size) comes from .list-option in ui.css. */
+.model-row {
+  color: var(--text);
+}
+
+.model-row[data-active='true'] {
+  background: var(--surface-2);
+}
+
+.model-row-name {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-row-effort {
+  color: var(--text-muted);
+}
+
+.model-row-tag {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  color: var(--text-muted);
+  font: var(--fs-xs) / 1.6 var(--mono);
+  text-transform: uppercase;
+}
+
+/* Fixed slot so names align whether or not the row carries the check. */
+.model-check {
+  flex: none;
+  width: 16px;
+  color: var(--accent-1);
+  text-align: center;
+}
+
+.model-empty {
+  padding: var(--s-4);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+.model-section {
+  display: flex;
+  flex-direction: column;
+  padding: var(--s-1);
+  border-top: 1px solid var(--hairline);
+}
+
+.model-setting {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 40px;
+  padding: var(--s-1) var(--s-2);
+  font-size: var(--fs-md);
+}
+
+.model-setting-backend {
+  color: var(--text-muted);
+}
+
+.model-setting .segmented button {
+  white-space: nowrap;
+  text-transform: capitalize;
+}
+
+/* Give longer ladders their own line; six/seven options also use compact segments. */
+.model-setting:has(.segmented > button:nth-child(5)) {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--s-2);
+  padding: var(--s-2);
+}
+
+.model-setting .segmented:has(> button:nth-child(6)) {
+  display: flex;
+  flex-wrap: nowrap;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.model-setting .segmented:has(> button:nth-child(6)) button {
+  flex: 1 0 auto;
+  min-width: var(--s-6);
+  padding: var(--s-1);
+}
+
+.model-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border-top: 1px solid var(--hairline);
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+.model-foot-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px var(--s-2);
+  border-radius: var(--r-1);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.model-foot-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}

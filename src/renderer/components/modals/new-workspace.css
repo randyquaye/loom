@@ -1,0 +1,290 @@
+/*
+ * New workspace modal (conductor anatomy). Tokens only; 8px grid: header 12/16, prompt 16,
+ * control gap 8, list inset 4 with shared .list-option rows. Glass frame from .modal; the
+ * prompt and footer sit on the solid modal body/foot surfaces.
+ */
+
+.nw-modal .modal-head {
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+}
+
+/* Project picker reads as the modal title: borderless trigger, title type. */
+.nw-project {
+  min-width: 0;
+}
+
+.nw-project .dropdown {
+  min-width: 160px;
+}
+
+.nw-project .dropdown-trigger {
+  padding: 6px var(--s-2);
+  border-color: transparent;
+  background: none;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
+.nw-project .dropdown-trigger:hover {
+  border-color: transparent;
+  background: var(--surface-1);
+}
+
+.nw-project .dropdown-trigger[aria-expanded='true'] {
+  background: var(--surface-1);
+}
+
+.nw-project-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.popover.nw-project-menu {
+  min-width: 260px;
+  max-width: 400px;
+}
+
+.nw-project-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.nw-project-menu .icon {
+  color: var(--text-muted);
+}
+
+.nw-need-project {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.nw-modal .modal-body {
+  padding: 0;
+}
+
+.nw-prompt {
+  display: block;
+  width: 100%;
+  min-height: 200px;
+  padding: var(--s-4);
+  border: none;
+  background: none;
+  color: var(--text);
+  font: var(--fs-lg) / 1.5 var(--font);
+  resize: none;
+}
+
+.nw-prompt::placeholder {
+  color: var(--text-faint);
+}
+
+.nw-modal .modal-foot {
+  align-items: center;
+}
+
+.nw-enter {
+  margin-left: var(--s-1);
+  opacity: 0.8;
+}
+
+/* ---------- integrations chip + popover ---------- */
+
+.nw-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  max-width: 220px;
+  padding: 6px var(--s-3);
+  border-radius: var(--r-1);
+  background: var(--surface-1);
+  color: var(--text-muted);
+  font: var(--fs-sm) var(--mono);
+}
+
+.nw-chip:hover,
+.nw-chip[aria-expanded='true'] {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.nw-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nw-branch-glyph {
+  flex: none;
+  color: var(--ok);
+  font-family: var(--font);
+}
+
+.nw-integrations {
+  position: absolute;
+  top: calc(100% + var(--s-2));
+  right: 0;
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  width: 440px;
+  overflow: hidden;
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-3), var(--edge-highlight);
+  animation: modal-in var(--dur-1) var(--ease);
+}
+
+.nw-search {
+  display: flex;
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.nw-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: none;
+  color: var(--text);
+  font: var(--fs-md) var(--font);
+}
+
+.nw-search input::placeholder {
+  color: var(--text-faint);
+}
+
+.nw-tabs {
+  display: flex;
+  gap: var(--s-1);
+  padding: var(--s-2) var(--s-3);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.nw-tab {
+  padding: 4px var(--s-3);
+  border-radius: var(--r-1);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.nw-tab:hover {
+  color: var(--text);
+}
+
+.nw-tab[aria-selected='true'] {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.nw-list {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: var(--s-1);
+  background: var(--panel-solid);
+}
+
+.nw-row {
+  color: var(--text-muted);
+}
+
+.nw-row[data-active='true'] {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.nw-branch-name {
+  font: var(--fs-sm) var(--mono);
+}
+
+/* PR row: number | title | head → base | Draft. The title is the identifying information,
+   so it takes a 45% basis; the refs yield to 38% and stay fully available in the tooltip. */
+.nw-pr-number {
+  flex: none;
+  color: var(--text-muted);
+  font: var(--fs-sm) var(--mono);
+}
+
+/* Qualified so it outranks the shared .grow utility's flex shorthand. */
+.nw-row .nw-pr-title,
+.nw-row .nw-issue-title {
+  flex: 1 1 45%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nw-pr-refs {
+  flex: 0 1 auto;
+  max-width: 38%;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font: var(--fs-xs) var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Issue row: identifier | title | state. Identifier and state never shrink; the title does. */
+.nw-issue-id {
+  flex: none;
+  color: var(--text-muted);
+  font: var(--fs-sm) var(--mono);
+  white-space: nowrap;
+}
+
+.nw-pr-draft,
+.nw-issue-state {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 0;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font: var(--fs-xs) / 1.6 var(--font);
+}
+
+.nw-issue-state {
+  white-space: nowrap;
+}
+
+.nw-select-hint {
+  flex: none;
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  visibility: hidden;
+}
+
+.nw-row[data-active='true'] .nw-select-hint {
+  visibility: visible;
+}
+
+.nw-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-5) var(--s-4);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+.nw-empty-title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* gh hints carry the exact terminal command; keep it copyable and wrap long lines. */
+.nw-empty-hint {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.nw-empty .btn {
+  padding: var(--s-1) var(--s-3);
+}

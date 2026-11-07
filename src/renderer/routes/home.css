@@ -1,0 +1,129 @@
+/* Spacing grid shared with panels.css / settings.css: panel 16, section 12, control 8, row 6. */
+
+.home-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-4);
+}
+
+.home-search {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface-1);
+  box-shadow: var(--edge-highlight);
+}
+
+.home-search-glyph {
+  color: var(--text-faint);
+  font-size: var(--fs-xl);
+  line-height: 1;
+}
+
+.home-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: none;
+  color: var(--text);
+  font: var(--fs-lg) var(--font);
+}
+
+.home-search input::placeholder {
+  color: var(--text-faint);
+}
+
+.home-filters {
+  display: flex;
+}
+
+/* Overflow would clip the popover, so the filter row no longer scrolls; the trigger ellipsizes. */
+.home-filter .dropdown-trigger {
+  max-width: 280px;
+}
+
+.home-filter .dropdown-trigger .grow,
+.home-filter-name,
+.home-card-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.popover.home-filter-menu {
+  max-width: 320px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.home-results {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: 0 var(--s-4) var(--s-4);
+}
+
+.home-label {
+  padding-top: var(--s-1);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.home-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  width: 100%;
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  background: var(--panel-solid);
+  box-shadow: var(--edge-highlight);
+  text-align: left;
+}
+
+.home-card:hover {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+
+.home-card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-weight: 600;
+}
+
+.home-tag {
+  flex-shrink: 0;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface-1);
+  color: var(--text-muted);
+  font: var(--fs-xs) / 1.6 var(--font);
+}
+
+.home-time {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+
+.home-none {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-6) var(--s-4);
+}

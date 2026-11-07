@@ -1,0 +1,700 @@
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
+import { randomUUID } from 'node:crypto'
+import type Database from 'better-sqlite3'
+import { renderEventForSearch, type AgentEvent } from '../../shared/events'
+import {
+  type SessionCreateInput,
+  type SessionEventPush,
+  type SessionRow,
+  type SessionTitlePush,
+  SESSION_EVENT_CHANNEL
+} from '../../shared/ipc-contract'
+import { MAX_SESSIONS_PER_WORKSPACE } from '../../shared/limits'
+import type { BackendId, Effort } from '../../shared/models'
+import { cleanTitle, excerptTitle } from './title'
+import { envNames } from '../env/vars'
+import { formatAttachment, readAttachment, resolveAttachment } from './attachments'
+import { getBackend } from '../agents/registry'
+import type { RunningSession } from '../agents/types'
+import { AUTOLINK_SYSTEM_PROMPT } from '../agents/prompts/autolink'
+import { SKILL_FACTS } from '../agents/skill'
+import {
+  attachmentFileName,
+  MANAGED_AGENTS_MARKER,
+  refreshWorkspaceAgentsDoc,
+  writeAttachment,
+  writeLoomContext
+} from '../context/materialize'
+import { CheckpointBusyError, CheckpointRootError, saveCheckpoint } from '../git/checkpoint'
+import { setAgentsExclude } from '../git/exclude'
+import { GitError } from '../git/run'
+import { getWorkspaceOrThrow, renameWorkspaceIfAuto } from '../db/repos/workspaces'
+import { readInstructionOverlay } from '../instructions/files'
+import {
+  announceWorkspace,
+  waitForWorkspaceSettled,
+  WorkspaceNotReadyError,
+  workspaceEnv
+} from '../workspace/bootstrap'
+import { eventsToMarkdown } from '../export/markdown'
+
+export { SESSION_EVENT_CHANNEL }
+
+type Sink = (push: SessionEventPush) => void
+
+let sink: Sink | null = null
+
+/** Wired by main once the window exists; session events push through it. */
+export function setSessionSink(fn: Sink): void {
+  sink = fn
+}
+
+const live = new Map<string, RunningSession>()
+
+export class SessionLimitError extends Error {}
+
+interface SessionBackendRow {
+  workspace_id: string
+  backend: string
+  model: string
+  effort: string
+  provider_session_id: string | null
+}
+
+export function listSessions(db: Database.Database, workspaceId: string): SessionRow[] {
+  const rows = db
+    .prepare(
+      `SELECT id, workspace_id AS workspaceId, backend, model, effort, title,
+              created_at AS createdAt, closed_at AS closedAt, forked_from AS forkedFrom,
+              provider_session_id AS providerSessionId
+       FROM sessions WHERE workspace_id = ? AND closed_at IS NULL ORDER BY created_at`
+    )
+    .all(workspaceId) as SessionRow[]
+  return rows
+}
+
+/** Recently closed sessions, newest first, for the tab bar's reopen menu. */
+export function closedSessions(db: Database.Database, workspaceId: string): SessionRow[] {
+  return db
+    .prepare(
+      `SELECT id, workspace_id AS workspaceId, backend, model, effort, title,
+              created_at AS createdAt, closed_at AS closedAt, forked_from AS forkedFrom,
+              provider_session_id AS providerSessionId
+       FROM sessions WHERE workspace_id = ? AND closed_at IS NOT NULL
+       ORDER BY closed_at DESC, rowid DESC LIMIT 10`
+    )
+    .all(workspaceId) as SessionRow[]
+}
+
+/** Clears the close stamp so a closed tab returns; the cap counts open rows only. */
+export function reopenSession(db: Database.Database, sessionId: string): SessionRow {
+  const row = db
+    .prepare('SELECT workspace_id AS workspaceId FROM sessions WHERE id = ? AND closed_at IS NOT NULL')
+    .get(sessionId) as { workspaceId: string } | undefined
+  if (row === undefined) throw new Error(`no closed session ${sessionId}`)
+  const open = db
+    .prepare('SELECT COUNT(*) AS n FROM sessions WHERE workspace_id = ? AND closed_at IS NULL')
+    .get(row.workspaceId) as { n: number }
+  if (open.n >= MAX_SESSIONS_PER_WORKSPACE) {
+    throw new SessionLimitError(`workspace is limited to ${MAX_SESSIONS_PER_WORKSPACE} sessions`)
+  }
+  db.prepare('UPDATE sessions SET closed_at = NULL WHERE id = ?').run(sessionId)
+  return db
+    .prepare(
+      `SELECT id, workspace_id AS workspaceId, backend, model, effort, title,
+              created_at AS createdAt, closed_at AS closedAt, forked_from AS forkedFrom,
+              provider_session_id AS providerSessionId
+       FROM sessions WHERE id = ?`
+    )
+    .get(sessionId) as SessionRow
+}
+
+export function createSession(db: Database.Database, input: SessionCreateInput): SessionRow {
+  // The cap counts open tabs: closed rows stay reopenable and must not block new ones.
+  const count = db
+    .prepare('SELECT COUNT(*) AS n FROM sessions WHERE workspace_id = ? AND closed_at IS NULL')
+    .get(input.workspaceId) as { n: number }
+  if (count.n >= MAX_SESSIONS_PER_WORKSPACE) {
+    throw new SessionLimitError(`workspace is limited to ${MAX_SESSIONS_PER_WORKSPACE} sessions`)
+  }
+  const row: SessionRow = {
+    id: randomUUID(),
+    workspaceId: input.workspaceId,
+    backend: input.backend,
+    model: input.model,
+    effort: input.effort,
+    title: input.title,
+    createdAt: Date.now(),
+    closedAt: null,
+    forkedFrom: null,
+    providerSessionId: null
+  }
+  db.prepare(
+    `INSERT INTO sessions (id, workspace_id, backend, model, effort, title, created_at, closed_at, forked_from)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    row.id,
+    row.workspaceId,
+    row.backend,
+    row.model,
+    row.effort,
+    row.title,
+    row.createdAt,
+    row.closedAt,
+    row.forkedFrom
+  )
+  return row
+}
+
+export function sessionEvents(db: Database.Database, sessionId: string): AgentEvent[] {
+  const rows = db
+    .prepare('SELECT payload, ts FROM events WHERE session_id = ? ORDER BY seq')
+    .all(sessionId) as Array<{ payload: string; ts: number }>
+  return rows.map((row) => {
+    const event = JSON.parse(row.payload) as AgentEvent
+    // Rows written before turns carried real stamps get them from the row timestamp.
+    if (event.type === 'turn.done' && event.at === undefined) return { ...event, at: row.ts }
+    if (event.type === 'turn.started' && !event.at) return { ...event, at: row.ts }
+    return event
+  })
+}
+
+function appendEvent(db: Database.Database, sessionId: string, event: AgentEvent): void {
+  let stamped = event
+  if (
+    (event.type === 'turn.done' && event.at === undefined) ||
+    (event.type === 'turn.started' && !event.at)
+  ) {
+    stamped = { ...event, at: Date.now() }
+  }
+  const seqRow = db
+    .prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE session_id = ?')
+    .get(sessionId) as { next: number }
+  db.prepare('INSERT INTO events (session_id, seq, ts, type, payload) VALUES (?, ?, ?, ?, ?)').run(
+    sessionId,
+    seqRow.next,
+    Date.now(),
+    stamped.type,
+    JSON.stringify(stamped)
+  )
+  const text = renderEventForSearch(stamped)
+  if (text !== '') {
+    db.prepare('INSERT INTO events_rendered (session_id, text) VALUES (?, ?)').run(sessionId, text)
+  }
+  sink?.({ sessionId, event: stamped })
+}
+
+async function pump(db: Database.Database, sessionId: string, session: RunningSession): Promise<void> {
+  let settled = false
+  try {
+    for await (const event of session.events) {
+      appendEvent(db, sessionId, event)
+      if (event.type === 'turn.done') {
+        settleTurn(db, sessionId, true)
+        settled = true
+      } else if (event.type === 'error') {
+        // A failed turn must not wedge the session: unbusy, but keep the queue
+        // for the user to retry or drop explicitly.
+        settleTurn(db, sessionId, false)
+        settled = true
+      }
+    }
+    // One-shot backends end their stream at turn end without a trailing event. Skipped
+    // when the loop already settled: that settle may have started the next turn, whose
+    // busy flag this pump must not clear.
+    if (!settled) settleTurn(db, sessionId, true)
+  } catch (error) {
+    appendEvent(db, sessionId, {
+      type: 'error',
+      code: 'stream',
+      message: String(error),
+      retryable: false
+    })
+    settleTurn(db, sessionId, false)
+  }
+}
+
+/** Turns in flight and messages waiting for them, per session (process-local). */
+const busyTurns = new Set<string>()
+const queues = new Map<string, string[]>()
+/** A message the user forced over a running turn; sent the moment that turn ends. */
+const immediate = new Map<string, string>()
+
+/**
+ * Clears the busy flag at turn end and picks what runs next: a forced send-now message
+ * goes first, otherwise the queue drains. A failed turn keeps its queue for the user to
+ * retry or drop, but still honours an explicit send-now.
+ */
+function settleTurn(db: Database.Database, sessionId: string, drain: boolean): void {
+  busyTurns.delete(sessionId)
+  const now = immediate.get(sessionId)
+  if (now !== undefined) {
+    immediate.delete(sessionId)
+    void sendTurn(db, sessionId, now).catch((error: unknown) => {
+      appendEvent(db, sessionId, {
+        type: 'error',
+        code: 'send.now',
+        message: String(error),
+        retryable: false
+      })
+    })
+    return
+  }
+  if (drain) drainQueue(db, sessionId)
+}
+
+/**
+ * Interrupts the turn in flight and puts `text` ahead of the queue. The old stream is still
+ * dying when this returns, so the message waits in the immediate slot and settleTurn sends
+ * it the moment the turn ends — never as a second concurrent provider stream.
+ */
+export async function sendNow(
+  db: Database.Database,
+  sessionId: string,
+  text: string,
+  attachments: readonly string[] = [],
+  deniedRoots: readonly string[] = []
+): Promise<void> {
+  if (!busyTurns.has(sessionId)) return sendTurn(db, sessionId, text, attachments, deniedRoots)
+  immediate.set(sessionId, await composeWithAttachments(db, sessionId, text, attachments, deniedRoots))
+  await live.get(sessionId)?.cancel()
+}
+
+type QueueSink = (push: { sessionId: string; items: string[] }) => void
+
+let queueSink: QueueSink | null = null
+
+/** Wired by main once the window exists; queue changes push through it. */
+export function setQueueSink(fn: QueueSink): void {
+  queueSink = fn
+}
+
+function pushQueue(sessionId: string): void {
+  queueSink?.({ sessionId, items: sessionQueue(sessionId) })
+}
+
+type TitleSink = (push: SessionTitlePush) => void
+
+let titleSink: TitleSink | null = null
+
+/** Wired by main once the window exists; renames push through it. */
+export function setTitleSink(fn: TitleSink): void {
+  titleSink = fn
+}
+
+function setTitle(db: Database.Database, sessionId: string, title: string): void {
+  db.prepare('UPDATE sessions SET title = ? WHERE id = ?').run(title, sessionId)
+  titleSink?.({ sessionId, title })
+}
+
+/**
+ * Names a conversation from its first prompt: an excerpt immediately so the list is never
+ * blank, replaced by the model's own name whenever it arrives. There is deliberately no
+ * caller-side timeout: each backend caps its own naming call (CLI one-shots at 20s, the loop
+ * completion via abort), and a cold spawn that lost an 8s race used to strand the excerpt
+ * forever. Any failure keeps the excerpt. The workspace's display name follows the first
+ * model title while it is still auto-derived.
+ */
+async function renameFromPrompt(
+  db: Database.Database,
+  sessionId: string,
+  workspaceId: string,
+  backend: BackendId,
+  model: string,
+  prompt: string
+): Promise<void> {
+  setTitle(db, sessionId, excerptTitle(prompt))
+  const backendImpl = getBackend(backend)
+  let named: string | null = null
+  try {
+    const raw = backendImpl?.title === undefined ? null : await backendImpl.title(prompt, model)
+    named = cleanTitle(raw)
+  } catch {
+    named = null
+  }
+  if (named === null) return
+  setTitle(db, sessionId, named)
+  if (renameWorkspaceIfAuto(db, workspaceId, named)) announceWorkspace(db, workspaceId)
+}
+
+/**
+ * Inlines attachments above the user's message so every backend sees identical input and
+ * the transcript shows exactly what was sent. Relative paths are jailed to the worktree by
+ * contain(); absolute ones arrive from the native dialog and are vetted by the attachments
+ * module (deny-list, caps, binary refusal).
+ */
+async function composeWithAttachments(
+  db: Database.Database,
+  sessionId: string,
+  text: string,
+  attachments: readonly string[],
+  deniedRoots: readonly string[]
+): Promise<string> {
+  if (attachments.length === 0) return text
+  const ws = db
+    .prepare(
+      'SELECT w.worktree_path FROM workspaces w JOIN sessions s ON s.workspace_id = w.id WHERE s.id = ?'
+    )
+    .get(sessionId) as { worktree_path: string } | undefined
+  if (ws === undefined) throw new Error(`unknown session ${sessionId}`)
+  const blocks: string[] = []
+  for (const raw of attachments) {
+    const resolved = await resolveAttachment(ws.worktree_path, raw, deniedRoots)
+    blocks.push(formatAttachment(resolved.label, await readAttachment(resolved.abs)))
+  }
+  return `${blocks.join('\n\n')}\n\n${text}`
+}
+
+export function sessionQueue(sessionId: string): string[] {
+  return [...(queues.get(sessionId) ?? [])]
+}
+
+export function dequeue(sessionId: string, index: number): string[] {
+  const queue = queues.get(sessionId)
+  if (queue === undefined) return []
+  queue.splice(index, 1)
+  if (queue.length === 0) queues.delete(sessionId)
+  pushQueue(sessionId)
+  return sessionQueue(sessionId)
+}
+
+function drainQueue(db: Database.Database, sessionId: string): void {
+  const queue = queues.get(sessionId)
+  const next = queue?.shift()
+  if (queue !== undefined && queue.length === 0) queues.delete(sessionId)
+  if (next === undefined) return
+  pushQueue(sessionId)
+  void sendTurn(db, sessionId, next).catch((error: unknown) => {
+    appendEvent(db, sessionId, {
+      type: 'error',
+      code: 'queue.drain',
+      message: String(error),
+      retryable: false
+    })
+  })
+}
+
+export async function sendTurn(
+  db: Database.Database,
+  sessionId: string,
+  text: string,
+  attachments: readonly string[] = [],
+  deniedRoots: readonly string[] = []
+): Promise<void> {
+  const row = db
+    .prepare('SELECT workspace_id, backend, model, effort, provider_session_id FROM sessions WHERE id = ?')
+    .get(sessionId) as SessionBackendRow | undefined
+  if (row === undefined) throw new Error(`unknown session ${sessionId}`)
+
+  // A prompt that reaches a workspace mid-setup (or after a failed one) would spawn the CLI
+  // in a directory that is not a checkout yet — codex answers that with its trusted-directory
+  // refusal. Settle first; an already-ready workspace adds no await, so the queueing path
+  // behind a running turn keeps its no-tick promise.
+  const gate = getWorkspaceOrThrow(db, row.workspace_id)
+  if (gate.state !== 'ready') {
+    const settled = gate.state === 'error' ? gate : await waitForWorkspaceSettled(db, gate.id)
+    if (settled.state !== 'ready') throw new WorkspaceNotReadyError(gate.id, settled.state)
+  }
+
+  // Inlined before the busy check so a message queued behind a running turn keeps its files.
+  // No await on the attachment-free path: an extra tick here lets a settling turn clear the
+  // busy flag before the next send arrives, which would silently un-queue it.
+  const body =
+    attachments.length === 0
+      ? text
+      : await composeWithAttachments(db, sessionId, text, attachments, deniedRoots)
+
+  // A turn already in flight: queue the message instead of spawning a second
+  // process against the same provider session.
+  if (busyTurns.has(sessionId)) {
+    const queue = queues.get(sessionId) ?? []
+    queue.push(body)
+    queues.set(sessionId, queue)
+    pushQueue(sessionId)
+    return
+  }
+  busyTurns.add(sessionId)
+
+  const isFirstPrompt =
+    (
+      db
+        .prepare('SELECT COUNT(*) AS n FROM events WHERE session_id = ? AND type = ?')
+        .get(sessionId, 'user.text') as { n: number }
+    ).n === 0
+
+  const turnId = randomUUID()
+  appendEvent(db, sessionId, { type: 'user.text', turnId, text: body })
+  // Titles and checkpoints describe what the user asked, not the inlined files.
+  if (isFirstPrompt) {
+    void renameFromPrompt(db, sessionId, row.workspace_id, row.backend as BackendId, row.model, text)
+  }
+
+  const wsRow = db
+    .prepare(
+      `SELECT w.name, w.branch, w.worktree_path, p.repo_path, p.id AS project_id
+       FROM workspaces w JOIN projects p ON p.id = w.project_id WHERE w.id = ?`
+    )
+    .get(row.workspace_id) as
+    { name: string; branch: string; worktree_path: string; repo_path: string; project_id: string } | undefined
+  if (wsRow !== undefined) {
+    await writeLoomContext(wsRow.worktree_path, {
+      workspaceName: wsRow.name,
+      branch: wsRow.branch,
+      repoPath: wsRow.repo_path,
+      backend: row.backend,
+      model: row.model,
+      effort: row.effort,
+      at: Date.now(),
+      envNames: await envNames(wsRow.project_id)
+    }).catch(() => {})
+    // codex reads instructions only from a root AGENTS.md; keep a managed companion fresh
+    // while the path is free, and keep git blind to it only while Loom owns it.
+    void (async () => {
+      const doc = await composeAgentsDoc(db, row.workspace_id)
+      const owned = await refreshWorkspaceAgentsDoc(wsRow.worktree_path, doc)
+      await setAgentsExclude(wsRow.repo_path, owned)
+    })().catch(() => {})
+    void autoCheckpoint(wsRow.worktree_path, turnId, text).catch((error: unknown) => {
+      appendEvent(db, sessionId, {
+        type: 'error',
+        code: 'checkpoint.save',
+        message: String(error),
+        retryable: false
+      })
+    })
+  }
+
+  let session = live.get(sessionId)
+  if (session === undefined) {
+    const backend = getBackend(row.backend as SessionCreateInput['backend'])
+    if (backend === undefined) throw new Error(`backend ${row.backend} is not registered`)
+    const worktree = db.prepare('SELECT worktree_path FROM workspaces WHERE id = ?').get(row.workspace_id) as
+      { worktree_path: string } | undefined
+    if (worktree === undefined) throw new Error(`unknown workspace ${row.workspace_id}`)
+    session = await backend.startSession({
+      workspaceId: row.workspace_id,
+      worktreePath: worktree.worktree_path,
+      model: row.model,
+      effort: row.effort as Effort,
+      systemPromptAppend: await systemPromptFor(db, row.workspace_id, row.backend as BackendId),
+      resumeId: row.provider_session_id ?? undefined,
+      env: await workspaceEnv(db, row.workspace_id),
+      pluginDir: loomSkillDir ?? undefined
+    })
+    live.set(sessionId, session)
+    void pump(db, sessionId, session)
+  }
+  await session.send(body)
+  const providerId = session.providerSessionId?.()
+  if (providerId !== undefined) {
+    db.prepare('UPDATE sessions SET provider_session_id = ? WHERE id = ?').run(providerId, sessionId)
+  }
+}
+
+/** Per-turn undo point; busy, mis-rooted or non-git worktrees skip silently. */
+async function autoCheckpoint(worktreePath: string, turnId: string, text: string): Promise<void> {
+  try {
+    await saveCheckpoint(worktreePath, `turn ${turnId}: ${text.slice(0, 60)}`)
+  } catch (error) {
+    if (
+      error instanceof CheckpointBusyError ||
+      error instanceof CheckpointRootError ||
+      error instanceof GitError
+    ) {
+      return
+    }
+    throw error
+  }
+}
+
+let loomSkillDir: string | null = null
+let loomDataRoot: string | null = null
+
+/** Wired at startup so instruction overlays can be read without threading the path everywhere. */
+export function setLoomDataRoot(dir: string): void {
+  loomDataRoot = dir
+}
+
+/** Wired at boot once the bundled skill plugin is materialized under the data root. */
+export function setLoomSkillDir(dir: string): void {
+  loomSkillDir = dir
+}
+
+/**
+ * Autolink wrapper, bundled facts and repo instruction files for the loop backends, the
+ * Loom instruction overlays, the project's general prompt, and the names of any env vars.
+ */
+async function systemPromptFor(
+  db: Database.Database,
+  workspaceId: string,
+  backend: BackendId
+): Promise<string> {
+  const row = db
+    .prepare(
+      `SELECT w.worktree_path, p.id AS project_id, p.custom_prompt_general AS general
+       FROM workspaces w JOIN projects p ON p.id = w.project_id WHERE w.id = ?`
+    )
+    .get(workspaceId) as { worktree_path: string; project_id: string; general: string | null } | undefined
+  const parts = [AUTOLINK_SYSTEM_PROMPT]
+  // The loop backends have no native instruction-file discovery and no skill plugin, so
+  // they get the bundled facts and the repository's own instruction files inline.
+  if (backend === 'gemini' || backend === 'qwen') {
+    parts.push(SKILL_FACTS)
+    parts.push(...(await repoInstructionFiles(row?.worktree_path)))
+  }
+  if (row !== undefined) parts.push(...(await instructionOverlayParts(row.project_id)))
+  const general = row?.general
+  if (general !== null && general !== undefined && general.trim() !== '') parts.push(general)
+  const names = row === undefined ? [] : await envNames(row.project_id)
+  if (names.length > 0) parts.push(envNamesLine(names))
+  return parts.join('\n\n')
+}
+
+const REPO_INSTRUCTION_FILES = ['CLAUDE.md', 'AGENTS.md'] as const
+const REPO_INSTRUCTION_CAP = 16_000
+
+async function repoInstructionFiles(worktreePath: string | undefined): Promise<string[]> {
+  if (worktreePath === undefined) return []
+  const out: string[] = []
+  for (const name of REPO_INSTRUCTION_FILES) {
+    const text = await readFile(path.join(worktreePath, name), 'utf8').catch(() => '')
+    // Loom's own managed companion is not a repository instruction; the loop backends
+    // already carry its contents through the system prompt.
+    if (text.trim() === '' || text.startsWith(MANAGED_AGENTS_MARKER)) continue
+    out.push(`# Repository instructions (${name})\n\n${text.slice(0, REPO_INSTRUCTION_CAP)}`)
+  }
+  return out
+}
+
+async function instructionOverlayParts(projectId: string): Promise<string[]> {
+  if (loomDataRoot === null) return []
+  const overlay = await readInstructionOverlay(loomDataRoot, projectId)
+  return overlay.map((entry) =>
+    entry.scope === 'instance'
+      ? `# Instance instructions\n\n${entry.text}`
+      : `# Project instructions\n\n${entry.text}`
+  )
+}
+
+function envNamesLine(names: string[]): string {
+  return (
+    `Environment variables available in your shell and process environment: ${names.join(', ')}. ` +
+    'Their values are secret: reference them as $NAME and never echo, print, log or commit them.'
+  )
+}
+
+/** The managed root AGENTS.md body: everything codex cannot receive through a flag. */
+async function composeAgentsDoc(db: Database.Database, workspaceId: string): Promise<string> {
+  const row = db
+    .prepare(
+      `SELECT w.worktree_path, p.id AS project_id, p.custom_prompt_general AS general
+       FROM workspaces w JOIN projects p ON p.id = w.project_id WHERE w.id = ?`
+    )
+    .get(workspaceId) as { worktree_path: string; project_id: string; general: string | null } | undefined
+  const parts = [AUTOLINK_SYSTEM_PROMPT, SKILL_FACTS]
+  // codex reads AGENTS.md but never CLAUDE.md; while Loom owns the root path the companion
+  // is the only place the repo's CLAUDE.md can reach a codex session.
+  if (row !== undefined) parts.push(...(await repoInstructionFiles(row.worktree_path)))
+  if (row !== undefined) parts.push(...(await instructionOverlayParts(row.project_id)))
+  const general = row?.general
+  if (general !== null && general !== undefined && general.trim() !== '') parts.push(general)
+  const names = row === undefined ? [] : await envNames(row.project_id)
+  if (names.length > 0) parts.push(envNamesLine(names))
+  return parts.join('\n\n')
+}
+
+export async function cancelTurn(db: Database.Database, sessionId: string): Promise<void> {
+  await live.get(sessionId)?.cancel()
+}
+
+export function closeSession(sessionId: string): void {
+  const session = live.get(sessionId)
+  if (session) {
+    void session.close()
+    live.delete(sessionId)
+  }
+  busyTurns.delete(sessionId)
+  queues.delete(sessionId)
+  immediate.delete(sessionId)
+}
+
+export function closeAllSessions(): void {
+  for (const sessionId of [...live.keys()]) closeSession(sessionId)
+}
+
+/** Marks the row closed and tears down any live backend session for it. */
+export function closeSessionRow(db: Database.Database, sessionId: string): void {
+  db.prepare('UPDATE sessions SET closed_at = ? WHERE id = ? AND closed_at IS NULL').run(
+    Date.now(),
+    sessionId
+  )
+  closeSession(sessionId)
+}
+
+export interface ForkInput {
+  workspaceId: string
+  backend: SessionCreateInput['backend']
+  model: string
+  effort: Effort
+  sourceSessionId: string
+}
+
+/** Forks by seeding a brand-new session with the source transcript as its first user turn. */
+const FORK_SEED_MAX_EVENTS = 200
+
+export async function forkSession(db: Database.Database, input: ForkInput): Promise<SessionRow> {
+  const source = db
+    .prepare('SELECT title, backend, model, effort, created_at FROM sessions WHERE id = ?')
+    .get(input.sourceSessionId) as
+    { title: string; backend: string; model: string; effort: string; created_at: number } | undefined
+  if (source === undefined) throw new Error(`unknown session ${input.sourceSessionId}`)
+
+  // Cap the seed so repeatedly-forked sessions cannot grow without bound.
+  const sourceEvents = sessionEvents(db, input.sourceSessionId)
+  const capped =
+    sourceEvents.length > FORK_SEED_MAX_EVENTS ? sourceEvents.slice(-FORK_SEED_MAX_EVENTS) : sourceEvents
+  const markdown = eventsToMarkdown(
+    {
+      title: source.title,
+      backend: source.backend,
+      model: source.model,
+      effort: source.effort,
+      createdAt: source.created_at
+    },
+    capped
+  )
+  const created = createSession(db, {
+    workspaceId: input.workspaceId,
+    backend: input.backend,
+    model: input.model,
+    effort: input.effort,
+    title: `fork of ${source.title}`
+  })
+  db.prepare('UPDATE sessions SET forked_from = ? WHERE id = ?').run(input.sourceSessionId, created.id)
+  // The transcript lands as a .context attachment the seeded turn points at,
+  // instead of inflating the first user message with the whole markdown body.
+  const target = db.prepare('SELECT worktree_path FROM workspaces WHERE id = ?').get(input.workspaceId) as
+    { worktree_path: string } | undefined
+  if (target === undefined) throw new Error(`unknown workspace ${input.workspaceId}`)
+  const transcriptPath = await writeAttachment(
+    target.worktree_path,
+    attachmentFileName('transcript', source.title, Date.now()),
+    markdown
+  )
+  // Fire-and-forget: the fork returns as soon as the row exists; the seeded turn
+  // streams in over the event channel and failures surface as error events.
+  void sendTurn(
+    db,
+    created.id,
+    `Continuing from a previous session. The full transcript is at ${transcriptPath} — read it before answering.`
+  ).catch((error: unknown) => {
+    appendEvent(db, created.id, {
+      type: 'error',
+      code: 'fork.send',
+      message: String(error),
+      retryable: false
+    })
+  })
+  return { ...created, forkedFrom: input.sourceSessionId }
+}

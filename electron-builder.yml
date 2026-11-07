@@ -1,0 +1,19 @@
+appId: dev.loom.app
+productName: Loom
+directories:
+  buildResources: resources
+  output: release
+files:
+  - out/**
+  - package.json
+asarUnpack:
+  - '**/*.node'
+mac:
+  category: public.app-category.developer-tools
+  # Local-only tool: no Developer ID available, so skip signing (ad-hoc at runtime).
+  identity: null
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]

@@ -1,0 +1,706 @@
+/*
+ * Chat transcript (workstream B, round 7): flat Markdown prose, right-aligned user bubbles,
+ * per-turn collapsible tool groups, single-line tool rows, streaming caret, thinking row.
+ * Tokens only. Spacing grid: 8px baseline; column padding 16 (--s-4), turn gap 16, block gap 12
+ * (--s-3), control gap 8 (--s-2), row padding 4/8, row height 32.
+ * tokens.css is imported after component css, so every rule here uses chat-* classes rather than
+ * restyling the legacy .messages/.msg selectors it defines.
+ *
+ * Layout note (R6): the old tool cards were `overflow: hidden` flex items in this scrolling
+ * flex column. A non-visible overflow makes `min-height: auto` resolve to 0, so once the
+ * transcript overflowed the default `flex-shrink: 1` crushed every card to its 2px border.
+ * Children of the column are now `flex: none` and the scroller is a block container.
+ */
+
+/* ---------- column ---------- */
+
+.chat-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s-4);
+  /* Long scrolling text sits on a solid surface; glass stays on the panel chrome. */
+  background: var(--panel-solid);
+  font-size: var(--fs-md);
+  line-height: 1.65;
+  color: var(--text);
+}
+
+.chat-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  /* Reading width: prose must not stretch edge-to-edge on large displays. */
+  width: 100%;
+  max-width: 920px;
+  margin-inline: auto;
+}
+
+.chat-column > *,
+.chat-turn > *,
+.chat-group > *,
+.chat-group-body > * {
+  flex: none;
+  min-width: 0;
+}
+
+.chat-turn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.chat-reveal {
+  animation: chat-rise var(--dur-1) var(--ease);
+}
+
+@keyframes chat-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* ---------- user bubble ---------- */
+
+.chat-user {
+  align-self: flex-end;
+  max-width: min(76ch, 85%);
+  padding: var(--s-2) var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- markdown prose ---------- */
+
+.chat-md {
+  overflow-wrap: anywhere;
+}
+
+.chat-md > :first-child {
+  margin-top: 0;
+}
+
+.chat-md > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-md p,
+.chat-md ul,
+.chat-md ol,
+.chat-md pre,
+.chat-md blockquote,
+.chat-md .chat-md-table {
+  margin: 0 0 var(--s-3);
+}
+
+.chat-md h1,
+.chat-md h2,
+.chat-md h3,
+.chat-md h4 {
+  margin: var(--s-4) 0 var(--s-2);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.chat-md h1 {
+  font-size: var(--fs-xl);
+}
+
+.chat-md strong {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.chat-md ul,
+.chat-md ol {
+  padding-left: var(--s-5);
+}
+
+.chat-md li + li {
+  margin-top: var(--s-1);
+}
+
+.chat-md li > ul,
+.chat-md li > ol {
+  margin: var(--s-1) 0 0;
+}
+
+.chat-md li::marker {
+  color: var(--text-faint);
+}
+
+.chat-md hr {
+  margin: var(--s-4) 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.chat-md blockquote {
+  padding-left: var(--s-3);
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-muted);
+}
+
+.chat-md code {
+  padding: 1px var(--s-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-1);
+  font: var(--fs-sm) var(--mono);
+  color: var(--text);
+}
+
+.chat-md pre {
+  padding: var(--s-3) var(--s-4);
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-1);
+  background: var(--bg-1);
+  line-height: 1.55;
+}
+
+.chat-md pre code {
+  padding: 0;
+  border: 0;
+  font-size: var(--fs-sm);
+  white-space: pre;
+}
+
+.chat-md .chat-md-link {
+  color: var(--accent-1);
+}
+
+.chat-md .chat-weblink {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent-1);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 2px;
+}
+
+.chat-md .chat-weblink:hover {
+  text-decoration-color: currentColor;
+}
+
+.chat-md .chat-filelink {
+  display: inline;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent-1);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 2px;
+}
+
+.chat-md .chat-filelink:hover {
+  background: none;
+  text-decoration-color: currentColor;
+}
+
+.chat-md code .chat-filelink,
+.chat-md .chat-filelink code {
+  color: var(--accent-1);
+}
+
+.chat-md-table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.chat-md table {
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.chat-md th,
+.chat-md td {
+  padding: 6px var(--s-3);
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.chat-md th {
+  background: var(--surface-1);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.chat-md td code {
+  white-space: nowrap;
+}
+
+.chat-task-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--s-4);
+  height: var(--s-4);
+  margin-right: var(--s-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--s-1);
+  vertical-align: text-bottom;
+  font-size: var(--fs-sm);
+  color: var(--ok);
+}
+
+/* Keep the caret inline with prose; code/table/empty streams use a trailing caret. */
+.chat-md > .chat-caret {
+  display: none;
+}
+
+.chat-md[data-streaming='true']
+  > :nth-last-child(2):not(ul, ol, pre, .chat-md-table, .chat-code, .chat-mermaid)::after,
+.chat-md[data-streaming='true'] > :is(ul, ol):nth-last-child(2) > li:last-child::after,
+.chat-md > :is(pre, .chat-md-table, .chat-code, .chat-mermaid) + .chat-caret,
+.chat-md > .chat-caret:only-child {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  border-radius: 1px;
+  background: var(--accent-1);
+  animation: chat-blink 1s steps(2, start) infinite;
+}
+
+@keyframes chat-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* ---------- rows (group head, tool, error, thinking, reasoning) ---------- */
+
+.chat-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: fit-content;
+  max-width: 100%;
+  min-height: var(--s-6);
+  padding: var(--s-1) var(--s-2);
+  margin-left: calc(-1 * var(--s-2));
+  border: 0;
+  border-radius: var(--r-1);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  color: var(--text);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.chat-row-toggle {
+  cursor: pointer;
+  transition: background 80ms var(--ease);
+}
+
+.chat-row-toggle:hover {
+  background: var(--surface-1);
+}
+
+.chat-row-toggle:focus-visible,
+.chat-icon-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.chat-row-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+}
+
+.chat-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+.chat-row-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-tool .chat-row-label,
+.chat-error-row .chat-row-label {
+  flex-shrink: 0;
+  max-width: 50%;
+}
+
+.chat-row-in {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.chat-row-target {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: var(--fs-sm) var(--mono);
+  color: var(--text);
+}
+
+.chat-row-suffix {
+  flex: none;
+  font: var(--fs-sm) var(--mono);
+  color: var(--text-faint);
+}
+
+.chat-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 64ch;
+  padding: 1px var(--s-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: var(--r-1);
+  background: var(--surface-2);
+  font: var(--fs-sm) / 1.5 var(--mono);
+  color: var(--text-muted);
+}
+
+.chat-chip-danger {
+  background: var(--danger-a08);
+  color: var(--danger);
+}
+
+.chat-chevron {
+  color: var(--text-faint);
+  transition: transform var(--dur-1) var(--ease);
+}
+
+.chat-chevron.is-open {
+  transform: rotate(90deg);
+}
+
+/* ---------- turn group ---------- */
+
+.chat-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.chat-group-head {
+  color: var(--text-muted);
+}
+
+.chat-group-head .chat-row-label {
+  color: var(--text-muted);
+}
+
+.chat-group-kinds {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--text-faint);
+}
+
+.chat-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding-bottom: var(--s-1);
+}
+
+/* ---------- tool rows ---------- */
+
+.chat-tool {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.chat-tool[data-state='fail'] > .chat-row .chat-row-icon {
+  color: var(--danger);
+}
+
+.chat-tool-ok {
+  display: inline-flex;
+  flex: none;
+  color: var(--ok);
+}
+
+.chat-error-row,
+.chat-error-row .chat-row-icon {
+  color: var(--danger);
+}
+
+.chat-tool-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.chat-output {
+  max-height: 320px;
+  margin: 0;
+  padding: var(--s-3) var(--s-4);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-1);
+  background: var(--bg-1);
+  font: var(--fs-sm) / 1.55 var(--mono);
+  color: var(--text-muted);
+  white-space: pre;
+}
+
+.chat-output::-webkit-scrollbar-corner,
+.chat-patch-lines::-webkit-scrollbar-corner,
+.chat-md pre::-webkit-scrollbar-corner,
+.chat-md-table::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ---------- spinner / pulse ---------- */
+
+.chat-spinner {
+  width: var(--s-3);
+  height: var(--s-3);
+  border: 1.5px solid var(--border-strong);
+  border-top-color: var(--accent-1);
+  border-radius: 50%;
+  animation: chat-spin 0.8s linear infinite;
+}
+
+@keyframes chat-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.chat-pulse {
+  width: var(--s-2);
+  height: var(--s-2);
+  border-radius: 50%;
+  background: var(--accent-1);
+  animation: chat-pulse 1.2s var(--ease) infinite alternate;
+}
+
+@keyframes chat-pulse {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+}
+
+.chat-thinking .chat-row-label {
+  color: var(--text-muted);
+}
+
+/* ---------- reasoning ---------- */
+
+.chat-reasoning {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.chat-reasoning-head .chat-row-label {
+  color: var(--text-muted);
+}
+
+.chat-reasoning-text {
+  padding-left: var(--s-3);
+  border-left: 2px solid var(--border-strong);
+  font-style: italic;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- turn meta ---------- */
+
+.chat-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--s-5);
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+
+.chat-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--s-5);
+  height: var(--s-5);
+  padding: 0;
+  border-radius: var(--r-1);
+  color: var(--text-faint);
+  transition:
+    background 80ms var(--ease),
+    color 80ms var(--ease);
+}
+
+.chat-icon-btn:hover {
+  background: var(--surface-1);
+  color: var(--text);
+}
+
+/* ---------- patches ---------- */
+
+.chat-patch {
+  border: 1px solid var(--border);
+  border-radius: var(--r-1);
+  overflow: hidden;
+}
+
+.chat-patch-head {
+  display: flex;
+  gap: var(--s-2);
+  padding: var(--s-1) var(--s-3);
+  background: var(--surface-1);
+  font: var(--fs-xs) var(--mono);
+  color: var(--text-muted);
+}
+
+.chat-patch-lines {
+  max-height: 320px;
+  margin: 0;
+  overflow: auto;
+  font: var(--fs-sm) / 1.5 var(--mono);
+}
+
+.chat-patch-line {
+  display: flex;
+  white-space: pre;
+  color: var(--text-muted);
+}
+
+.chat-patch-gutter {
+  flex: none;
+  width: var(--s-5);
+  text-align: center;
+  user-select: none;
+  color: var(--text-faint);
+}
+
+.chat-patch-line[data-kind='add'] {
+  background: var(--ok-a08);
+  color: var(--ok);
+}
+
+.chat-patch-line[data-kind='add'] > .chat-patch-gutter {
+  color: var(--ok);
+}
+
+.chat-patch-line[data-kind='del'] {
+  background: var(--danger-a08);
+  color: var(--danger);
+}
+
+.chat-patch-line[data-kind='del'] > .chat-patch-gutter {
+  color: var(--danger);
+}
+
+/* ---------- empty state ---------- */
+
+.chat-empty {
+  flex: 1;
+  min-height: 0;
+}
+
+.chat-empty-hint {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-md[data-streaming='true']
+    > :nth-last-child(2):not(ul, ol, pre, .chat-md-table, .chat-code, .chat-mermaid)::after,
+  .chat-md[data-streaming='true'] > :is(ul, ol):nth-last-child(2) > li:last-child::after,
+  .chat-md > :is(pre, .chat-md-table, .chat-code, .chat-mermaid) + .chat-caret,
+  .chat-md > .chat-caret:only-child,
+  .chat-pulse,
+  .chat-spinner,
+  .chat-reveal {
+    animation: none;
+  }
+
+  .chat-chevron {
+    transition: none;
+  }
+}
+
+/* ---------- fenced code: copy action and mermaid diagrams ---------- */
+
+.chat-code {
+  margin: 0 0 var(--s-3);
+  border: 1px solid var(--border);
+  background: var(--bg-1);
+}
+
+.chat-code-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-1) var(--s-2);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-faint);
+  font: var(--fs-xs) var(--mono);
+}
+
+.chat-code-lang {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.chat-code-copy {
+  margin-left: auto;
+  padding: 1px var(--s-2);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+.chat-code-copy:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.chat-md .chat-code pre {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.chat-mermaid {
+  margin: 0 0 var(--s-3);
+  padding: var(--s-3);
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  background: var(--bg-1);
+}
+
+.chat-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
