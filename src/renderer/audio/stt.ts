@@ -1,0 +1,161 @@
+import { applySttMessage, STT_INITIAL, utteranceOf, type SttState } from '../../shared/stt'
+
+export type { SttState }
+export { STT_INITIAL, utteranceOf }
+
+const STT_URL = 'wss://api.elevenlabs.io/v1/speech-to-text/realtime'
+const RELEASE_WAIT_MS = 1500
+const SAMPLE_RATE = 16000
+
+function isCommitted(message: unknown): boolean {
+  const type = (message as { message_type?: unknown }).message_type
+  return type === 'committed_transcript' || type === 'committed_transcript_with_timestamps'
+}
+
+function base64Of(samples: Int16Array): string {
+  const bytes = new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength)
+  let out = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    out += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  }
+  return btoa(out)
+}
+
+/**
+ * One press-to-talk capture. A generation counter invalidates late provider messages after
+ * cancel or release, so abandoned speech can never submit into a conversation. The token
+ * comes from main (single-use); the long-lived key never reaches the renderer.
+ */
+export class SttClient {
+  private ws: WebSocket | null = null
+  private gen = 0
+  private state: SttState = STT_INITIAL
+  private releaseWait: {
+    resolve: (text: string | null) => void
+    timer: ReturnType<typeof setTimeout>
+  } | null = null
+
+  constructor(private readonly onState: (state: SttState) => void) {}
+
+  start(token: string): void {
+    const gen = ++this.gen
+    this.state = STT_INITIAL
+    this.onState(this.state)
+    const url = `${STT_URL}?model_id=scribe_v2_realtime&commit_strategy=vad&token=${encodeURIComponent(token)}`
+    const ws = new WebSocket(url)
+    this.ws = ws
+    ws.onmessage = (event) => {
+      if (gen !== this.gen) return
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(String(event.data))
+      } catch {
+        return
+      }
+      this.state = applySttMessage(this.state, parsed)
+      this.onState(this.state)
+      if (this.releaseWait !== null && isCommitted(parsed)) this.finishRelease()
+    }
+    ws.onerror = () => {
+      if (gen !== this.gen) return
+      this.state = { ...this.state, error: this.state.error ?? 'Speech recognition connection failed' }
+      this.onState(this.state)
+    }
+  }
+
+  sendChunk(samples: Int16Array): void {
+    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN) return
+    this.ws.send(
+      JSON.stringify({
+        message_type: 'input_audio_chunk',
+        audio_base_64: base64Of(samples),
+        commit: false,
+        sample_rate: SAMPLE_RATE
+      })
+    )
+  }
+
+  /** Flushes the tail audio as a manual commit and resolves with the finalized utterance. */
+  release(): Promise<string | null> {
+    const ws = this.ws
+    if (ws === null || ws.readyState !== WebSocket.OPEN) return Promise.resolve(null)
+    ws.send(
+      JSON.stringify({
+        message_type: 'input_audio_chunk',
+        audio_base_64: base64Of(new Int16Array(SAMPLE_RATE / 10)),
+        commit: true,
+        sample_rate: SAMPLE_RATE
+      })
+    )
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => this.finishRelease(), RELEASE_WAIT_MS)
+      this.releaseWait = { resolve, timer }
+    })
+  }
+
+  private finishRelease(): void {
+    if (this.releaseWait === null) return
+    const { resolve, timer } = this.releaseWait
+    this.releaseWait = null
+    clearTimeout(timer)
+    const text = utteranceOf(this.state)
+    this.close()
+    resolve(text === '' ? null : text)
+  }
+
+  /** Invalidates pending work immediately; late messages for this capture are dropped. */
+  cancel(): void {
+    this.gen += 1
+    if (this.releaseWait !== null) {
+      const { resolve, timer } = this.releaseWait
+      this.releaseWait = null
+      clearTimeout(timer)
+      resolve(null)
+    }
+    this.close()
+    this.state = STT_INITIAL
+    this.onState(this.state)
+  }
+
+  private close(): void {
+    const ws = this.ws
+    this.ws = null
+    if (ws !== null && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+      ws.close()
+    }
+  }
+}
+
+/** Mono 16kHz PCM16 capture. ScriptProcessor is deprecated but universal; worklet later. */
+export async function startMic(onChunk: (samples: Int16Array) => void): Promise<() => void> {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
+  })
+  const ctx = new AudioContext()
+  const source = ctx.createMediaStreamSource(stream)
+  const node = ctx.createScriptProcessor(4096, 1, 1)
+  // Script processors only run when connected to the destination; a zero-gain stage keeps
+  // the graph alive without feeding the microphone back into the speakers.
+  const silent = ctx.createGain()
+  silent.gain.value = 0
+  const ratio = ctx.sampleRate / SAMPLE_RATE
+  node.onaudioprocess = (event: AudioProcessingEvent) => {
+    const input = event.inputBuffer.getChannelData(0)
+    const out = new Int16Array(Math.floor(input.length / ratio))
+    for (let i = 0; i < out.length; i += 1) {
+      const sample = input[Math.floor(i * ratio)] ?? 0
+      out[i] = Math.max(-1, Math.min(1, sample)) * 0x7fff
+    }
+    onChunk(out)
+  }
+  source.connect(node)
+  node.connect(silent)
+  silent.connect(ctx.destination)
+  return () => {
+    node.onaudioprocess = null
+    node.disconnect()
+    source.disconnect()
+    void ctx.close()
+    for (const track of stream.getTracks()) track.stop()
+  }
+}
