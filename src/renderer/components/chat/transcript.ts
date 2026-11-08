@@ -1,4 +1,5 @@
 import type { AgentEvent } from '../../../shared/events'
+import { WEB_TOOL_NAMES, webToolInfo } from '../../../shared/webtools'
 import type { Block } from './derive'
 
 export type TextBlock = Extract<Block, { kind: 'text' }>
@@ -6,7 +7,7 @@ export type ToolBlock = Extract<Block, { kind: 'tool' }>
 export type UserBlock = Extract<Block, { kind: 'user' }>
 export type SubagentBlock = Extract<Block, { kind: 'subagent' }>
 
-export type ToolKind = 'bash' | 'grep' | 'glob' | 'read' | 'write' | 'edit' | 'other'
+export type ToolKind = 'bash' | 'grep' | 'glob' | 'read' | 'write' | 'edit' | 'web' | 'other'
 
 /** One assistant turn: intermediate work (text, reasoning, tools, errors) plus its final answer. */
 export interface AssistantTurn {
@@ -28,6 +29,7 @@ export interface AssistantTurn {
 export type Segment = { kind: 'user'; key: string; block: UserBlock } | AssistantTurn
 
 export function toolKind(name: string): ToolKind {
+  if (WEB_TOOL_NAMES.has(name)) return 'web'
   switch (name) {
     case 'bash':
       return 'bash'
@@ -179,17 +181,28 @@ export interface ToolSummary {
   kind: ToolKind
   /** Sans label ("Bash", "grep for 'x'"). */
   label: string
-  /** Mono target after "in" (grep/glob scope). */
+  /** Mono target after "in" (grep/glob scope); for web rows, the query or URL. */
   target?: string | undefined
   /** Mono argument chip, truncated with ellipsis. */
   chip?: string | undefined
   /** Faint result suffix ("12 matches"). */
   suffix?: string | undefined
+  /** Web rows: the fetched URL, rendered as a clickable external link. */
+  href?: string | undefined
 }
 
 export function toolSummary(block: ToolBlock): ToolSummary {
   const kind = toolKind(block.name)
   const done = block.ok === true
+  if (kind === 'web') {
+    const info = webToolInfo(block.name, block.args)
+    return {
+      kind,
+      label: info?.kind === 'fetch' ? 'Fetched a page' : 'Searched the web',
+      target: info?.query ?? info?.url,
+      href: info?.url
+    }
+  }
   switch (kind) {
     case 'bash': {
       const command = field(block.args, 'command', 'cmd')

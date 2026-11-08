@@ -252,7 +252,9 @@ export function parseCodexJsonlLine(line: string, turnId: string = CODEX_FALLBAC
           args:
             name === 'bash'
               ? commandArgs(item)
-              : (sub(item, 'arguments') ?? { changes: list(item, 'changes') })
+              : itemType === 'web_search'
+                ? item
+                : (sub(item, 'arguments') ?? { changes: list(item, 'changes') })
         }
       ]
     }

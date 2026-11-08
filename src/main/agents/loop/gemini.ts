@@ -139,7 +139,9 @@ export function buildGeminiRequest(
       body: JSON.stringify({
         contents,
         systemInstruction: { parts: [{ text: systemInstruction }] },
-        tools: [GEMINI_TOOL_DECLS],
+        // Function declarations plus Google Search grounding: the loop vocabulary had no
+        // web tool at all, so gemini sessions could not search even when asked.
+        tools: [GEMINI_TOOL_DECLS, { google_search: {} }],
         generationConfig: { thinkingConfig: { thinkingBudget: budgetFor(opts.effort) } }
       })
     }

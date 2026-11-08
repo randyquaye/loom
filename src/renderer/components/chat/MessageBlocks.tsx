@@ -64,6 +64,12 @@ const TOOL_GLYPHS: Record<ToolKind, ReactNode> = {
     </>
   ),
   edit: <path d="M10.5 2.5 13.5 5.5 6 13H3v-3z" />,
+  web: (
+    <>
+      <circle cx="8" cy="8" r="6" />
+      <path d="M2 8h12M8 2c2.75 3 2.75 9 0 12M8 2c-2.75 3-2.75 9 0 12" />
+    </>
+  ),
   other: (
     <>
       <circle cx="8" cy="8" r="5.5" />
@@ -180,6 +186,7 @@ export function ToolRow({
 }) {
   const [open, setOpen] = useState(false)
   const summary = toolSummary(block)
+  const href = summary.href
   const pending = block.ok === undefined && live
   const hasPatches = patches !== undefined && patches.length > 0
   const hasOutput = block.output !== undefined && block.output.trim() !== ''
@@ -192,7 +199,30 @@ export function ToolRow({
         {pending ? <Spinner /> : <ToolIcon kind={summary.kind} />}
       </span>
       <span className="chat-row-label">{summary.label}</span>
-      {summary.target !== undefined && (
+      {summary.kind === 'web' && summary.target !== undefined && href === summary.target && (
+        <button
+          type="button"
+          className="chat-weblink"
+          title={`Open in your browser: ${href}`}
+          onClick={() => void window.loom.shell.openExternal(href)}
+        >
+          {summary.target}
+        </button>
+      )}
+      {summary.kind === 'web' && summary.target !== undefined && href !== summary.target && (
+        <span className="chat-row-target">{summary.target}</span>
+      )}
+      {href !== undefined && href !== summary.target && (
+        <button
+          type="button"
+          className="chat-weblink"
+          title={`Open in your browser: ${href}`}
+          onClick={() => void window.loom.shell.openExternal(href)}
+        >
+          {href}
+        </button>
+      )}
+      {summary.kind !== 'web' && summary.target !== undefined && (
         <>
           <span className="chat-row-in">in</span>
           <span className="chat-row-target">{summary.target}</span>

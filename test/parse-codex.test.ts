@@ -137,10 +137,11 @@ describe('parseCodexJsonlLine tolerance', () => {
 
   it('renders unmapped item kinds as generic rows instead of dropping them', () => {
     for (const itemType of ['mcp_tool_call', 'web_search', 'todo_list', 'image_generation']) {
+      const item = { type: itemType, id: 'i1' }
       const started = JSON.stringify({
         type: 'item.started',
         id: 'i1',
-        item: { type: itemType, id: 'i1' }
+        item
       })
       expect(parseCodexJsonlLine(started), itemType).toEqual([
         {
@@ -148,7 +149,8 @@ describe('parseCodexJsonlLine tolerance', () => {
           turnId: CODEX_FALLBACK_TURN_ID,
           callId: 'i1',
           name: itemType,
-          args: { changes: [] }
+          // web_search keeps the whole item so the transcript row can show the query.
+          args: itemType === 'web_search' ? item : { changes: [] }
         }
       ])
       const completed = JSON.stringify({
@@ -332,5 +334,24 @@ describe('parseCodexJsonlLine tolerance', () => {
     const duplicate = parser.parse('{"type":"turn.started"}')
     expect(started).toHaveLength(1)
     expect(duplicate).toEqual([])
+  })
+})
+
+describe('codex web_search items', () => {
+  it('keeps the whole item as args so the transcript row can show the query', () => {
+    const parser = createCodexParser(THREAD)
+    const events = parser.parse(
+      JSON.stringify({
+        timestamp: '2026-11-08T10:00:00.000Z',
+        type: 'item.started',
+        id: 'item_9',
+        item: { type: 'web_search', id: 'item_9', action: { type: 'search', query: 'vitest coverage flags' } }
+      })
+    )
+    expect(events[0]).toMatchObject({
+      type: 'tool.call',
+      name: 'web_search',
+      args: { action: { type: 'search', query: 'vitest coverage flags' } }
+    })
   })
 })

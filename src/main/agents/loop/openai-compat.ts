@@ -120,7 +120,9 @@ export function buildOpenAiRequest(opts: SessionOpts, apiKey: string, messages: 
         tools: OPENAI_TOOL_DEFS,
         stream: true,
         stream_options: { include_usage: true },
-        reasoning_effort: opts.effort
+        reasoning_effort: opts.effort,
+        // qwen's native web search: grounded answers instead of a six-tool vocabulary gap.
+        enable_search: true
       })
     }
   }

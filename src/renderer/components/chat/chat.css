@@ -174,7 +174,7 @@
   color: var(--accent-1);
 }
 
-.chat-md .chat-weblink {
+.chat-weblink {
   display: inline;
   padding: 0;
   border: 0;
@@ -187,7 +187,7 @@
   text-underline-offset: 2px;
 }
 
-.chat-md .chat-weblink:hover {
+.chat-weblink:hover {
   text-decoration-color: currentColor;
 }
 
