@@ -107,6 +107,9 @@ test('transcript renders code copy actions and mermaid diagrams; ⌘T opens a ne
     await win.mouse.up()
     await expect(win.locator('.toast', { hasText: 'ElevenLabs API key required' })).toBeVisible()
 
+    // Voice replies are opt-in: the toggle ships off.
+    await expect(win.locator('.voice-btn')).toHaveAttribute('data-on', 'false')
+
     await win.keyboard.press('Meta+t')
     await expect(win.locator('.tab-draft')).toBeVisible()
 

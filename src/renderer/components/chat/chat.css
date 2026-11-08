@@ -728,6 +728,26 @@
   color: var(--accent-1);
 }
 
+.voice-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.voice-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.voice-btn[data-on='true'] {
+  border-color: var(--accent-1);
+  color: var(--accent-1);
+}
+
 .stt-strip {
   display: flex;
   align-items: center;

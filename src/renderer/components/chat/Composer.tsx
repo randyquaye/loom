@@ -8,6 +8,7 @@ import { useProjects } from '../../state/projects'
 import { isTurnRunning, useSessions } from '../../state/sessions'
 import { MAX_ATTACHMENTS, useUi } from '../../state/ui'
 import { MicGlyph, useTalk } from '../../audio/talk'
+import { useSpeech } from '../../audio/speechController'
 import { talkHandoff } from '../../../shared/stt'
 import { ErrorState } from '../ui/ErrorState'
 import { useToasts } from '../ui/Toast'
@@ -627,6 +628,9 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
     if (handoff.interrupt) void submitNow()
     else void submit()
   })
+  const voiceEnabled = useUi((s) => s.voiceEnabled)
+  const setVoiceEnabled = useUi((s) => s.setVoiceEnabled)
+  useSpeech(sessionId)
   const [queue, setQueue] = useState<string[]>([])
   const [removing, setRemoving] = useState(false)
   const queueRequest = useRef({ revision: 0, removing: false, active: false })
@@ -798,6 +802,28 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
             sessionId={sessionId}
             disabled={disabled || session === null}
           />
+          <button
+            type="button"
+            className="composer-tool voice-btn"
+            data-on={voiceEnabled}
+            aria-pressed={voiceEnabled}
+            title={voiceEnabled ? 'Voice replies on' : 'Voice replies off'}
+            aria-label={voiceEnabled ? 'Voice replies on' : 'Voice replies off'}
+            onClick={() => setVoiceEnabled(!voiceEnabled)}
+          >
+            <svg
+              viewBox="0 0 16 16"
+              width="14"
+              height="14"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              aria-hidden="true"
+            >
+              <path d="M3 6h2.5L9 3v10L5.5 10H3z" />
+              <path d="M11.5 5.5a3.5 3.5 0 0 1 0 5" />
+            </svg>
+          </button>
           <button
             type="button"
             className="composer-tool talk-btn"

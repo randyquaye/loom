@@ -54,12 +54,17 @@ interface UiState {
   openPalette(): void
   closePalette(): void
   togglePalette(): void
+  /** Spoken replies for foreground prose; opt-in and default off, per the blazing-fast bar. */
+  voiceEnabled: boolean
+  setVoiceEnabled(enabled: boolean): void
 }
 
 export const useUi = create<UiState>((set) => ({
   route: { name: 'home' },
   modals: CLOSED,
   paletteOpen: false,
+  voiceEnabled: false,
+  setVoiceEnabled: (voiceEnabled) => set({ voiceEnabled }),
   draft: null,
   setDraft: (draft) => set({ draft }),
   draftBySession: {},
