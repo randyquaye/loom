@@ -20,7 +20,7 @@ import type { IpcDeps } from '../src/main/ipc'
 import { setTrustedOrigin } from '../src/main/ipc/index'
 import { elevenlabsStatus, registerElevenLabsIpc } from '../src/main/ipc/elevenlabs'
 import { aesGcmCipher, createSecretStore } from '../src/main/secrets'
-import type { SecretPresence, SttTokenResult } from '../src/shared/ipc-contract'
+import type { SecretPresence, SingleUseTokenResult } from '../src/shared/ipc-contract'
 
 setTrustedOrigin('file://')
 
@@ -80,7 +80,7 @@ describe('elevenlabs stt token', () => {
     const fetchSpy = vi.fn()
     vi.stubGlobal('fetch', fetchSpy)
 
-    expect(await invoke<SttTokenResult>('elevenlabs:sttToken', undefined)).toEqual({ kind: 'needs-key' })
+    expect(await invoke<SingleUseTokenResult>('elevenlabs:sttToken', undefined)).toEqual({ kind: 'needs-key' })
     expect(fetchSpy).not.toHaveBeenCalled()
     vi.unstubAllGlobals()
   })
@@ -96,7 +96,7 @@ describe('elevenlabs stt token', () => {
     })
     vi.stubGlobal('fetch', fetchSpy)
 
-    expect(await invoke<SttTokenResult>('elevenlabs:sttToken', undefined)).toEqual({
+    expect(await invoke<SingleUseTokenResult>('elevenlabs:sttToken', undefined)).toEqual({
       kind: 'ok',
       token: 'single-use-token'
     })
@@ -112,7 +112,24 @@ describe('elevenlabs stt token', () => {
       vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}) }))
     )
 
-    expect(await invoke<SttTokenResult>('elevenlabs:sttToken', undefined)).toMatchObject({ kind: 'error' })
+    expect(await invoke<SingleUseTokenResult>('elevenlabs:sttToken', undefined)).toMatchObject({ kind: 'error' })
+    vi.unstubAllGlobals()
+  })
+
+  it('mints the tts_websocket scope for speech output', async () => {
+    const deps = makeDeps()
+    registerElevenLabsIpc(deps)
+    await invoke('elevenlabs:setKey', { value: KEY })
+    const fetchSpy = vi.fn(async (url: unknown) => {
+      expect(String(url)).toContain('/v1/single-use-token/tts_websocket')
+      return { ok: true, json: async () => ({ token: 'tts-token' }) }
+    })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    expect(await invoke<SingleUseTokenResult>('elevenlabs:ttsToken', undefined)).toEqual({
+      kind: 'ok',
+      token: 'tts-token'
+    })
     vi.unstubAllGlobals()
   })
 })

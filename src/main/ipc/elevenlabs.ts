@@ -1,32 +1,24 @@
-import type { ElevenLabsStatus, SecretPresence, SttTokenResult } from '../../shared/ipc-contract'
+import type { ElevenLabsStatus, SecretPresence, SingleUseTokenResult } from '../../shared/ipc-contract'
 import { handle, maskSecret, type IpcDeps } from './index'
 
 export const ELEVENLABS_KEY_HINT =
   'Add an ElevenLabs API key in Settings → Integrations to enable spoken replies.'
 
-/** Probe for the aggregate status call; never throws, mirroring linearStatus. */
-export async function elevenlabsStatus(deps: IpcDeps): Promise<ElevenLabsStatus> {
-  try {
-    const key = await deps.secrets.get('elevenlabs')
-    return key === null ? { state: 'needs-key', hint: ELEVENLABS_KEY_HINT } : { state: 'ready' }
-  } catch (err) {
-    return { state: 'error', message: err instanceof Error ? err.message : String(err) }
-  }
-}
+/** Single-use token scopes Loom mints in main; the long-lived key never crosses the bridge. */
+const TOKEN_SCOPES = {
+  stt: 'realtime_scribe',
+  tts: 'tts_websocket'
+} as const
 
-/**
- * Credential path only (audio spec increment 1): the key lives in the existing encrypted
- * store under a namespaced id and crosses IPC masked, exactly like Linear's. No provider
- * calls, no audio pipeline, no new backend.
- */
-const STT_TOKEN_URL = 'https://api.elevenlabs.io/v1/single-use-token/realtime_scribe'
+type TokenScope = (typeof TOKEN_SCOPES)[keyof typeof TOKEN_SCOPES]
+
 const TOKEN_WAIT_MS = 10_000
 
 /**
- * Mints the single-use realtime-STT token in main so the long-lived key never crosses the
- * bridge; the renderer connects to ElevenLabs directly with the token (no gateway hop).
+ * Mints a single-use ElevenLabs websocket token in main so the long-lived key never crosses
+ * the bridge; the renderer connects to ElevenLabs directly with the token (no gateway hop).
  */
-async function mintSttToken(deps: IpcDeps): Promise<SttTokenResult> {
+async function mintToken(deps: IpcDeps, scope: TokenScope): Promise<SingleUseTokenResult> {
   let key: string | null
   try {
     key = await deps.secrets.get('elevenlabs')
@@ -35,7 +27,7 @@ async function mintSttToken(deps: IpcDeps): Promise<SttTokenResult> {
   }
   if (key === null) return { kind: 'needs-key' }
   try {
-    const res = await fetch(STT_TOKEN_URL, {
+    const res = await fetch(`https://api.elevenlabs.io/v1/single-use-token/${scope}`, {
       method: 'POST',
       headers: { 'xi-api-key': key },
       signal: AbortSignal.timeout(TOKEN_WAIT_MS)
@@ -52,6 +44,16 @@ async function mintSttToken(deps: IpcDeps): Promise<SttTokenResult> {
   }
 }
 
+/** Probe for the aggregate status call; never throws, mirroring linearStatus. */
+export async function elevenlabsStatus(deps: IpcDeps): Promise<ElevenLabsStatus> {
+  try {
+    const key = await deps.secrets.get('elevenlabs')
+    return key === null ? { state: 'needs-key', hint: ELEVENLABS_KEY_HINT } : { state: 'ready' }
+  } catch (err) {
+    return { state: 'error', message: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 export function registerElevenLabsIpc(deps: IpcDeps): void {
   handle('elevenlabs:hasKey', async (): Promise<SecretPresence> => {
     const value = await deps.secrets.get('elevenlabs')
@@ -59,5 +61,6 @@ export function registerElevenLabsIpc(deps: IpcDeps): void {
   })
   handle('elevenlabs:setKey', ({ value }) => deps.secrets.set('elevenlabs', value))
   handle('elevenlabs:deleteKey', () => deps.secrets.delete('elevenlabs'))
-  handle('elevenlabs:sttToken', () => mintSttToken(deps))
+  handle('elevenlabs:sttToken', () => mintToken(deps, TOKEN_SCOPES.stt))
+  handle('elevenlabs:ttsToken', () => mintToken(deps, TOKEN_SCOPES.tts))
 }

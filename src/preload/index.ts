@@ -59,7 +59,8 @@ const api: LoomApi = {
     hasKey: () => invoke('elevenlabs:hasKey', undefined),
     setKey: (value) => invoke('elevenlabs:setKey', { value }),
     deleteKey: () => invoke('elevenlabs:deleteKey', undefined),
-    sttToken: () => invoke('elevenlabs:sttToken', undefined)
+    sttToken: () => invoke('elevenlabs:sttToken', undefined),
+    ttsToken: () => invoke('elevenlabs:ttsToken', undefined)
   },
   projects: {
     list: () => invoke('projects:list', undefined),
