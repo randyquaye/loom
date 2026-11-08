@@ -100,6 +100,13 @@ test('transcript renders code copy actions and mermaid diagrams; ⌘T opens a ne
     await expect(win.locator('button.chat-weblink', { hasText: 'mail' })).toHaveCount(0)
     await expect(win.locator('.chat-md-link', { hasText: 'mail' })).toBeVisible()
 
+    // Press-to-talk without a stored key reports the missing credential instead of capturing.
+    const talk = win.locator('.talk-btn')
+    await talk.hover()
+    await win.mouse.down()
+    await win.mouse.up()
+    await expect(win.locator('.toast', { hasText: 'ElevenLabs API key required' })).toBeVisible()
+
     await win.keyboard.press('Meta+t')
     await expect(win.locator('.tab-draft')).toBeVisible()
 

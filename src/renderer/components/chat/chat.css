@@ -704,3 +704,51 @@
   max-width: 100%;
   height: auto;
 }
+
+/* ---------- press-to-talk ---------- */
+
+.talk-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.talk-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.talk-btn[data-phase='capturing'],
+.talk-btn[data-phase='finalizing'] {
+  border-color: var(--accent-1);
+  color: var(--accent-1);
+}
+
+.stt-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.stt-live::after {
+  content: '▍';
+  color: var(--accent-1);
+}
+
+.stt-final {
+  color: var(--text);
+}
+
+.stt-error {
+  color: var(--danger);
+}

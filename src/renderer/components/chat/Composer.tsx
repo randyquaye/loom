@@ -7,6 +7,7 @@ import { useFiles } from '../../state/files'
 import { useProjects } from '../../state/projects'
 import { isTurnRunning, useSessions } from '../../state/sessions'
 import { MAX_ATTACHMENTS, useUi } from '../../state/ui'
+import { MicGlyph, useTalk } from '../../audio/talk'
 import { ErrorState } from '../ui/ErrorState'
 import { useToasts } from '../ui/Toast'
 import { WeaveMark } from '../ui/WeaveMark'
@@ -611,6 +612,7 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
   const running = useSessions((s) => isTurnRunning(s.eventsBySession[sessionId] ?? []))
   const push = useToasts((s) => s.push)
   const { text, setText, ref } = useComposeText(sessionId)
+  const talk = useTalk(sessionId)
   const [queue, setQueue] = useState<string[]>([])
   const [removing, setRemoving] = useState(false)
   const queueRequest = useRef({ revision: 0, removing: false, active: false })
@@ -734,6 +736,24 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
         </ol>
       </div>
       <AttachChips sessionId={sessionId} disabled={disabled} />
+      {(talk.phase !== 'idle' || talk.finalized !== null || talk.stt.error !== null) && (
+        <div className="stt-strip" role="status">
+          {talk.stt.error !== null ? (
+            <span className="stt-error">{talk.stt.error}</span>
+          ) : talk.finalized !== null ? (
+            <span className="stt-final">{talk.finalized}</span>
+          ) : (
+            <span className="stt-live">
+              {[...talk.stt.committed, talk.stt.live].filter((part) => part !== '').join(' ')}
+            </span>
+          )}
+          {talk.phase === 'capturing' && (
+            <button type="button" className="btn btn-ghost" onClick={talk.cancel}>
+              Cancel
+            </button>
+          )}
+        </div>
+      )}
       <fieldset className="composer-box" disabled={disabled} aria-label="Message composer">
         <textarea
           ref={ref}
@@ -766,6 +786,21 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
             sessionId={sessionId}
             disabled={disabled || session === null}
           />
+          <button
+            type="button"
+            className="composer-tool talk-btn"
+            data-phase={talk.phase}
+            disabled={disabled}
+            title={talk.phase === 'idle' ? 'Hold to talk' : 'Release to finish'}
+            aria-label={talk.phase === 'idle' ? 'Hold to talk' : 'Release to finish'}
+            onPointerDown={() => void talk.press()}
+            onPointerUp={() => void talk.release()}
+            onPointerLeave={() => {
+              if (talk.phase === 'capturing') void talk.release()
+            }}
+          >
+            <MicGlyph />
+          </button>
           <span className="grow" />
           <button
             className="btn btn-ghost composer-tool composer-sendnow"
