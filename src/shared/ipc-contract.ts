@@ -94,6 +94,10 @@ export interface SecretPresence {
   masked: string | null
 }
 
+/** Single-use realtime-STT token minted in main; the long-lived key never crosses the bridge. */
+export type SttTokenResult =
+  { kind: 'ok'; token: string } | { kind: 'needs-key' } | { kind: 'error'; message: string }
+
 export interface HistoryHit {
   sessionId: string
   workspaceId: string
@@ -239,6 +243,7 @@ export interface IpcContract {
   'elevenlabs:hasKey': { in: void; out: SecretPresence }
   'elevenlabs:setKey': { in: { value: string }; out: void }
   'elevenlabs:deleteKey': { in: void; out: void }
+  'elevenlabs:sttToken': { in: void; out: SttTokenResult }
   'linear:issues': { in: { query: string | null }; out: LinearIssueListResult }
 
   'shell:openExternal': { in: { url: string }; out: void }
@@ -345,6 +350,7 @@ export const ipcSchemas = {
   'elevenlabs:hasKey': z.undefined(),
   'elevenlabs:setKey': z.object({ value: z.string().min(1).max(4096) }),
   'elevenlabs:deleteKey': z.undefined(),
+  'elevenlabs:sttToken': z.undefined(),
   'linear:issues': z.object({ query: z.string().max(200).nullable() }),
   'shell:openExternal': z.object({ url: z.string().min(1).max(2048) }),
   'env:list': z.object({ scope: envScope, projectId: nullableId }),
@@ -545,6 +551,7 @@ export interface LoomApi {
     hasKey(): Promise<SecretPresence>
     setKey(value: string): Promise<void>
     deleteKey(): Promise<void>
+    sttToken(): Promise<SttTokenResult>
   }
   env: {
     list(scope: EnvScope, projectId: string | null): Promise<EnvVarRow[]>

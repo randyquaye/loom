@@ -20,7 +20,7 @@ import type { IpcDeps } from '../src/main/ipc'
 import { setTrustedOrigin } from '../src/main/ipc/index'
 import { elevenlabsStatus, registerElevenLabsIpc } from '../src/main/ipc/elevenlabs'
 import { aesGcmCipher, createSecretStore } from '../src/main/secrets'
-import type { SecretPresence } from '../src/shared/ipc-contract'
+import type { SecretPresence, SttTokenResult } from '../src/shared/ipc-contract'
 
 setTrustedOrigin('file://')
 
@@ -70,5 +70,49 @@ describe('elevenlabs credential channels', () => {
     expect(await elevenlabsStatus(deps)).toMatchObject({ state: 'needs-key' })
     await invoke('elevenlabs:setKey', { value: KEY })
     expect(await elevenlabsStatus(deps)).toEqual({ state: 'ready' })
+  })
+})
+
+describe('elevenlabs stt token', () => {
+  it('reports needs-key without touching the network', async () => {
+    const deps = makeDeps()
+    registerElevenLabsIpc(deps)
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+
+    expect(await invoke<SttTokenResult>('elevenlabs:sttToken', undefined)).toEqual({ kind: 'needs-key' })
+    expect(fetchSpy).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('mints a single-use token with the stored key and never returns the key', async () => {
+    const deps = makeDeps()
+    registerElevenLabsIpc(deps)
+    await invoke('elevenlabs:setKey', { value: KEY })
+    const fetchSpy = vi.fn(async (url: unknown, init?: { headers?: Record<string, string> }) => {
+      expect(String(url)).toContain('/v1/single-use-token/realtime_scribe')
+      expect(init?.headers?.['xi-api-key']).toBe(KEY)
+      return { ok: true, json: async () => ({ token: 'single-use-token' }) }
+    })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    expect(await invoke<SttTokenResult>('elevenlabs:sttToken', undefined)).toEqual({
+      kind: 'ok',
+      token: 'single-use-token'
+    })
+    vi.unstubAllGlobals()
+  })
+
+  it('surfaces provider failures without throwing', async () => {
+    const deps = makeDeps()
+    registerElevenLabsIpc(deps)
+    await invoke('elevenlabs:setKey', { value: KEY })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}) }))
+    )
+
+    expect(await invoke<SttTokenResult>('elevenlabs:sttToken', undefined)).toMatchObject({ kind: 'error' })
+    vi.unstubAllGlobals()
   })
 })

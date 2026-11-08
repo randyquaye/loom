@@ -12,6 +12,9 @@ mac:
   category: public.app-category.developer-tools
   # Local-only tool: no Developer ID available, so skip signing (ad-hoc at runtime).
   identity: null
+  extendInfo:
+    # Press-to-talk dictation; without this macOS denies microphone capture outright.
+    NSMicrophoneUsageDescription: Loom uses the microphone only while you hold the Talk button to dictate a message.
   target:
     - target: dmg
       arch: [arm64]
