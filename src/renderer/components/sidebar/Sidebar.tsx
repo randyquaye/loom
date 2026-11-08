@@ -211,11 +211,11 @@ export function Sidebar() {
                         title={expanded ? `Collapse ${project.name}` : `Expand ${project.name}`}
                         onClick={() => toggleCollapsed(project.id)}
                       >
-                        <span className="project-glyph" aria-hidden="true">
-                          {project.name.slice(0, 1).toUpperCase()}
+                        <span className="project-lead" aria-hidden="true">
+                          <span className="project-glyph">{project.name.slice(0, 1).toUpperCase()}</span>
+                          <span className="dropdown-caret" />
                         </span>
                         <span className="project-name">{project.name}</span>
-                        <span className="dropdown-caret" aria-hidden="true" />
                       </button>
                       <button
                         className="icon-btn row-action"

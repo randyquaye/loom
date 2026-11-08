@@ -77,19 +77,60 @@
   white-space: nowrap;
 }
 
-.project-toggle .dropdown-caret {
+/*
+ * The project glyph and its expand chevron share one leading slot: at rest the glyph shows;
+ * hovering the row (or keyboard focus on the toggle) cross-fades to the chevron, which points
+ * down when expanded and right when collapsed.
+ */
+.project-lead {
+  position: relative;
+  display: inline-flex;
   flex: none;
-  width: 6px;
-  height: 6px;
-  transition: transform var(--dur-1) var(--ease);
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
 }
 
-.project-toggle[aria-expanded='false'] .dropdown-caret {
+.project-lead .project-glyph,
+.project-lead .dropdown-caret {
+  transition:
+    opacity var(--dur-1) var(--ease),
+    transform var(--dur-1) var(--ease);
+}
+
+.project-lead .dropdown-caret {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  opacity: 0;
+  transform: rotate(45deg) translateY(-2px) scale(0.5);
+}
+
+.project-toggle[aria-expanded='false'] .project-lead .dropdown-caret {
+  transform: rotate(-45deg) scale(0.5);
+}
+
+.project-row:hover .project-lead .project-glyph,
+.project-toggle:focus-visible .project-lead .project-glyph {
+  opacity: 0;
+  transform: scale(0.6);
+}
+
+.project-row:hover .project-lead .dropdown-caret,
+.project-toggle:focus-visible .project-lead .dropdown-caret {
+  opacity: 1;
+  transform: rotate(45deg) translateY(-2px);
+}
+
+.project-row:hover .project-toggle[aria-expanded='false'] .project-lead .dropdown-caret,
+.project-toggle[aria-expanded='false']:focus-visible .project-lead .dropdown-caret {
   transform: rotate(-45deg);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .project-toggle .dropdown-caret {
+  .project-lead .project-glyph,
+  .project-lead .dropdown-caret {
     transition: none;
   }
 }
