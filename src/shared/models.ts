@@ -2,8 +2,8 @@ export type BackendId = 'codex' | 'claude' | 'gemini' | 'qwen'
 export const BACKEND_IDS: BackendId[] = ['codex', 'claude', 'gemini', 'qwen']
 
 /** Integrations whose credential Loom stores itself, unlike the CLI-owned logins. */
-export type IntegrationId = 'linear'
-export const INTEGRATION_IDS: IntegrationId[] = ['linear']
+export type IntegrationId = 'linear' | 'elevenlabs'
+export const INTEGRATION_IDS: IntegrationId[] = ['linear', 'elevenlabs']
 
 /** Everything the encrypted secret store may hold: provider API keys plus integration keys. */
 export type SecretId = BackendId | IntegrationId

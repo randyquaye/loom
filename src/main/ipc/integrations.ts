@@ -2,6 +2,7 @@ import type { GithubStatus, IntegrationsStatus, LinearStatus } from '../../share
 import { GH_AUTH_HINT, GH_INSTALL_HINT } from '../integrations/github/errors'
 import { ghAuthState } from '../integrations/github/gh'
 import { LINEAR_KEY_HINT } from '../integrations/linear/client'
+import { elevenlabsStatus } from './elevenlabs'
 import { handle, type IpcDeps } from './index'
 
 async function linearStatus(deps: IpcDeps): Promise<LinearStatus> {
@@ -24,10 +25,11 @@ function githubStatus(installed: boolean, account: string | null): GithubStatus 
  */
 export function registerIntegrationsIpc(deps: IpcDeps): void {
   handle('integrations:status', async (): Promise<IntegrationsStatus> => {
-    const [auth, linear] = await Promise.all([
+    const [auth, linear, elevenlabs] = await Promise.all([
       ghAuthState().catch(() => ({ installed: false, account: null })),
-      linearStatus(deps)
+      linearStatus(deps),
+      elevenlabsStatus(deps)
     ])
-    return { github: githubStatus(auth.installed, auth.account), linear }
+    return { github: githubStatus(auth.installed, auth.account), linear, elevenlabs }
   })
 }

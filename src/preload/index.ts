@@ -55,6 +55,11 @@ const api: LoomApi = {
     deleteKey: () => invoke('linear:deleteKey', undefined),
     issues: (query) => invoke('linear:issues', { query: query ?? null })
   },
+  elevenlabs: {
+    hasKey: () => invoke('elevenlabs:hasKey', undefined),
+    setKey: (value) => invoke('elevenlabs:setKey', { value }),
+    deleteKey: () => invoke('elevenlabs:deleteKey', undefined)
+  },
   projects: {
     list: () => invoke('projects:list', undefined),
     add: (input) => invoke('projects:add', input),

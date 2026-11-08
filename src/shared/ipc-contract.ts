@@ -158,10 +158,14 @@ export type GithubStatus =
 export type LinearStatus =
   { state: 'ready' } | { state: 'needs-key'; hint: string } | { state: 'error'; message: string }
 
+export type ElevenLabsStatus =
+  { state: 'ready' } | { state: 'needs-key'; hint: string } | { state: 'error'; message: string }
+
 /** Aggregate integration health, mirroring the `providers:status` shape. */
 export interface IntegrationsStatus {
   github: GithubStatus
   linear: LinearStatus
+  elevenlabs: ElevenLabsStatus
 }
 
 /** One Linear issue, in the shape the workspace picker needs. */
@@ -231,6 +235,10 @@ export interface IpcContract {
   'linear:hasKey': { in: void; out: SecretPresence }
   'linear:setKey': { in: { value: string }; out: void }
   'linear:deleteKey': { in: void; out: void }
+
+  'elevenlabs:hasKey': { in: void; out: SecretPresence }
+  'elevenlabs:setKey': { in: { value: string }; out: void }
+  'elevenlabs:deleteKey': { in: void; out: void }
   'linear:issues': { in: { query: string | null }; out: LinearIssueListResult }
 
   'shell:openExternal': { in: { url: string }; out: void }
@@ -334,6 +342,9 @@ export const ipcSchemas = {
   'linear:hasKey': z.undefined(),
   'linear:setKey': z.object({ value: z.string().min(1).max(4096) }),
   'linear:deleteKey': z.undefined(),
+  'elevenlabs:hasKey': z.undefined(),
+  'elevenlabs:setKey': z.object({ value: z.string().min(1).max(4096) }),
+  'elevenlabs:deleteKey': z.undefined(),
   'linear:issues': z.object({ query: z.string().max(200).nullable() }),
   'shell:openExternal': z.object({ url: z.string().min(1).max(2048) }),
   'env:list': z.object({ scope: envScope, projectId: nullableId }),
@@ -529,6 +540,11 @@ export interface LoomApi {
     setKey(value: string): Promise<void>
     deleteKey(): Promise<void>
     issues(query?: string | null): Promise<LinearIssueListResult>
+  }
+  elevenlabs: {
+    hasKey(): Promise<SecretPresence>
+    setKey(value: string): Promise<void>
+    deleteKey(): Promise<void>
   }
   env: {
     list(scope: EnvScope, projectId: string | null): Promise<EnvVarRow[]>

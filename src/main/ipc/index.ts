@@ -11,6 +11,7 @@ import { registerFilesIpc } from './files'
 import { registerGithubIpc } from './github'
 import { registerGitIpc } from './git'
 import { registerHistoryIpc } from './history'
+import { registerElevenLabsIpc } from './elevenlabs'
 import { registerInstructionsIpc } from './instructions'
 import { registerIntegrationsIpc } from './integrations'
 import { registerLinearIpc } from './linear'
@@ -109,6 +110,7 @@ export function registerIpc(deps: IpcDeps): void {
   registerExportIpc(deps)
   registerSessionsIpc(deps)
   registerCommentsIpc(deps)
+  registerElevenLabsIpc(deps)
   registerInstructionsIpc(deps)
   registerShellIpc()
 }

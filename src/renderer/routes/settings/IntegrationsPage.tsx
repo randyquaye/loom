@@ -24,31 +24,38 @@ function githubText(status: GithubStatus): string {
   }
 }
 
-// Linear's state follows the stored key; null is "not checked yet".
-function linearTone(presence: SecretPresence | null): 'ok' | 'warn' | 'idle' {
+// Stored-key integrations (Linear, ElevenLabs): the row follows key presence; null is "not checked yet".
+function presenceTone(presence: SecretPresence | null): 'ok' | 'warn' | 'idle' {
   if (presence === null) return 'idle'
   return presence.present ? 'ok' : 'warn'
 }
 
-function linearText(presence: SecretPresence | null): string {
+function presenceText(presence: SecretPresence | null): string {
   if (presence === null) return 'Checking…'
   return presence.present ? 'Ready' : 'API key required'
 }
 
-/** Settings "Integrations": GitHub CLI status and the Linear API key. */
+/** Settings "Integrations": GitHub CLI status plus stored keys for Linear and ElevenLabs. */
 export function IntegrationsPage() {
   const push = useToasts((s) => s.push)
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState('')
+  const [editingEl, setEditingEl] = useState(false)
+  const [elValue, setElValue] = useState('')
   const [integrations, setIntegrations] = useState<IntegrationsStatus | null>(null)
   const [integrationsError, setIntegrationsError] = useState<string | null>(null)
   const [linearKey, setLinearKey] = useState<SecretPresence | null>(null)
+  const [elKey, setElKey] = useState<SecretPresence | null>(null)
 
   function refreshIntegrations() {
     window.loom.linear
       .hasKey()
       .then(setLinearKey)
       .catch((err: unknown) => push(`Could not check linear key: ${String(err)}`, 'err'))
+    window.loom.elevenlabs
+      .hasKey()
+      .then(setElKey)
+      .catch((err: unknown) => push(`Could not check elevenlabs key: ${String(err)}`, 'err'))
     window.loom.integrations
       .status()
       .then((status) => {
@@ -68,6 +75,14 @@ export function IntegrationsPage() {
       .catch(() => {
         // Leave the row at "Checking…"; integrations.status() surfaces the failure below.
       })
+    window.loom.elevenlabs
+      .hasKey()
+      .then((p) => {
+        if (live) setElKey(p)
+      })
+      .catch(() => {
+        // Same as linear: the status probe below surfaces the failure.
+      })
     window.loom.integrations
       .status()
       .then((status) => {
@@ -85,6 +100,10 @@ export function IntegrationsPage() {
   const closeEditor = useCallback(() => {
     setEditing(false)
     setValue('')
+  }, [])
+  const closeElEditor = useCallback(() => {
+    setEditingEl(false)
+    setElValue('')
   }, [])
 
   function save() {
@@ -107,6 +126,28 @@ export function IntegrationsPage() {
         refreshIntegrations()
       })
       .catch((e: unknown) => push(`Could not remove linear key: ${String(e)}`, 'err'))
+  }
+
+  function saveEl() {
+    if (!editingEl || !elValue) return
+    window.loom.elevenlabs
+      .setKey(elValue)
+      .then(() => {
+        push('Saved ElevenLabs key')
+        closeElEditor()
+        refreshIntegrations()
+      })
+      .catch((e: unknown) => push(`Could not save ElevenLabs key: ${String(e)}`, 'err'))
+  }
+
+  function removeEl() {
+    window.loom.elevenlabs
+      .deleteKey()
+      .then(() => {
+        push('Removed ElevenLabs key')
+        refreshIntegrations()
+      })
+      .catch((e: unknown) => push(`Could not remove ElevenLabs key: ${String(e)}`, 'err'))
   }
 
   return (
@@ -141,10 +182,10 @@ export function IntegrationsPage() {
             </span>
           </div>
           <div className="settings-row">
-            <span className="settings-dot" data-tone={linearTone(linearKey)} aria-hidden="true" />
+            <span className="settings-dot" data-tone={presenceTone(linearKey)} aria-hidden="true" />
             <div className="settings-provider">
               <span className="settings-name">linear</span>
-              <span className="settings-state">{linearText(linearKey)}</span>
+              <span className="settings-state">{presenceText(linearKey)}</span>
             </div>
             <span className="settings-mask">
               {linearKey?.present ? (linearKey.masked ?? 'stored') : 'not set'}
@@ -156,6 +197,20 @@ export function IntegrationsPage() {
               Remove
             </button>
           </div>
+          <div className="settings-row">
+            <span className="settings-dot" data-tone={presenceTone(elKey)} aria-hidden="true" />
+            <div className="settings-provider">
+              <span className="settings-name">elevenlabs</span>
+              <span className="settings-state">{presenceText(elKey)}</span>
+            </div>
+            <span className="settings-mask">{elKey?.present ? (elKey.masked ?? 'stored') : 'not set'}</span>
+            <button className="btn" onClick={() => setEditingEl(true)}>
+              {elKey?.present ? 'Replace' : 'Add'}
+            </button>
+            <button className="btn btn-ghost" disabled={!elKey?.present} onClick={removeEl}>
+              Remove
+            </button>
+          </div>
         </div>
         {integrationsError !== null && (
           <p className="settings-note" role="alert">
@@ -164,8 +219,9 @@ export function IntegrationsPage() {
         )}
         <p className="settings-note">
           Loom stores no GitHub credential: the <code>gh</code> CLI keeps it in the macOS keyring. Run{' '}
-          <code>gh auth login</code> in a terminal to sign in. The Linear API key is stored encrypted in the
-          macOS Keychain and never leaves this machine except to api.linear.app.
+          <code>gh auth login</code> in a terminal to sign in. The Linear and ElevenLabs API keys are stored
+          encrypted in the macOS Keychain; Linear’s never leaves this machine except to api.linear.app,
+          ElevenLabs’ except to api.elevenlabs.io.
         </p>
       </section>
       <Modal
@@ -195,6 +251,37 @@ export function IntegrationsPage() {
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') save()
+            }}
+          />
+        </Field>
+      </Modal>
+      <Modal
+        open={editingEl}
+        title="ElevenLabs API key"
+        onClose={closeElEditor}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={closeElEditor}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" disabled={!elValue} onClick={saveEl}>
+              Save
+            </button>
+          </>
+        }
+      >
+        <Field
+          label="API key"
+          hint="Stored encrypted in the macOS Keychain. Create one in ElevenLabs → Profile → API keys."
+        >
+          <input
+            className="input"
+            type="password"
+            autoFocus
+            value={elValue}
+            onChange={(e) => setElValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') saveEl()
             }}
           />
         </Field>
