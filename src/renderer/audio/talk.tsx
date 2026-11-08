@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useToasts } from '../components/ui/Toast'
 import { STT_INITIAL, type SttState } from '../../shared/stt'
+import { stopSpeech } from './speechController'
 import { SttClient, startMic } from './stt'
 
 export type TalkPhase = 'idle' | 'capturing' | 'finalizing'
@@ -49,6 +50,8 @@ export function useTalk(sessionId: string, onUtterance: (utterance: string) => v
 
   const press = useCallback(async () => {
     if (client.current !== null) return
+    // Talk during speech: stop playback and invalidate pending speech before listening.
+    stopSpeech()
     setStt(STT_INITIAL)
     const token = await window.loom.elevenlabs.sttToken().catch((err: unknown) => {
       push(`Speech setup failed: ${String(err)}`, 'err')
