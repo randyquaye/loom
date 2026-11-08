@@ -1,9 +1,8 @@
 /**
- * Narration eligibility, per the audio spec's spoken-output policy: prose speaks; code,
- * pseudocode, citations and evidence lists do not. Fenced blocks are skipped entirely and
- * list-item/blockquote lines are skipped; remaining prose becomes speech at sentence
- * boundaries ([.!?] followed by whitespace) or at line ends, holding an incomplete fragment
- * until more text arrives or the turn ends.
+ * Prose and list text speak; fenced blocks and blockquotes are skipped. List markers
+ * are stripped before sentence segmentation. Text becomes speech at sentence boundaries
+ * ([.!?] followed by whitespace) or at line ends, holding an incomplete fragment until
+ * more text arrives or the turn ends.
  */
 export interface SpeechCursor {
   inFence: boolean
@@ -13,13 +12,13 @@ export interface SpeechCursor {
 
 export const SPEECH_CURSOR_START: SpeechCursor = { inFence: false, held: '' }
 
-const LIST_LINE = /^\s*(?:[-*•]|\d+[.)])\s+/
+const LIST_LINE = /^\s*(?:[-+*•]|\d+[.)])\s+/
 const SENTENCE_END = /(?<=[.!?])\s+/
 
 function proseLine(line: string): string | null {
   const trimmed = line.trim()
-  if (trimmed === '' || LIST_LINE.test(trimmed) || trimmed.startsWith('>')) return null
-  return trimmed
+  if (trimmed === '' || trimmed.startsWith('>')) return null
+  return trimmed.replace(LIST_LINE, '')
 }
 
 function sentences(text: string): string[] {
@@ -48,7 +47,7 @@ export function extractSpeech(
     speech.push(...sentences(prose))
   }
   // Mid-line sentence boundaries inside the held fragment speak immediately.
-  const parts = held.split(SENTENCE_END)
+  const parts = held.replace(LIST_LINE, '').split(SENTENCE_END)
   if (parts.length > 1) {
     held = parts.pop() ?? ''
     for (const part of parts) {

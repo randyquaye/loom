@@ -195,7 +195,7 @@
   height: var(--s-3);
   border: 1px solid var(--border-strong);
   border-top-color: var(--text-faint);
-  border-radius: var(--r-pill);
+  border-radius: 50%;
   animation: tree-spin calc(var(--dur-2) * 3) linear infinite;
 }
 

@@ -92,7 +92,7 @@ export function Popover({
   return (
     <div
       ref={ref}
-      className={`popover glass popover-${align}${className === undefined ? '' : ` ${className}`}`}
+      className={`popover elevated popover-${align}${className === undefined ? '' : ` ${className}`}`}
       role="menu"
       onKeyDown={onKeyDown}
     >

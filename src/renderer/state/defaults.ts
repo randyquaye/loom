@@ -2,6 +2,11 @@ import { create } from 'zustand'
 import { BACKEND_IDS, EFFORTS, type BackendId, type Effort, type ModelDescriptor } from '../../shared/models'
 
 const KEY = 'loom.defaults'
+const DEFAULT_VOICE_ID = '21m00Tcm4TlvDq8ikWAM'
+const DEFAULT_SPEECH_SPEED = 1
+/** ElevenLabs' accepted voice_settings.speed range. */
+export const SPEECH_SPEED_MIN = 0.7
+export const SPEECH_SPEED_MAX = 1.2
 
 /** One loadout slot: a concrete backend + model + effort a new session can start on. */
 export interface LoadoutEntry {
@@ -37,19 +42,36 @@ function dedupe(entries: LoadoutEntry[]): LoadoutEntry[] {
   return entries.filter((e, i) => entries.findIndex((x) => sameEntry(x, e)) === i)
 }
 
+function clampSpeed(speed: number): number {
+  return Math.min(SPEECH_SPEED_MAX, Math.max(SPEECH_SPEED_MIN, speed))
+}
+
+interface Saved {
+  loadout: LoadoutEntry[]
+  voiceId: string
+  speechSpeed: number
+}
+
 /**
- * Parse defensively: localStorage outlives schema changes. Current shape is { loadout: [...] };
- * the older { primary, byBackend } (and the flat per-backend map before it) migrate to a loadout
- * with the primary backend's default first. Per-backend "catalog default" (model null) entries
- * have no concrete model to carry over and are dropped.
+ * Parse defensively: localStorage outlives schema changes. Current shape is
+ * { loadout: [...], voiceId, speechSpeed }; the older { primary, byBackend } (and the flat
+ * per-backend map before it) migrate to a loadout with the primary backend's default first.
+ * Per-backend "catalog default" (model null) entries have no concrete model to carry over and are dropped.
  */
-function load(): LoadoutEntry[] {
+function load(): Saved {
+  const fallback = { loadout: [], voiceId: DEFAULT_VOICE_ID, speechSpeed: DEFAULT_SPEECH_SPEED }
   try {
     const raw: unknown = JSON.parse(localStorage.getItem(KEY) ?? '{}')
-    if (typeof raw !== 'object' || raw === null) return []
+    if (typeof raw !== 'object' || raw === null) return fallback
     const obj = raw as Record<string, unknown>
+    const voiceId =
+      typeof obj.voiceId === 'string' && obj.voiceId.trim() !== '' ? obj.voiceId.trim() : DEFAULT_VOICE_ID
+    const speechSpeed =
+      typeof obj.speechSpeed === 'number' && Number.isFinite(obj.speechSpeed)
+        ? clampSpeed(obj.speechSpeed)
+        : DEFAULT_SPEECH_SPEED
     if (Array.isArray(obj.loadout)) {
-      return dedupe(obj.loadout.flatMap((v) => parseEntry(v) ?? []))
+      return { loadout: dedupe(obj.loadout.flatMap((v) => parseEntry(v) ?? [])), voiceId, speechSpeed }
     }
     const map = (typeof obj.byBackend === 'object' && obj.byBackend !== null ? obj.byBackend : obj) as Record<
       string,
@@ -57,21 +79,22 @@ function load(): LoadoutEntry[] {
     >
     const primary = isBackend(obj.primary) ? obj.primary : null
     const order = primary === null ? BACKEND_IDS : [primary, ...BACKEND_IDS.filter((b) => b !== primary)]
-    return order.flatMap((backend) => {
+    const loadout = order.flatMap((backend) => {
       const entry = map[backend]
       if (typeof entry !== 'object' || entry === null) return []
       const { model, effort } = entry as Record<string, unknown>
       if (typeof model !== 'string' || model === '') return []
       return [{ backend, model, effort: isEffort(effort) ? effort : 'medium' }]
     })
+    return { loadout, voiceId, speechSpeed }
   } catch {
     // Corrupt value: start with an empty loadout (the composer falls back to the catalog).
-    return []
+    return fallback
   }
 }
 
-function persist(loadout: LoadoutEntry[]): void {
-  localStorage.setItem(KEY, JSON.stringify({ loadout }))
+function persist(saved: Saved): void {
+  localStorage.setItem(KEY, JSON.stringify(saved))
 }
 
 /** Preferred effort when the model supports it, else the model's middle tier. */
@@ -103,6 +126,12 @@ export function initialChoice(
 interface DefaultsState {
   /** Ordered; the first entry is the default a new session starts on. */
   loadout: LoadoutEntry[]
+  voiceId: string
+  /** A blank ID restores the built-in voice. */
+  setVoiceId(voiceId: string): void
+  speechSpeed: number
+  /** Clamped to ElevenLabs' range; blank or non-numeric input restores 1.0. */
+  setSpeechSpeed(speed: string): void
   /** Append, ignoring an exact duplicate. */
   add(entry: LoadoutEntry): void
   remove(index: number): void
@@ -112,17 +141,24 @@ interface DefaultsState {
 }
 
 /**
- * The model loadout (conductor anatomy): an ordered list of backend/model/effort entries,
- * several per backend allowed. The composer opens on loadout[0]; its picker can swap the
+ * Saved model loadout and spoken voice and speed. The loadout is an ordered list of backend/model/effort
+ * entries, several per backend allowed. The composer opens on loadout[0]; its picker can swap the
  * choice for one session without changing the loadout.
  */
 export const useDefaults = create<DefaultsState>((set, get) => {
-  const write = (loadout: LoadoutEntry[]) => {
-    persist(loadout)
-    set({ loadout })
+  const save = (patch: Partial<Saved>) => {
+    const { loadout, voiceId, speechSpeed } = get()
+    persist({ loadout, voiceId, speechSpeed, ...patch })
+    set(patch)
   }
+  const write = (loadout: LoadoutEntry[]) => save({ loadout })
   return {
-    loadout: load(),
+    ...load(),
+    setVoiceId: (value) => save({ voiceId: value.trim() || DEFAULT_VOICE_ID }),
+    setSpeechSpeed: (value) => {
+      const speed = value.trim() === '' ? NaN : Number(value)
+      save({ speechSpeed: Number.isFinite(speed) ? clampSpeed(speed) : DEFAULT_SPEECH_SPEED })
+    },
     add: (entry) => {
       if (get().loadout.some((e) => sameEntry(e, entry))) return
       write([...get().loadout, entry])

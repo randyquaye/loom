@@ -48,7 +48,7 @@ export function createTerminal(cwd: string, extraEnv?: Record<string, string>): 
   return id
 }
 
-/** The workspace terminal run actions write to: the visible tab, else the oldest live one. */
+/** The workspace terminal run actions write to: the visible tab, else the newest live one. */
 export function terminalIdForCwd(cwd: string): string | null {
   const active = activeByCwd.get(cwd)
   if (active !== undefined && sessions.has(active)) return active

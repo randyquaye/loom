@@ -50,7 +50,7 @@ export function createCodexBackend(): AgentBackend {
             // First turn has no thread id yet, so the prompt goes over stdin
             // (`codex exec` reads instructions from a piped stdin).
             return thread
-              ? { args: buildCodexResumeArgs(thread, prompt), promptOnStdin: false }
+              ? { args: buildCodexResumeArgs(opts, thread, prompt), promptOnStdin: false }
               : { args: buildCodexArgs(opts), promptOnStdin: true }
           }
         })

@@ -1,4 +1,4 @@
-import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { CONTEXT_DIR } from '../../shared/brand'
 import { COMMENTS_FILE } from '../db/repos/comments'
@@ -102,7 +102,6 @@ export { MANAGED_AGENTS_MARKER }
  * or user file that takes the path is never overwritten; returns whether Loom owns the file.
  */
 export async function refreshWorkspaceAgentsDoc(worktreePath: string, content: string): Promise<boolean> {
-  const { readFile } = await import('node:fs/promises')
   const file = path.join(worktreePath, 'AGENTS.md')
   const existing = await readFile(file, 'utf8').catch(() => null)
   if (existing !== null && !existing.startsWith(MANAGED_AGENTS_MARKER)) return false

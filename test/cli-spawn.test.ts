@@ -4,7 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { CODEX_FALLBACK_TURN_ID, createCodexParser } from '../src/main/agents/cli/parse-codex'
-import { runCliSession, type LineParser } from '../src/main/agents/cli/spawn'
+import { runCliSession, startLazyCliSession, type LineParser } from '../src/main/agents/cli/spawn'
 import type { RunningSession } from '../src/main/agents/types'
 import type { AgentEvent } from '../src/shared/events'
 
@@ -216,4 +216,55 @@ describe('runCliSession lifecycle', () => {
     await expect(session.close()).resolves.toBeUndefined()
     await expect(session.cancel()).resolves.toBeUndefined()
   })
+})
+
+describe('startLazyCliSession turn handoff', () => {
+  it.each([true, false])(
+    'allows the next turn at completion without overlapping children (provider completion: %s)',
+    async (providerCompletion) => {
+      const history = path.join(workDir, `handoff-${providerCompletion}.txt`)
+      const script = `
+        const fs = require('node:fs')
+        fs.appendFileSync(process.argv[1], 'start\\n')
+        console.log(JSON.stringify({ type: 'thread.started', thread_id: '${THREAD}' }))
+        console.log(JSON.stringify({ type: 'turn.started' }))
+        ${providerCompletion ? "console.log(JSON.stringify({ type: 'turn.completed' }))" : ''}
+        setTimeout(() => fs.appendFileSync(process.argv[1], 'exit\\n'), 100)
+      `
+      const session = startLazyCliSession({
+        bin: process.execPath,
+        cwd: workDir,
+        createParser() {
+          const parser = createCodexParser()
+          return { parse: (line) => parser.parse(line), providerSessionId: () => parser.threadId() }
+        },
+        plan: (_prompt, providerSessionId) => ({
+          args: ['-e', script, history],
+          promptOnStdin: providerSessionId === undefined
+        })
+      })
+      const handoff = (async () => {
+        for await (const event of session.events) {
+          if (event.type === 'turn.done') {
+            await session.send('second')
+            return
+          }
+        }
+        throw new Error('session ended before the first turn completed')
+      })()
+
+      try {
+        await Promise.all([session.send('first'), handoff])
+        expect((await readFile(history, 'utf8')).trim().split('\n')).toEqual([
+          'start',
+          'exit',
+          'start',
+          'exit'
+        ])
+      } finally {
+        await session.close()
+        await handoff.catch(() => undefined)
+      }
+    }
+  )
 })

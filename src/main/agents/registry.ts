@@ -1,5 +1,4 @@
 import type { AuthStatus, BackendId } from '../../shared/models'
-import type { SecretStore } from '../secrets'
 import type { AgentBackend } from './types'
 
 const backends = new Map<BackendId, AgentBackend>()
@@ -18,7 +17,7 @@ export function getBackend(id: BackendId): AgentBackend | undefined {
  * own authStatus is authoritative; an unregistered id is a startup bug, not a
  * user-facing auth state.
  */
-export async function authStatusFor(backend: BackendId, _secrets: SecretStore): Promise<AuthStatus> {
+export async function authStatusFor(backend: BackendId): Promise<AuthStatus> {
   const registered = backends.get(backend)
   if (registered !== undefined) return registered.authStatus()
   return { state: 'error', message: `backend ${backend} is not registered` }

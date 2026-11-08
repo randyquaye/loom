@@ -1,8 +1,14 @@
 import { speechPlayer } from './playback'
 
-/** ElevenLabs premade default voice; a Settings voice picker can follow later. */
-const TTS_VOICE_ID = '21m00Tcm4TlvDq8ikWAM'
-const TTS_URL = `wss://api.elevenlabs.io/v1/text-to-speech/${TTS_VOICE_ID}/stream-input`
+const TTS_URL = 'wss://api.elevenlabs.io/v1/text-to-speech'
+/**
+ * auto_mode synthesizes each complete sentence on arrival (the default chunk schedule holds
+ * short ones until ~120 chars or the turn ends); the 180s ceiling keeps the socket alive
+ * across long tool calls, where the 20s default closed it and replayed the turn in the
+ * system voice.
+ */
+const STREAM_PARAMS =
+  'model_id=eleven_flash_v2_5&output_format=pcm_24000&auto_mode=true&inactivity_timeout=180'
 
 /**
  * Streams text into ElevenLabs' stream-input socket and feeds arriving PCM audio straight
@@ -15,16 +21,22 @@ export class TtsClient {
   private gen = 0
   private outbox: string[] = []
 
-  constructor(private readonly onError: (message: string) => void) {}
+  constructor(
+    private readonly onError: (message: string) => void,
+    /** Characters of sent text now covered by received audio (ElevenLabs alignment). */
+    private readonly onSynthesized: (chars: number) => void = () => {}
+  ) {}
 
-  start(token: string): void {
+  start(token: string, voiceId: string, speed: number): void {
     const gen = ++this.gen
-    const url = `${TTS_URL}?model_id=eleven_flash_v2_5&output_format=pcm_24000&token=${encodeURIComponent(token)}`
+    const url = `${TTS_URL}/${encodeURIComponent(voiceId)}/stream-input?${STREAM_PARAMS}&single_use_token=${encodeURIComponent(token)}`
     const ws = new WebSocket(url)
     this.ws = ws
     ws.onopen = () => {
       if (gen !== this.gen) return
-      ws.send(JSON.stringify({ text: ' ', voice_settings: { stability: 0.5, similarity_boost: 0.75 } }))
+      ws.send(
+        JSON.stringify({ text: ' ', voice_settings: { stability: 0.5, similarity_boost: 0.75, speed } })
+      )
       const queued = this.outbox
       this.outbox = []
       for (const payload of queued) ws.send(payload)
@@ -37,8 +49,10 @@ export class TtsClient {
       } catch {
         return
       }
-      const audio = msg.audioBase64 ?? msg.audio_base64
+      const audio = msg.audio
       if (typeof audio === 'string' && audio !== '') speechPlayer.enqueue(audio)
+      const aligned = (msg.alignment as { chars?: unknown } | null | undefined)?.chars
+      if (Array.isArray(aligned)) this.onSynthesized(aligned.length)
       if (msg.isFinal === true) {
         this.close()
         return
@@ -53,7 +67,7 @@ export class TtsClient {
   }
 
   send(text: string): void {
-    this.push(JSON.stringify({ text }))
+    this.push(JSON.stringify({ text: `${text} ` }))
   }
 
   /** Empty text flushes the synthesizer; the socket closes when isFinal arrives. */

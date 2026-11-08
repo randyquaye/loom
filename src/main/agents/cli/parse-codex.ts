@@ -1,34 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import type { AgentEvent, FilePatch, ToolName } from '../../../shared/events'
+import { errorEvent, isRec, list, num, str, sub, tryParseRecord, type Rec } from './record'
 
 /** Used when a line carries no turn identity of its own. */
 export const CODEX_FALLBACK_TURN_ID = 'turn'
-
-type Rec = Record<string, unknown>
-
-function isRec(value: unknown): value is Rec {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function str(source: Rec, key: string): string | undefined {
-  const value = source[key]
-  return typeof value === 'string' ? value : undefined
-}
-
-function num(source: Rec, key: string): number | undefined {
-  const value = source[key]
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
-}
-
-function sub(source: Rec, key: string): Rec | undefined {
-  const value = source[key]
-  return isRec(value) ? value : undefined
-}
-
-function list(source: Rec, key: string): Rec[] {
-  const value = source[key]
-  return Array.isArray(value) ? value.filter(isRec) : []
-}
 
 /**
  * codex stamps records with either an ISO `timestamp` or an `*_at_ms` epoch, and
@@ -172,10 +147,6 @@ function usageOf(event: Rec): { inputTokens: number; outputTokens: number } {
   }
 }
 
-function errorEvent(turnId: string, code: string, message: string, retryable: boolean): AgentEvent {
-  return { type: 'error', turnId, code, message, retryable }
-}
-
 interface Failure {
   code: string
   message: string
@@ -306,17 +277,6 @@ export interface CodexLineParser {
   parse(line: string): AgentEvent[]
   /** Provider thread id, once `thread.started` has been seen; used for resume. */
   threadId(): string | undefined
-}
-
-function tryParseRecord(line: string): Rec | undefined {
-  const trimmed = line.trim()
-  if (trimmed.length === 0) return undefined
-  try {
-    const parsed: unknown = JSON.parse(trimmed)
-    return isRec(parsed) ? parsed : undefined
-  } catch {
-    return undefined
-  }
 }
 
 /**

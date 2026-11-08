@@ -43,6 +43,8 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
   const loadWorkspaces = useProjects((s) => s.loadWorkspaces)
   const activeId = useSessions((s) => s.activeSessionByWorkspace[workspaceId] ?? null)
   const events = useSessions((s) => (activeId ? s.eventsBySession[activeId] : undefined)) ?? []
+  // Voice mode replaces the transcript only once there is a session to talk to.
+  const voiceStage = useUi((s) => s.voiceMode) && !!activeId
   const load = useSessions((s) => s.load)
   const loadTree = useFiles((s) => s.loadTree)
   const openAt = useFiles((s) => s.openAt)
@@ -156,13 +158,8 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
                     className="btn btn-ghost workspace-run-action"
                     data-default={action.isDefault}
                     disabled={!ready}
-                    title={
-                      workspaceState === 'ready'
-                        ? `Run ${action.id} in the terminal`
-                        : RUN_DISABLED_TITLES[workspaceState]
-                    }
+                    title={ready ? `Run ${action.id} in the terminal` : RUN_DISABLED_TITLES[workspaceState]}
                     onClick={() => {
-                      if (!ready) return
                       window.loom.workspaces
                         .runAction(workspaceId, action.id)
                         .then(() => push(`Running ${action.id} in the terminal`))
@@ -250,11 +247,13 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
           <ViewerHost workspaceId={workspaceId} />
         ) : (
           <>
-            <MessageList
-              events={events}
-              onFileOpen={(path, line) => void openAt(workspaceId, path, line)}
-              onPrompt={(text) => useUi.getState().setDraft(text)}
-            />
+            {!voiceStage && (
+              <MessageList
+                events={events}
+                onFileOpen={(path, line) => void openAt(workspaceId, path, line)}
+                onPrompt={(text) => useUi.getState().setDraft(text)}
+              />
+            )}
             <Composer
               workspaceId={workspaceId}
               sessionId={activeId === '' ? null : activeId}

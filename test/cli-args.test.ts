@@ -88,11 +88,11 @@ describe('buildClaudeArgs', () => {
 })
 
 describe('resume and fork builders', () => {
-  it('builds codex resume argv behind an end-of-options marker', () => {
-    expect(buildCodexResumeArgs(UUID, 'continue the refactor')).toEqual([
+  it('builds codex resume argv with the session model and effort, behind an end-of-options marker', () => {
+    expect(buildCodexResumeArgs(codexOpts(), UUID, 'continue the refactor')).toEqual([
       'exec',
       'resume',
-      '--json',
+      ...buildCodexArgs(codexOpts()).slice(1),
       '--',
       UUID,
       'continue the refactor'
@@ -110,11 +110,9 @@ describe('resume and fork builders', () => {
     ])
   })
 
-  it('builds claude resume argv with --resume= and the prompt as a positional', () => {
-    expect(buildClaudeResumeArgs(UUID, 'keep going')).toEqual([
-      '-p',
-      '--output-format=stream-json',
-      '--verbose',
+  it('builds claude resume argv with the first-turn flags, --resume= and the prompt as a positional', () => {
+    expect(buildClaudeResumeArgs(claudeOpts(), UUID, 'keep going')).toEqual([
+      ...buildClaudeArgs(claudeOpts()),
       `--resume=${UUID}`,
       '--',
       'keep going'
@@ -122,7 +120,7 @@ describe('resume and fork builders', () => {
   })
 
   it('neutralizes a prompt that starts with a dash', () => {
-    const args = buildCodexResumeArgs(UUID, '--json please')
+    const args = buildCodexResumeArgs(codexOpts(), UUID, '--json please')
     expect(args.indexOf('--')).toBeLessThan(args.indexOf('--json please'))
     expect(args[args.length - 1]).toBe('--json please')
   })

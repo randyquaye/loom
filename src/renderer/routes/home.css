@@ -1,17 +1,20 @@
 /* Spacing grid shared with panels.css / settings.css: panel 16, section 12, control 8, row 6. */
 
+/* One compact row: search grows, the project filter sits beside it. */
 .home-head {
   display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
-  padding: var(--s-4);
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-4) var(--s-4) var(--s-3);
 }
 
 .home-search {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: var(--s-2);
-  padding: var(--s-3) var(--s-4);
+  min-width: 0;
+  padding: var(--s-2) var(--s-3);
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
   background: var(--surface-1);
@@ -20,7 +23,7 @@
 
 .home-search-glyph {
   color: var(--text-faint);
-  font-size: var(--fs-xl);
+  font-size: var(--fs-lg);
   line-height: 1;
 }
 
@@ -31,7 +34,7 @@
   outline: none;
   background: none;
   color: var(--text);
-  font: var(--fs-lg) var(--font);
+  font: var(--fs-md) var(--font);
 }
 
 .home-search input::placeholder {
@@ -40,6 +43,7 @@
 
 .home-filters {
   display: flex;
+  flex: none;
 }
 
 /* Overflow would clip the popover, so the filter row no longer scrolls; the trigger ellipsizes. */
@@ -68,56 +72,57 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: var(--s-2);
   padding: 0 var(--s-4) var(--s-4);
 }
 
 .home-label {
-  padding-top: var(--s-1);
+  padding: var(--s-1) var(--s-3) var(--s-2);
   font-size: var(--fs-xs);
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--text-faint);
 }
 
+/* Single-line rows separated by hairlines: name, project, age. */
 .home-card {
   display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
+  flex: none;
+  align-items: baseline;
+  gap: var(--s-3);
   width: 100%;
-  padding: var(--s-4);
-  border: 1px solid var(--border);
-  border-radius: var(--r-3);
-  background: var(--panel-solid);
-  box-shadow: var(--edge-highlight);
+  padding: var(--s-3);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--r-1);
+  background: none;
+  font-size: var(--fs-md);
   text-align: left;
 }
 
 .home-card:hover {
-  background: var(--surface-2);
-  border-color: var(--border-strong);
-}
-
-.home-card-title {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  font-weight: 600;
-}
-
-.home-tag {
-  flex-shrink: 0;
-  padding: 0 var(--s-2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
   background: var(--surface-1);
+}
+
+.home-card-name {
+  font-weight: 500;
+}
+
+.home-card-project {
+  flex-shrink: 0;
+  max-width: 30%;
+  overflow: hidden;
   color: var(--text-muted);
-  font: var(--fs-xs) / 1.6 var(--font);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .home-time {
-  font-size: var(--fs-xs);
+  flex-shrink: 0;
+  min-width: 6ch;
   color: var(--text-faint);
+  font-size: var(--fs-xs);
+  text-align: right;
 }
 
 .home-none {

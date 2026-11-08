@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { AgentEvent, ToolName } from '../../../shared/events'
 import type { ModelDescriptor, SessionOpts } from '../../../shared/models'
 import type { NormalizedTool } from '../types'
@@ -102,7 +103,7 @@ export class GeminiStreamParser {
         const fc = part.functionCall as Record<string, unknown> | undefined
         if (fc !== undefined && isToolName(fc.name)) {
           const call: NormalizedTool = {
-            id: `${fc.name}-${this.toolCalls.length + 1}`,
+            id: `${fc.name}-${randomUUID()}`,
             name: fc.name,
             args: fc.args ?? {}
           }

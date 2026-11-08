@@ -3,18 +3,9 @@ import { createPortal } from 'react-dom'
 import type { SessionRow } from '../../../shared/ipc-contract'
 import { useSessions } from '../../state/sessions'
 import { Popover } from '../ui/Popover'
+import { relativeTime } from '../ui/relativeTime'
 import { useToasts } from '../ui/Toast'
-
-function closedTime(closedAt: number | null): string {
-  const minutes = Math.floor((Date.now() - (closedAt ?? Date.now())) / 60_000)
-  if (minutes < 1) return 'just now'
-  if (minutes < 60) return `${minutes}m ago`
-  if (minutes < 1440) return `${Math.floor(minutes / 60)}h ago`
-  return new Date(closedAt ?? Date.now()).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short'
-  })
-}
+import { clampInWindow } from '../ui/anchor'
 
 /** Portalled out of the scrolling tab strip so the anchored menu is never clipped. */
 export function RecentChats({
@@ -48,7 +39,7 @@ export function RecentChats({
     const top = rect.bottom + 8
     setPosition({
       top,
-      left: Math.max(16, Math.min(rect.left, window.innerWidth - width - 16)),
+      left: clampInWindow(rect.left, width, window.innerWidth, 16),
       maxHeight: Math.max(0, window.innerHeight - top - 16)
     })
   }, [])
@@ -166,7 +157,9 @@ export function RecentChats({
                           {session.backend} · {session.model}
                         </span>
                       </span>
-                      <span className="recent-chats-time">{closedTime(session.closedAt)}</span>
+                      <span className="recent-chats-time">
+                        {relativeTime(session.closedAt ?? Date.now())}
+                      </span>
                     </button>
                   ))
                 )}

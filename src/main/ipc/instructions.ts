@@ -1,5 +1,5 @@
 import { readInstructions, writeInstructions } from '../instructions/files'
-import { handle, type IpcDeps } from './index'
+import { handle, type IpcDeps } from './handle'
 
 export function registerInstructionsIpc(deps: IpcDeps): void {
   handle('instructions:get', ({ scope, projectId }) => readInstructions(deps.dataRoot, scope, projectId))

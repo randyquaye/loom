@@ -16,12 +16,27 @@ describe('narration eligibility', () => {
     expect(b.speech).toEqual(['Fix the queue drain.'])
   })
 
-  it('never speaks fenced code, list evidence or quotes', () => {
+  it('speaks list text but skips fenced code and quotes', () => {
     const fed = extractSpeech(
       'Here is the fix:\n\n```ts\nexport const a = 1\n```\n\n- evidence one\n> quoted citation\nDone now.\n',
       SPEECH_CURSOR_START
     )
-    expect(fed.speech).toEqual(['Here is the fix:', 'Done now.'])
+    expect(fed.speech).toEqual(['Here is the fix:', 'evidence one', 'Done now.'])
+  })
+
+  it('streams list text without speaking split markers or losing the final item', () => {
+    const first = extractSpeech('1.', SPEECH_CURSOR_START)
+    expect(first.speech).toEqual([])
+    const second = extractSpeech(' Queue messages. ', first.cursor)
+    expect(second.speech).toEqual(['Queue messages.'])
+    const third = extractSpeech('Keep their order.\n  - Read', second.cursor)
+    expect(third.speech).toEqual(['Keep their order.'])
+    const fourth = extractSpeech(' nested bullets\n+ Final item', third.cursor)
+    expect(fourth.speech).toEqual(['Read nested bullets'])
+    expect(flushSpeech(fourth.cursor)).toEqual({
+      speech: ['Final item'],
+      cursor: SPEECH_CURSOR_START
+    })
   })
 
   it('flushes the held tail at turn end and resets the cursor', () => {

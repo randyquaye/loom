@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import type { HistoryHit } from '../../shared/ipc-contract'
-import { handle, type IpcDeps } from './index'
+import { handle, type IpcDeps } from './handle'
 
 const SEARCH_SQL = `
   SELECT s.id AS sessionId, s.workspace_id AS workspaceId, w.project_id AS projectId,

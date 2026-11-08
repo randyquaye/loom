@@ -1,6 +1,6 @@
 import type { AgentEvent } from '../../../shared/events'
 import { WEB_TOOL_NAMES, webToolInfo } from '../../../shared/webtools'
-import type { Block } from './derive'
+import type { Block } from '../../../shared/blocks'
 
 export type TextBlock = Extract<Block, { kind: 'text' }>
 export type ToolBlock = Extract<Block, { kind: 'tool' }>

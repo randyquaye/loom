@@ -117,9 +117,14 @@ function positionals(values: string[]): string[] {
   return ['--', ...values]
 }
 
-export function buildCodexResumeArgs(sessionId: string, prompt: string): string[] {
+/**
+ * Resumes carry the same per-run flags as the first turn: model, effort, Loom's prompt and
+ * the skill plugin are per process, so a bare resume falls back to the CLI's own defaults.
+ */
+export function buildCodexResumeArgs(opts: SessionOpts, sessionId: string, prompt: string): string[] {
   assertSessionId(sessionId)
-  return ['exec', 'resume', '--json', ...positionals([sessionId, prompt])]
+  const [, ...flags] = buildCodexArgs(opts)
+  return ['exec', 'resume', ...flags, ...positionals([sessionId, prompt])]
 }
 
 /** codex-native fork: same argv shape as resume, new thread id downstream. */
@@ -128,7 +133,7 @@ export function buildCodexForkArgs(sessionId: string, prompt: string): string[] 
   return ['exec', 'fork', '--json', ...positionals([sessionId, prompt])]
 }
 
-export function buildClaudeResumeArgs(sessionId: string, prompt: string): string[] {
+export function buildClaudeResumeArgs(opts: SessionOpts, sessionId: string, prompt: string): string[] {
   assertSessionId(sessionId)
-  return ['-p', '--output-format=stream-json', '--verbose', `--resume=${sessionId}`, ...positionals([prompt])]
+  return [...buildClaudeArgs(opts), `--resume=${sessionId}`, ...positionals([prompt])]
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { BACKEND_IDS, type BackendId, type Effort } from '../../../shared/models'
+import { BACKEND_IDS, EFFORT_LABELS, type BackendId, type Effort } from '../../../shared/models'
 import { entryKey, sameEntry, useDefaults, type LoadoutEntry } from '../../state/defaults'
 import { useSessions } from '../../state/sessions'
 import { useUi } from '../../state/ui'
@@ -169,7 +169,7 @@ export function ModelPicker({
       >
         <span className={`provider-dot provider-${backend}`} aria-hidden="true" />
         <span className="model-pill-name">{pillLabel}</span>
-        {model !== '' && <span className="model-pill-effort">{effort}</span>}
+        {model !== '' && <span className="model-pill-effort">{EFFORT_LABELS[effort]}</span>}
         <span className="dropdown-caret" aria-hidden="true" />
       </button>
       {open && (
@@ -216,7 +216,7 @@ export function ModelPicker({
                   <span className="model-row-name">
                     {r.backend} · {r.label}
                   </span>
-                  <span className="model-row-effort grow">{r.effort}</span>
+                  <span className="model-row-effort grow">{EFFORT_LABELS[r.effort]}</span>
                   {r.tag !== null && (
                     <span
                       className="model-row-tag"

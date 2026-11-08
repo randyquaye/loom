@@ -1,13 +1,10 @@
-import type { LinearIssueListResult, SecretPresence } from '../../shared/ipc-contract'
+import type { LinearIssueListResult } from '../../shared/ipc-contract'
 import { LinearAuthError, LINEAR_KEY_HINT } from '../integrations/linear/client'
 import { listAssignedIssues } from '../integrations/linear/issues'
-import { handle, maskSecret, type IpcDeps } from './index'
+import { handle, secretPresence, type IpcDeps } from './handle'
 
 export function registerLinearIpc(deps: IpcDeps): void {
-  handle('linear:hasKey', async (): Promise<SecretPresence> => {
-    const value = await deps.secrets.get('linear')
-    return value === null ? { present: false, masked: null } : { present: true, masked: maskSecret(value) }
-  })
+  handle('linear:hasKey', () => secretPresence(deps.secrets, 'linear'))
 
   handle('linear:setKey', ({ value }) => deps.secrets.set('linear', value))
   handle('linear:deleteKey', () => deps.secrets.delete('linear'))

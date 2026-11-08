@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { appendFile, mkdir, writeFile } from 'node:fs/promises'
+import { appendFile, lstat, mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import type Database from 'better-sqlite3'
@@ -130,7 +130,6 @@ export interface RemoveWorkspaceInput {
 }
 
 export async function seedContextDir(worktreePath: string): Promise<void> {
-  const { lstat } = await import('node:fs/promises')
   const dir = path.join(worktreePath, CONTEXT_DIR)
   const readme = path.join(dir, 'README.md')
   // A tracked symlink at either path would redirect these writes outside the

@@ -6,6 +6,7 @@ import '@xterm/xterm/css/xterm.css'
 import { Splitter } from '../ui/Splitter'
 import { useToasts } from '../ui/Toast'
 import { TERM_DEFAULT, TERM_MIN, termMax, usePanels } from '../../state/panels'
+import { clampInWindow, WINDOW_EDGE } from '../ui/anchor'
 import '../panels/panels.css'
 
 interface Tab {
@@ -260,7 +261,6 @@ function TerminalTabs({ workspaceId }: { workspaceId: string }) {
   )
 }
 
-const EDGE = 8
 const GAP = 6
 
 /**
@@ -290,10 +290,10 @@ function RenamePopover({
     if (anchor === null || tab === null || pop === null || pop === undefined) return
     const r = tab.getBoundingClientRect()
     const { width, height } = pop.getBoundingClientRect()
-    const below = r.bottom + GAP + height + EDGE <= window.innerHeight
+    const below = r.bottom + GAP + height + WINDOW_EDGE <= window.innerHeight
     // `.popover` already sits GAP below its anchor.
     anchor.style.top = `${below ? r.bottom : r.top - height - 2 * GAP}px`
-    anchor.style.left = `${Math.max(EDGE, Math.min(r.left, window.innerWidth - width - EDGE))}px`
+    anchor.style.left = `${clampInWindow(r.left, width, window.innerWidth)}px`
     inputRef.current?.focus()
     inputRef.current?.select()
   }, [anchorId])
@@ -308,7 +308,7 @@ function RenamePopover({
 
   return createPortal(
     <div ref={anchorRef} className="popover-wrap term-rename-anchor">
-      <div className="popover glass popover-left term-rename" role="dialog" aria-label="Rename terminal">
+      <div className="popover elevated popover-left term-rename" role="dialog" aria-label="Rename terminal">
         <input
           ref={inputRef}
           className="input mono"

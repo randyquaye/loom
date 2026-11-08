@@ -1,11 +1,19 @@
 import { applySttMessage, STT_INITIAL, utteranceOf, type SttState } from '../../shared/stt'
-
-export type { SttState }
-export { STT_INITIAL, utteranceOf }
+import { createLevelMeter, rmsLevel } from './level'
 
 const STT_URL = 'wss://api.elevenlabs.io/v1/speech-to-text/realtime'
 const RELEASE_WAIT_MS = 1500
 const SAMPLE_RATE = 16000
+/** Pause that ends an utterance; pinned so a provider default change can't alter hands-free timing. */
+const VAD_SILENCE_SECS = 1.2
+
+/** Hands-free hooks; press-to-talk passes none and reads the folded state on release. */
+export interface SttHooks {
+  /** A non-empty finalized segment (VAD decided the speaker paused). */
+  onCommit?(text: string): void
+  /** The socket closed without cancel(), e.g. a provider timeout or session limit. */
+  onClose?(): void
+}
 
 function isCommitted(message: unknown): boolean {
   const type = (message as { message_type?: unknown }).message_type
@@ -35,13 +43,16 @@ export class SttClient {
     timer: ReturnType<typeof setTimeout>
   } | null = null
 
-  constructor(private readonly onState: (state: SttState) => void) {}
+  constructor(
+    private readonly onState: (state: SttState) => void,
+    private readonly hooks: SttHooks = {}
+  ) {}
 
   start(token: string): void {
     const gen = ++this.gen
     this.state = STT_INITIAL
     this.onState(this.state)
-    const url = `${STT_URL}?model_id=scribe_v2_realtime&commit_strategy=vad&token=${encodeURIComponent(token)}`
+    const url = `${STT_URL}?model_id=scribe_v2_realtime&commit_strategy=vad&vad_silence_threshold_secs=${VAD_SILENCE_SECS}&token=${encodeURIComponent(token)}`
     const ws = new WebSocket(url)
     this.ws = ws
     ws.onmessage = (event) => {
@@ -54,7 +65,15 @@ export class SttClient {
       }
       this.state = applySttMessage(this.state, parsed)
       this.onState(this.state)
-      if (this.releaseWait !== null && isCommitted(parsed)) this.finishRelease()
+      if (!isCommitted(parsed)) return
+      if (this.releaseWait !== null) this.finishRelease()
+      const text = (parsed as { text?: unknown }).text
+      if (typeof text === 'string' && text.trim() !== '') this.hooks.onCommit?.(text.trim())
+    }
+    ws.onclose = () => {
+      if (gen !== this.gen) return
+      this.ws = null
+      this.hooks.onClose?.()
     }
     ws.onerror = () => {
       if (gen !== this.gen) return
@@ -103,6 +122,12 @@ export class SttClient {
     resolve(text === '' ? null : text)
   }
 
+  /** Starts the next utterance on the same socket (hands-free, after each commit). */
+  clear(): void {
+    this.state = STT_INITIAL
+    this.onState(this.state)
+  }
+
   /** Invalidates pending work immediately; late messages for this capture are dropped. */
   cancel(): void {
     this.gen += 1
@@ -126,8 +151,14 @@ export class SttClient {
   }
 }
 
+export interface Mic {
+  stop(): void
+  /** Input loudness (RMS, 0–1) for the voice stage. */
+  level(): number
+}
+
 /** Mono 16kHz PCM16 capture. ScriptProcessor is deprecated but universal; worklet later. */
-export async function startMic(onChunk: (samples: Int16Array) => void): Promise<() => void> {
+export async function startMic(onChunk: (samples: Int16Array) => void): Promise<Mic> {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
   })
@@ -148,14 +179,20 @@ export async function startMic(onChunk: (samples: Int16Array) => void): Promise<
     }
     onChunk(out)
   }
+  const meter = createLevelMeter(ctx)
   source.connect(node)
+  source.connect(meter)
   node.connect(silent)
+  meter.connect(silent)
   silent.connect(ctx.destination)
-  return () => {
-    node.onaudioprocess = null
-    node.disconnect()
-    source.disconnect()
-    void ctx.close()
-    for (const track of stream.getTracks()) track.stop()
+  return {
+    stop: () => {
+      node.onaudioprocess = null
+      node.disconnect()
+      source.disconnect()
+      void ctx.close()
+      for (const track of stream.getTracks()) track.stop()
+    },
+    level: () => rmsLevel(meter)
   }
 }

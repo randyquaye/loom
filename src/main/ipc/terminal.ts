@@ -1,4 +1,4 @@
-import { handle, type IpcDeps } from './index'
+import { handle, type IpcDeps } from './handle'
 import { attachmentFileName, writeAttachment } from '../context/materialize'
 import { createTerminal, destroyTerminal, resizeTerminal, setActiveTerminal, writeTerminal } from '../pty'
 import { workspaceEnv } from '../workspace/bootstrap'

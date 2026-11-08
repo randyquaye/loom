@@ -112,7 +112,7 @@
 }
 
 /* Popover menus move focus between items with the arrow keys; the fill is the focus indicator. */
-.popover-item:hover,
+.popover-item:hover:not(:disabled),
 .popover-item:focus-visible {
   background: var(--surface-2);
   color: var(--text);
@@ -120,14 +120,9 @@
 }
 
 .popover-item-danger,
-.popover-item-danger:hover,
+.popover-item-danger:hover:not(:disabled),
 .popover-item-danger:focus-visible {
   color: var(--danger);
-}
-
-.popover-up {
-  top: auto;
-  bottom: calc(100% + 6px);
 }
 
 .popover-sep {
@@ -253,8 +248,7 @@
   color: var(--text-faint);
 }
 
-.input,
-.select {
+.input {
   padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: var(--r-2);
@@ -266,21 +260,6 @@
 }
 
 /* Focus chrome on click is intentionally absent; tokens.css owns focus rules. */
-
-.select {
-  appearance: none;
-  padding-right: 28px;
-  background-image:
-    linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
-    linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
-  background-position:
-    calc(100% - 16px) 55%,
-    calc(100% - 11px) 55%;
-  background-size:
-    5px 5px,
-    5px 5px;
-  background-repeat: no-repeat;
-}
 
 .segmented {
   display: inline-flex;
@@ -302,43 +281,6 @@
   background: var(--surface-2);
   color: var(--text);
   box-shadow: var(--shadow-1);
-}
-
-/* ---------- switch (role="switch" button; aria-checked drives state) ---------- */
-
-.switch {
-  position: relative;
-  flex: none;
-  width: 36px;
-  height: 20px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
-  background: var(--surface-2);
-}
-
-.switch::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--text-muted);
-  transition:
-    transform var(--dur-1) var(--ease),
-    background var(--dur-1) var(--ease);
-}
-
-.switch[aria-checked='true'] {
-  border-color: transparent;
-  background: var(--accent-3);
-}
-
-.switch[aria-checked='true']::after {
-  background: #fff;
-  transform: translateX(16px);
 }
 
 /* ---------- themed dropdown (replaces native select everywhere) ---------- */

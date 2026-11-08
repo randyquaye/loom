@@ -17,7 +17,6 @@ interface SessionsState {
   create(workspaceId: string, backend: BackendId, model: string, effort: Effort): Promise<SessionRow>
   send(sessionId: string, text: string): Promise<void>
   /** Interrupt the turn in flight and send this message ahead of the queue. */
-  sendNow(sessionId: string, text: string): Promise<void>
   cancel(sessionId: string): Promise<void>
   /**
    * Close a session tab (the worktree is untouched). If it was active, the next remaining
@@ -96,10 +95,6 @@ export const useSessions = create<SessionsState>((set, get) => ({
 
   async send(sessionId, text) {
     await window.loom.sessions.send(sessionId, text)
-  },
-
-  async sendNow(sessionId, text) {
-    await window.loom.sessions.sendNow(sessionId, text)
   },
 
   async cancel(sessionId) {

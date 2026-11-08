@@ -135,7 +135,7 @@ body[data-modality='keyboard'] .side-foot-btn:focus-visible {
 }
 
 .project-row[data-selected='true'] .project-glyph {
-  background: var(--accent-grad);
+  background: var(--accent-fill);
   color: var(--text);
 }
 
@@ -150,13 +150,14 @@ body[data-modality='keyboard'] .side-foot-btn:focus-visible {
   opacity: 1;
 }
 
+/* Workspace rows lead with what the branch is: plain, open PR (grey) or merged PR (purple). */
 .sidebar .ws-row {
   position: relative;
-  padding: 6px var(--s-2) 6px 34px;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 6px var(--s-2) 6px var(--s-5);
   font-size: var(--fs-md);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   transition:
     background var(--dur-1) var(--ease),
     color var(--dur-1) var(--ease);
@@ -167,17 +168,27 @@ body[data-modality='keyboard'] .side-foot-btn:focus-visible {
   color: var(--text);
 }
 
-/* Accent marks state, not decoration: a dot on the active workspace only. */
-.sidebar .ws-row[data-active='true']::before {
-  content: '';
-  position: absolute;
-  left: 18px;
-  top: 50%;
-  width: 6px;
-  height: 6px;
-  margin-top: -3px;
-  border-radius: 50%;
-  background: var(--accent-1);
+.ws-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-muted);
+}
+
+.ws-icon svg {
+  width: var(--s-4);
+  height: var(--s-4);
+}
+
+.ws-icon[data-pr='merged'] {
+  color: var(--pr-merged);
+}
+
+.ws-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Workspace row + "⋯" menu: reserve both the menu and state slot in every bootstrap state. */
@@ -415,7 +426,7 @@ body[data-modality='keyboard'] .project-remove button:focus-visible {
 }
 
 .settings-nav-row[data-active='true'] .project-glyph {
-  background: var(--accent-grad);
+  background: var(--accent-fill);
   color: var(--text);
 }
 

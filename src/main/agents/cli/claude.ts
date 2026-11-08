@@ -49,7 +49,7 @@ export function createClaudeBackend(): AgentBackend {
             // `claude -p` reads the prompt from stdin when no positional is given,
             // which keeps the first turn's text out of the process argv.
             return session
-              ? { args: buildClaudeResumeArgs(session, prompt), promptOnStdin: false }
+              ? { args: buildClaudeResumeArgs(opts, session, prompt), promptOnStdin: false }
               : { args: buildClaudeArgs(opts), promptOnStdin: true }
           }
         })

@@ -165,7 +165,7 @@ export function createLoopBackend(backend: LoopBackendId, deps: LoopDeps): Agent
     async startSession(opts: SessionOpts): Promise<RunningSession> {
       const queue = createEventQueue()
       const history: unknown[] = []
-      // The autolink wrapper is a system message for the own loop (full control),
+      // Loom's instruction prompt is a system message for the own loop (full control),
       // mirroring --append-system-prompt on the CLI backends.
       if (backend === 'qwen') history.push({ role: 'system', content: opts.systemPromptAppend })
       let current: AbortController | null = null
@@ -233,8 +233,12 @@ export function createLoopBackend(backend: LoopBackendId, deps: LoopDeps): Agent
           } catch (error) {
             // A stream that throws mid-iteration must still close its turn, or
             // the renderer waits forever for a terminal event.
-            queue.push({ type: 'error', turnId, code: 'stream', message: String(error), retryable: false })
-            queue.push({ type: 'turn.done', turnId, stopReason: 'error' })
+            if (cancelled) {
+              queue.push({ type: 'turn.done', turnId, stopReason: 'cancelled' })
+            } else {
+              queue.push({ type: 'error', turnId, code: 'stream', message: String(error), retryable: false })
+              queue.push({ type: 'turn.done', turnId, stopReason: 'error' })
+            }
             return
           }
 

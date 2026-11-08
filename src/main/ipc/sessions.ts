@@ -1,4 +1,4 @@
-import { handle, type IpcDeps } from './index'
+import { handle, type IpcDeps } from './handle'
 import {
   cancelTurn,
   closedSessions,

@@ -1,5 +1,5 @@
-import type { ElevenLabsStatus, SecretPresence, SingleUseTokenResult } from '../../shared/ipc-contract'
-import { handle, maskSecret, type IpcDeps } from './index'
+import type { ElevenLabsStatus, SingleUseTokenResult } from '../../shared/ipc-contract'
+import { handle, secretPresence, type IpcDeps } from './handle'
 
 export const ELEVENLABS_KEY_HINT =
   'Add an ElevenLabs API key in Settings → Integrations to enable spoken replies.'
@@ -55,10 +55,7 @@ export async function elevenlabsStatus(deps: IpcDeps): Promise<ElevenLabsStatus>
 }
 
 export function registerElevenLabsIpc(deps: IpcDeps): void {
-  handle('elevenlabs:hasKey', async (): Promise<SecretPresence> => {
-    const value = await deps.secrets.get('elevenlabs')
-    return value === null ? { present: false, masked: null } : { present: true, masked: maskSecret(value) }
-  })
+  handle('elevenlabs:hasKey', () => secretPresence(deps.secrets, 'elevenlabs'))
   handle('elevenlabs:setKey', ({ value }) => deps.secrets.set('elevenlabs', value))
   handle('elevenlabs:deleteKey', () => deps.secrets.delete('elevenlabs'))
   handle('elevenlabs:sttToken', () => mintToken(deps, TOKEN_SCOPES.stt))

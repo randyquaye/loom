@@ -216,7 +216,7 @@
 .project-prompts-dirty {
   width: var(--s-2);
   height: var(--s-2);
-  border-radius: var(--r-pill);
+  border-radius: 50%;
   background: currentColor;
   opacity: 0;
   transition: opacity var(--dur-1) var(--ease);

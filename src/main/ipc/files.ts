@@ -2,7 +2,7 @@ import { dialog } from 'electron'
 import { readFileJailed } from '../fs/read'
 import { listDir } from '../fs/tree'
 import { makeWorktreeResolver } from '../fs/workspace-root'
-import { handle, type IpcDeps } from './index'
+import { handle, type IpcDeps } from './handle'
 
 export function registerFilesIpc(deps: IpcDeps): void {
   const worktreeOf = makeWorktreeResolver(deps.db)

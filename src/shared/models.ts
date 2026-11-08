@@ -3,7 +3,6 @@ export const BACKEND_IDS: BackendId[] = ['codex', 'claude', 'gemini', 'qwen']
 
 /** Integrations whose credential Loom stores itself, unlike the CLI-owned logins. */
 export type IntegrationId = 'linear' | 'elevenlabs'
-export const INTEGRATION_IDS: IntegrationId[] = ['linear', 'elevenlabs']
 
 /** Everything the encrypted secret store may hold: provider API keys plus integration keys. */
 export type SecretId = BackendId | IntegrationId
@@ -11,6 +10,17 @@ export type SecretId = BackendId | IntegrationId
 /** Single source for both the union and the IPC zod enum, so they cannot drift apart. */
 export const EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
 export type Effort = (typeof EFFORTS)[number]
+
+/** Display names; the ids stay terse because backends and storage use them verbatim. */
+export const EFFORT_LABELS: Record<Effort, string> = {
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra high',
+  max: 'Max',
+  ultra: 'Ultra'
+}
 
 /**
  * Estimated context windows per model family, for the badge's usage meter.

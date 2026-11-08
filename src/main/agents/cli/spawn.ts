@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import type { AgentEvent } from '../../../shared/events'
-import { createEventQueue, type EventQueue } from '../queue'
+import { createEventQueue } from '../queue'
 import type { RunningSession } from '../types'
 
 export type LineParser = (line: string) => AgentEvent[]
@@ -188,14 +188,14 @@ interface TurnTracker {
 }
 
 /** Remembers the turn identity so synthetic terminal events join the same turn. */
-function createTurnTracker(queue: EventQueue): TurnTracker {
+function createTurnTracker(push: (event: AgentEvent) => void): TurnTracker {
   let turnId = UNKNOWN_TURN_ID
   let sawTurnDone = false
   return {
     push(event: AgentEvent): void {
       if ('turnId' in event && typeof event.turnId === 'string') turnId = event.turnId
       if (event.type === 'turn.done') sawTurnDone = true
-      queue.push(event)
+      push(event)
     },
     get turnId(): string {
       return turnId
@@ -228,7 +228,7 @@ export function runCliSession(
   extraEnv?: Record<string, string>
 ): RunningSession {
   const queue = createEventQueue()
-  const tracker = createTurnTracker(queue)
+  const tracker = createTurnTracker(queue.push)
   const child = spawnChild(bin, args, cwd, extraEnv)
   let cancelled = false
 
@@ -302,7 +302,13 @@ export function startLazyCliSession(spec: LazyCliSpec): RunningSession {
   async function runTurn(prompt: string): Promise<void> {
     const plan = spec.plan(prompt, providerSessionId)
     const parser = spec.createParser()
-    const tracker = createTurnTracker(queue)
+    let turnDone: Extract<AgentEvent, { type: 'turn.done' }> | undefined
+    // Provider completion can precede process exit. Hold the boundary until the
+    // child is cleared, so consumers can immediately send the next queued turn.
+    const tracker = createTurnTracker((event) => {
+      if (event.type === 'turn.done') turnDone = event
+      else queue.push(event)
+    })
     const child = spawnChild(spec.bin, plan.args, spec.cwd, spec.env)
     activeChild = child
 
@@ -312,20 +318,21 @@ export function startLazyCliSession(spec: LazyCliSpec): RunningSession {
         providerSessionId = parser.providerSessionId()
       }
     }).then((result) => {
+      inFlight = undefined
+      activeChild = undefined
       finishTurn(result, tracker, parser)
+      if (turnDone) queue.push(turnDone)
       return result
     })
 
+    inFlight = outcome
     if (plan.promptOnStdin) {
       await writeStdin(child, `${prompt}\n`).catch(() => undefined)
     }
     // The CLI must not block waiting on stdin once the prompt is delivered.
     child.stdin?.end()
 
-    inFlight = outcome
     await outcome
-    inFlight = undefined
-    activeChild = undefined
   }
 
   function finishTurn(result: ChildOutcome, tracker: TurnTracker, parser: ProviderParser): void {

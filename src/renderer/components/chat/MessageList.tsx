@@ -1,7 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AgentEvent, FilePatch } from '../../../shared/events'
 import { isTurnRunning } from '../../state/sessions'
-import { deriveBlocks, type Block } from './derive'
+import { deriveBlocks, type Block } from '../../../shared/blocks'
 import { ChatEmptyState } from './ChatEmptyState'
 import {
   AssistantText,

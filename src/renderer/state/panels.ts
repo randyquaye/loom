@@ -20,7 +20,6 @@ export const TREE_MIN = 160
 /** The chat/viewer column never resizes below this while the window can afford it. */
 export const CENTER_MIN = 480
 /** The shell is full-bleed; only splitter columns consume horizontal space. */
-const SHELL_PADDING = 0
 const SPLITTER_W = 8
 
 export function clamp(value: number, min: number, max: number): number {
@@ -40,7 +39,7 @@ function storedFlag(key: string): boolean {
 /** Width a side panel may take once the other panel and the center minimum are paid for. */
 function room(viewportW: number, other: number, withRight: boolean): number {
   const splitters = withRight ? 2 * SPLITTER_W : SPLITTER_W
-  return viewportW - SHELL_PADDING - splitters - CENTER_MIN - other
+  return viewportW - splitters - CENTER_MIN - other
 }
 
 /** Effective sidebar max; never below the min, so a tiny window squeezes the center instead. */

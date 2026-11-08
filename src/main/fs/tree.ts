@@ -5,7 +5,8 @@ import { contain } from '../security/contain'
 
 /** One listing cap; the renderer loads folders lazily, so a cap only bounds a single directory. */
 export const DIR_LIST_CAP = 2000
-const SKIPPED_DIRS = new Set(['.git', 'node_modules'])
+/** Never listed, walked, globbed or grepped by Loom's own tools. */
+export const SKIPPED_DIRS: ReadonlySet<string> = new Set(['.git', 'node_modules'])
 
 function compareEntries(a: Dirent, b: Dirent): number {
   const aDir = a.isDirectory()

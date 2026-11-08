@@ -23,8 +23,6 @@
   --accent-1: #e4e4e7;
   --accent-2: #d4d4d8;
   --accent-3: #71717a;
-  --accent-4: #52525b;
-  --accent-grad: linear-gradient(135deg, #3f3f46, #27272a);
   /* Filled controls carrying white text: ~10:1 across the whole fill. */
   --accent-fill: linear-gradient(135deg, #3f3f46, #27272a);
 
@@ -32,6 +30,8 @@
   --warn: #fbbf24;
   --danger: #fca5a5;
   --info: #38bdf8;
+  /* GitHub's merged-PR purple, so the sidebar badge reads the way it does on github.com. */
+  --pr-merged: #a371f7;
 
   /* alpha tints: single source for surface washes */
   --accent-2-a18: rgba(255, 255, 255, 0.1);
@@ -104,7 +104,7 @@ body {
 }
 
 ::selection {
-  background: rgba(255, 255, 255, 0.22);
+  background: var(--accent-3-a45);
 }
 
 /* Keyboard focus keeps a soft ring for accessibility; clicking into a text
@@ -181,24 +181,8 @@ button:disabled {
   box-shadow: var(--shadow-2), var(--edge-highlight);
 }
 
-.pill {
-  border-radius: var(--r-pill);
-}
-
 .muted {
   color: var(--text-muted);
-}
-
-.faint {
-  color: var(--text-faint);
-}
-
-.ok {
-  color: var(--ok);
-}
-
-.warn {
-  color: var(--warn);
 }
 
 .grow {
@@ -268,12 +252,6 @@ button:disabled {
 .icon-btn:hover:not(:disabled) {
   background: var(--surface-2);
   color: var(--text);
-}
-
-.link {
-  padding: var(--s-1) var(--s-3);
-  color: var(--text-muted);
-  text-decoration: underline;
 }
 
 .kbd {
@@ -361,20 +339,6 @@ body.is-resizing .xterm {
 
 /* ---------- sidebar ---------- */
 
-.primary {
-  width: 100%;
-  padding: 9px var(--s-4);
-  border: none;
-  border-radius: var(--r-pill);
-  background: var(--surface-2);
-  color: var(--text);
-  font-weight: 600;
-}
-
-.primary:hover {
-  background: rgba(255, 255, 255, 0.12);
-}
-
 .section-label {
   padding: var(--s-3) var(--s-4) var(--s-1);
   font-size: var(--fs-xs);
@@ -425,10 +389,6 @@ body.is-resizing .xterm {
   border-bottom: 1px solid var(--hairline);
 }
 
-.topbar .btn-ghost {
-  padding: 6px 10px;
-}
-
 .badge {
   padding: 4px 12px;
   border: 1px solid var(--border);
@@ -460,7 +420,7 @@ body.is-resizing .xterm {
   white-space: nowrap;
 }
 
-.tab:hover {
+.tab:hover:not(:disabled) {
   color: var(--text);
   background: var(--surface-1);
 }
@@ -469,54 +429,6 @@ body.is-resizing .xterm {
   background: var(--surface-2);
   border-color: var(--border);
   color: var(--text);
-}
-
-.messages {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
-  padding: var(--s-5);
-}
-
-.msg {
-  max-width: 76ch;
-  padding: var(--s-3) var(--s-4);
-  border: 1px solid var(--border);
-  border-radius: var(--r-3);
-  background: var(--surface-1);
-  white-space: pre-wrap;
-}
-
-.msg-user {
-  align-self: flex-end;
-  border-color: var(--accent-3-a45);
-  background: var(--accent-3-a16);
-}
-
-.msg pre {
-  margin: var(--s-2) 0 0;
-  overflow-x: auto;
-  font: var(--fs-sm)/1.5 var(--mono);
-  color: var(--text-muted);
-}
-
-.reasoning summary,
-.tool-block summary {
-  cursor: pointer;
-  color: var(--text-muted);
-  font-size: var(--fs-sm);
-}
-
-.tool-fail {
-  border-color: var(--danger-a45);
-}
-
-.error-block {
-  border-color: var(--danger-a45);
-  color: var(--danger);
 }
 
 .composer {
@@ -548,17 +460,14 @@ body.is-resizing .xterm {
   gap: var(--s-2);
 }
 
+/* Geometry lives with the composer (flow.css .composer .send-btn). */
 .send-btn {
-  width: 34px;
-  height: 34px;
   border: none;
-  border-radius: 50%;
   background: var(--accent-fill);
   color: var(--on-accent);
-  font-size: var(--fs-lg);
 }
 
-.send-btn:hover {
+.send-btn:hover:not(:disabled) {
   filter: brightness(1.12);
 }
 
@@ -599,15 +508,9 @@ body.is-resizing .xterm {
   font-size: var(--fs-sm);
 }
 
-.chip:hover {
+.chip:hover:not(:disabled) {
   color: var(--text);
   border-color: var(--border-strong);
-}
-
-.chip-on {
-  background: var(--surface-2);
-  border-color: var(--border-strong);
-  color: var(--text);
 }
 
 .suggestion-grid {
@@ -642,62 +545,6 @@ body.is-resizing .xterm {
   font-size: var(--fs-xs);
 }
 
-/* ---------- home ---------- */
-
-.search {
-  flex: 1;
-  padding: 8px 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
-  background: var(--surface-1);
-  color: var(--text);
-  font: inherit;
-  outline: none;
-}
-
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s-2);
-  padding: var(--s-3) var(--s-4);
-}
-
-.results {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  padding: 0 var(--s-4) var(--s-4);
-}
-
-.hit {
-  display: block;
-  width: 100%;
-  padding: var(--s-3) var(--s-4);
-  border: 1px solid var(--border);
-  border-radius: var(--r-3);
-  background: var(--surface-1);
-  text-align: left;
-}
-
-.hit:hover {
-  background: var(--surface-2);
-  border-color: var(--border-strong);
-}
-
-.hit-head {
-  display: flex;
-  align-items: baseline;
-  gap: var(--s-3);
-}
-
-.hit-snippet {
-  margin-top: var(--s-1);
-  font-size: var(--fs-sm);
-}
-
 /* ---------- right pane ---------- */
 
 .tree {
@@ -722,11 +569,6 @@ body.is-resizing .xterm {
 
 .tree-row:hover {
   background: var(--surface-1);
-  color: var(--text);
-}
-
-.tree-on {
-  background: var(--accent-2-a18);
   color: var(--text);
 }
 
@@ -775,18 +617,6 @@ body.is-resizing .xterm {
 
 .diag {
   padding: 2px 0;
-}
-
-.diag-error {
-  color: var(--danger);
-}
-
-.diag-warning {
-  color: var(--warn);
-}
-
-.diag-info {
-  color: var(--text-muted);
 }
 
 .xterm-host {

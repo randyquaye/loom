@@ -41,10 +41,6 @@ const CATALOGS: Partial<Record<BackendId, ModelDescriptor[]>> = {
   claude: CLAUDE_MODELS
 }
 
-export function modelsFor(backend: BackendId): ModelDescriptor[] {
-  return CATALOGS[backend] ?? []
-}
-
 export function findModel(backend: 'codex' | 'claude', id: string): ModelDescriptor | undefined {
   return CATALOGS[backend]?.find((m) => m.id === id)
 }

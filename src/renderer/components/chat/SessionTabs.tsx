@@ -8,6 +8,7 @@ import { useUi } from '../../state/ui'
 import { Popover } from '../ui/Popover'
 import { useToasts } from '../ui/Toast'
 import { RecentChats } from './RecentChats'
+import { clampInWindow } from '../ui/anchor'
 import './flow.css'
 
 /**
@@ -170,8 +171,6 @@ export function SessionTabs({
   )
 }
 
-const EDGE = 8
-
 /**
  * Popover pinned at a viewport point. It is measured before paint and nudged back inside the
  * window, so a menu opened near the right or bottom edge never renders off-screen.
@@ -194,8 +193,8 @@ function TabMenu({
     const menu = anchor?.querySelector('.popover')
     if (anchor === null || menu === null || menu === undefined) return
     const { width, height } = menu.getBoundingClientRect()
-    anchor.style.left = `${Math.max(EDGE, Math.min(x, window.innerWidth - width - EDGE))}px`
-    anchor.style.top = `${Math.max(EDGE, Math.min(y, window.innerHeight - height - EDGE))}px`
+    anchor.style.left = `${clampInWindow(x, width, window.innerWidth)}px`
+    anchor.style.top = `${clampInWindow(y, height, window.innerHeight)}px`
   }, [x, y])
 
   return createPortal(

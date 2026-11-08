@@ -1,8 +1,8 @@
+import { looksBinary } from '../fs/read'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { contain } from '../security/contain'
 
-export const ATTACH_MAX_COUNT = 8
 export const ATTACH_MAX_BYTES = 256 * 1024
 export const ATTACH_MAX_LINES = 4000
 
@@ -91,7 +91,7 @@ export async function readAttachment(abs: string): Promise<AttachmentContent> {
   }
   const buffer = await readFile(abs)
   // A NUL byte in the head means binary; inlining it would put garbage in the transcript.
-  if (buffer.subarray(0, 8192).includes(0)) throw new AttachmentError(`binary file: ${abs}`)
+  if (looksBinary(buffer)) throw new AttachmentError(`binary file: ${abs}`)
   const lines = buffer.toString('utf8').split('\n')
   const truncated = lines.length > ATTACH_MAX_LINES
   const text = truncated ? lines.slice(0, ATTACH_MAX_LINES).join('\n') : lines.join('\n')

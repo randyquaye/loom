@@ -4,16 +4,9 @@ import type { CheckpointInfo, WorkspaceRow } from '../../../shared/ipc-contract'
 import { useFiles } from '../../state/files'
 import { Modal } from '../ui/Modal'
 import { Popover } from '../ui/Popover'
+import { relativeTime } from '../ui/relativeTime'
 import { useToasts } from '../ui/Toast'
-
-function relativeTime(at: number): string {
-  const minutes = Math.floor((Date.now() - at) / 60_000)
-  if (minutes < 1) return 'just now'
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  return `${Math.floor(hours / 24)}d ago`
-}
+import { clampInWindow } from '../ui/anchor'
 
 /** Anchored to the workspace actions button, outside the sidebar's scroll and glass containers. */
 export function CheckpointsMenu({
@@ -53,7 +46,7 @@ export function CheckpointsMenu({
       const above = rect.top - 24
       const up = below < Math.min(360, above)
       setPosition({
-        left: Math.max(16, Math.min(rect.right - width, window.innerWidth - width - 16)),
+        left: clampInWindow(rect.right - width, width, window.innerWidth, 16),
         ...(up ? { bottom: window.innerHeight - rect.top + 8 } : { top: rect.bottom + 8 }),
         maxHeight: Math.min(360, Math.max(0, up ? above : below))
       })

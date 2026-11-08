@@ -7,8 +7,7 @@ import {
   type SessionCreateInput,
   type SessionEventPush,
   type SessionRow,
-  type SessionTitlePush,
-  SESSION_EVENT_CHANNEL
+  type SessionTitlePush
 } from '../../shared/ipc-contract'
 import { MAX_SESSIONS_PER_WORKSPACE } from '../../shared/limits'
 import type { BackendId, Effort } from '../../shared/models'
@@ -39,8 +38,6 @@ import {
 } from '../workspace/bootstrap'
 import { eventsToMarkdown } from '../export/markdown'
 
-export { SESSION_EVENT_CHANNEL }
-
 type Sink = (push: SessionEventPush) => void
 
 let sink: Sink | null = null
@@ -62,13 +59,24 @@ interface SessionBackendRow {
   provider_session_id: string | null
 }
 
+const SESSION_COLUMNS = `id, workspace_id AS workspaceId, backend, model, effort, title,
+  created_at AS createdAt, closed_at AS closedAt, forked_from AS forkedFrom,
+  provider_session_id AS providerSessionId`
+
+/** The cap counts open tabs: closed rows stay reopenable and must not block new ones. */
+function assertSessionCapacity(db: Database.Database, workspaceId: string): void {
+  const open = db
+    .prepare('SELECT COUNT(*) AS n FROM sessions WHERE workspace_id = ? AND closed_at IS NULL')
+    .get(workspaceId) as { n: number }
+  if (open.n >= MAX_SESSIONS_PER_WORKSPACE) {
+    throw new SessionLimitError(`workspace is limited to ${MAX_SESSIONS_PER_WORKSPACE} sessions`)
+  }
+}
+
 export function listSessions(db: Database.Database, workspaceId: string): SessionRow[] {
   const rows = db
     .prepare(
-      `SELECT id, workspace_id AS workspaceId, backend, model, effort, title,
-              created_at AS createdAt, closed_at AS closedAt, forked_from AS forkedFrom,
-              provider_session_id AS providerSessionId
-       FROM sessions WHERE workspace_id = ? AND closed_at IS NULL ORDER BY created_at`
+      `SELECT ${SESSION_COLUMNS} FROM sessions WHERE workspace_id = ? AND closed_at IS NULL ORDER BY created_at`
     )
     .all(workspaceId) as SessionRow[]
   return rows
@@ -78,10 +86,7 @@ export function listSessions(db: Database.Database, workspaceId: string): Sessio
 export function closedSessions(db: Database.Database, workspaceId: string): SessionRow[] {
   return db
     .prepare(
-      `SELECT id, workspace_id AS workspaceId, backend, model, effort, title,
-              created_at AS createdAt, closed_at AS closedAt, forked_from AS forkedFrom,
-              provider_session_id AS providerSessionId
-       FROM sessions WHERE workspace_id = ? AND closed_at IS NOT NULL
+      `SELECT ${SESSION_COLUMNS} FROM sessions WHERE workspace_id = ? AND closed_at IS NOT NULL
        ORDER BY closed_at DESC, rowid DESC LIMIT 10`
     )
     .all(workspaceId) as SessionRow[]
@@ -93,31 +98,13 @@ export function reopenSession(db: Database.Database, sessionId: string): Session
     .prepare('SELECT workspace_id AS workspaceId FROM sessions WHERE id = ? AND closed_at IS NOT NULL')
     .get(sessionId) as { workspaceId: string } | undefined
   if (row === undefined) throw new Error(`no closed session ${sessionId}`)
-  const open = db
-    .prepare('SELECT COUNT(*) AS n FROM sessions WHERE workspace_id = ? AND closed_at IS NULL')
-    .get(row.workspaceId) as { n: number }
-  if (open.n >= MAX_SESSIONS_PER_WORKSPACE) {
-    throw new SessionLimitError(`workspace is limited to ${MAX_SESSIONS_PER_WORKSPACE} sessions`)
-  }
+  assertSessionCapacity(db, row.workspaceId)
   db.prepare('UPDATE sessions SET closed_at = NULL WHERE id = ?').run(sessionId)
-  return db
-    .prepare(
-      `SELECT id, workspace_id AS workspaceId, backend, model, effort, title,
-              created_at AS createdAt, closed_at AS closedAt, forked_from AS forkedFrom,
-              provider_session_id AS providerSessionId
-       FROM sessions WHERE id = ?`
-    )
-    .get(sessionId) as SessionRow
+  return db.prepare(`SELECT ${SESSION_COLUMNS} FROM sessions WHERE id = ?`).get(sessionId) as SessionRow
 }
 
 export function createSession(db: Database.Database, input: SessionCreateInput): SessionRow {
-  // The cap counts open tabs: closed rows stay reopenable and must not block new ones.
-  const count = db
-    .prepare('SELECT COUNT(*) AS n FROM sessions WHERE workspace_id = ? AND closed_at IS NULL')
-    .get(input.workspaceId) as { n: number }
-  if (count.n >= MAX_SESSIONS_PER_WORKSPACE) {
-    throw new SessionLimitError(`workspace is limited to ${MAX_SESSIONS_PER_WORKSPACE} sessions`)
-  }
+  assertSessionCapacity(db, input.workspaceId)
   const row: SessionRow = {
     id: randomUUID(),
     workspaceId: input.workspaceId,
@@ -185,32 +172,51 @@ function appendEvent(db: Database.Database, sessionId: string, event: AgentEvent
   sink?.({ sessionId, event: stamped })
 }
 
+/** A non-retryable failure, recorded in the transcript where the user will see it. */
+function appendError(
+  db: Database.Database,
+  sessionId: string,
+  code: string,
+  error: unknown,
+  turnId?: string
+): void {
+  appendEvent(db, sessionId, {
+    type: 'error',
+    ...(turnId === undefined ? {} : { turnId }),
+    code,
+    message: String(error),
+    retryable: false
+  })
+}
+
+/** A turn nobody awaits (queue drain, send-now, fork hand-off): failures land in the transcript. */
+function sendDetached(db: Database.Database, sessionId: string, text: string, code: string): void {
+  void sendTurn(db, sessionId, text).catch((error: unknown) => appendError(db, sessionId, code, error))
+}
+
 async function pump(db: Database.Database, sessionId: string, session: RunningSession): Promise<void> {
   let settled = false
+  let failed = false
   try {
     for await (const event of session.events) {
       appendEvent(db, sessionId, event)
-      if (event.type === 'turn.done') {
-        settleTurn(db, sessionId, true)
+      // Errors do not end a turn: codex reports retryable failures mid-turn and keeps going,
+      // and every backend closes a failed turn with turn.done. Settling early let the next
+      // message skip the queue into a turn still in flight.
+      if (event.type === 'error') failed = true
+      else if (event.type === 'turn.done') {
+        // A failed turn keeps the queue for the user to retry or drop explicitly.
+        settleTurn(db, sessionId, event.stopReason !== 'error' && !failed)
         settled = true
-      } else if (event.type === 'error') {
-        // A failed turn must not wedge the session: unbusy, but keep the queue
-        // for the user to retry or drop explicitly.
-        settleTurn(db, sessionId, false)
-        settled = true
+        failed = false
       }
     }
     // One-shot backends end their stream at turn end without a trailing event. Skipped
     // when the loop already settled: that settle may have started the next turn, whose
     // busy flag this pump must not clear.
-    if (!settled) settleTurn(db, sessionId, true)
+    if (!settled) settleTurn(db, sessionId, !failed)
   } catch (error) {
-    appendEvent(db, sessionId, {
-      type: 'error',
-      code: 'stream',
-      message: String(error),
-      retryable: false
-    })
+    appendError(db, sessionId, 'stream', error)
     settleTurn(db, sessionId, false)
   }
 }
@@ -231,14 +237,7 @@ function settleTurn(db: Database.Database, sessionId: string, drain: boolean): v
   const now = immediate.get(sessionId)
   if (now !== undefined) {
     immediate.delete(sessionId)
-    void sendTurn(db, sessionId, now).catch((error: unknown) => {
-      appendEvent(db, sessionId, {
-        type: 'error',
-        code: 'send.now',
-        message: String(error),
-        retryable: false
-      })
-    })
+    sendDetached(db, sessionId, now, 'send.now')
     return
   }
   if (drain) drainQueue(db, sessionId)
@@ -365,14 +364,7 @@ function drainQueue(db: Database.Database, sessionId: string): void {
   if (queue !== undefined && queue.length === 0) queues.delete(sessionId)
   if (next === undefined) return
   pushQueue(sessionId)
-  void sendTurn(db, sessionId, next).catch((error: unknown) => {
-    appendEvent(db, sessionId, {
-      type: 'error',
-      code: 'queue.drain',
-      message: String(error),
-      retryable: false
-    })
-  })
+  sendDetached(db, sessionId, next, 'queue.drain')
 }
 
 export async function sendTurn(
@@ -415,80 +407,90 @@ export async function sendTurn(
     return
   }
   busyTurns.add(sessionId)
-
-  const isFirstPrompt =
-    (
-      db
-        .prepare('SELECT COUNT(*) AS n FROM events WHERE session_id = ? AND type = ?')
-        .get(sessionId, 'user.text') as { n: number }
-    ).n === 0
-
   const turnId = randomUUID()
-  appendEvent(db, sessionId, { type: 'user.text', turnId, text: body })
-  // Titles and checkpoints describe what the user asked, not the inlined files.
-  if (isFirstPrompt) {
-    void renameFromPrompt(db, sessionId, row.workspace_id, row.backend as BackendId, row.model, text)
-  }
+  try {
+    const isFirstPrompt =
+      (
+        db
+          .prepare('SELECT COUNT(*) AS n FROM events WHERE session_id = ? AND type = ?')
+          .get(sessionId, 'user.text') as { n: number }
+      ).n === 0
 
-  const wsRow = db
-    .prepare(
-      `SELECT w.name, w.branch, w.worktree_path, p.repo_path, p.id AS project_id
-       FROM workspaces w JOIN projects p ON p.id = w.project_id WHERE w.id = ?`
-    )
-    .get(row.workspace_id) as
-    { name: string; branch: string; worktree_path: string; repo_path: string; project_id: string } | undefined
-  if (wsRow !== undefined) {
-    await writeLoomContext(wsRow.worktree_path, {
-      workspaceName: wsRow.name,
-      branch: wsRow.branch,
-      repoPath: wsRow.repo_path,
-      backend: row.backend,
-      model: row.model,
-      effort: row.effort,
-      at: Date.now(),
-      envNames: await envNames(wsRow.project_id)
-    }).catch(() => {})
-    // codex reads instructions only from a root AGENTS.md; keep a managed companion fresh
-    // while the path is free, and keep git blind to it only while Loom owns it.
-    void (async () => {
-      const doc = await composeAgentsDoc(db, row.workspace_id)
-      const owned = await refreshWorkspaceAgentsDoc(wsRow.worktree_path, doc)
-      await setAgentsExclude(wsRow.repo_path, owned)
-    })().catch(() => {})
-    void autoCheckpoint(wsRow.worktree_path, turnId, text).catch((error: unknown) => {
-      appendEvent(db, sessionId, {
-        type: 'error',
-        code: 'checkpoint.save',
-        message: String(error),
-        retryable: false
+    appendEvent(db, sessionId, { type: 'user.text', turnId, text: body })
+    // Titles and checkpoints describe what the user asked, not the inlined files.
+    if (isFirstPrompt) {
+      void renameFromPrompt(db, sessionId, row.workspace_id, row.backend as BackendId, row.model, text)
+    }
+
+    const wsRow = db
+      .prepare(
+        `SELECT w.name, w.branch, w.worktree_path, p.repo_path, p.id AS project_id
+         FROM workspaces w JOIN projects p ON p.id = w.project_id WHERE w.id = ?`
+      )
+      .get(row.workspace_id) as
+      | { name: string; branch: string; worktree_path: string; repo_path: string; project_id: string }
+      | undefined
+    if (wsRow !== undefined) {
+      await writeLoomContext(wsRow.worktree_path, {
+        workspaceName: wsRow.name,
+        branch: wsRow.branch,
+        repoPath: wsRow.repo_path,
+        backend: row.backend,
+        model: row.model,
+        effort: row.effort,
+        at: Date.now(),
+        envNames: await envNames(wsRow.project_id)
+      }).catch(() => {})
+      // codex reads instructions only from a root AGENTS.md; keep a managed companion fresh
+      // while the path is free, and keep git blind to it only while Loom owns it.
+      void (async () => {
+        const doc = await instructionPrompt(db, row.workspace_id, true)
+        const owned = await refreshWorkspaceAgentsDoc(wsRow.worktree_path, doc)
+        await setAgentsExclude(wsRow.repo_path, owned)
+      })().catch(() => {})
+      void autoCheckpoint(wsRow.worktree_path, turnId, text).catch((error: unknown) =>
+        appendError(db, sessionId, 'checkpoint.save', error)
+      )
+    }
+
+    let session = live.get(sessionId)
+    if (session === undefined) {
+      const backend = getBackend(row.backend as SessionCreateInput['backend'])
+      if (backend === undefined) throw new Error(`backend ${row.backend} is not registered`)
+      const worktree = db
+        .prepare('SELECT worktree_path FROM workspaces WHERE id = ?')
+        .get(row.workspace_id) as { worktree_path: string } | undefined
+      if (worktree === undefined) throw new Error(`unknown workspace ${row.workspace_id}`)
+      session = await backend.startSession({
+        workspaceId: row.workspace_id,
+        worktreePath: worktree.worktree_path,
+        model: row.model,
+        effort: row.effort as Effort,
+        systemPromptAppend: await instructionPrompt(
+          db,
+          row.workspace_id,
+          row.backend === 'gemini' || row.backend === 'qwen'
+        ),
+        resumeId: row.provider_session_id ?? undefined,
+        env: await workspaceEnv(db, row.workspace_id),
+        pluginDir: loomSkillDir ?? undefined
       })
-    })
-  }
-
-  let session = live.get(sessionId)
-  if (session === undefined) {
-    const backend = getBackend(row.backend as SessionCreateInput['backend'])
-    if (backend === undefined) throw new Error(`backend ${row.backend} is not registered`)
-    const worktree = db.prepare('SELECT worktree_path FROM workspaces WHERE id = ?').get(row.workspace_id) as
-      { worktree_path: string } | undefined
-    if (worktree === undefined) throw new Error(`unknown workspace ${row.workspace_id}`)
-    session = await backend.startSession({
-      workspaceId: row.workspace_id,
-      worktreePath: worktree.worktree_path,
-      model: row.model,
-      effort: row.effort as Effort,
-      systemPromptAppend: await systemPromptFor(db, row.workspace_id, row.backend as BackendId),
-      resumeId: row.provider_session_id ?? undefined,
-      env: await workspaceEnv(db, row.workspace_id),
-      pluginDir: loomSkillDir ?? undefined
-    })
-    live.set(sessionId, session)
-    void pump(db, sessionId, session)
-  }
-  await session.send(body)
-  const providerId = session.providerSessionId?.()
-  if (providerId !== undefined) {
-    db.prepare('UPDATE sessions SET provider_session_id = ? WHERE id = ?').run(providerId, sessionId)
+      live.set(sessionId, session)
+      void pump(db, sessionId, session)
+    }
+    await session.send(body)
+    const providerId = session.providerSessionId?.()
+    if (providerId !== undefined) {
+      db.prepare('UPDATE sessions SET provider_session_id = ? WHERE id = ?').run(providerId, sessionId)
+    }
+  } catch (error) {
+    // Only pump settles a claimed turn; a throw before it runs (an unknown model after a
+    // catalog change, a failed spawn) would otherwise leave the session busy forever, with
+    // every later message queued and never sent. The failure is recorded right after the
+    // message it failed, so it is not rethrown: callers would report it a second time.
+    appendError(db, sessionId, 'send', error, turnId)
+    appendEvent(db, sessionId, { type: 'turn.done', turnId, stopReason: 'error' })
+    settleTurn(db, sessionId, false)
   }
 }
 
@@ -522,13 +524,14 @@ export function setLoomSkillDir(dir: string): void {
 }
 
 /**
- * Autolink wrapper, bundled facts and repo instruction files for the loop backends, the
- * Loom instruction overlays, the project's general prompt, and the names of any env vars.
+ * Loom's instruction text for a workspace. With inlineRepoFacts the bundled skill facts and
+ * the repository's own CLAUDE.md/AGENTS.md are included too: the loop backends have no
+ * instruction-file discovery or skill plugin, and codex reads only the managed AGENTS.md.
  */
-async function systemPromptFor(
+async function instructionPrompt(
   db: Database.Database,
   workspaceId: string,
-  backend: BackendId
+  inlineRepoFacts: boolean
 ): Promise<string> {
   const row = db
     .prepare(
@@ -537,17 +540,13 @@ async function systemPromptFor(
     )
     .get(workspaceId) as { worktree_path: string; project_id: string; general: string | null } | undefined
   const parts = [AUTOLINK_SYSTEM_PROMPT]
-  // The loop backends have no native instruction-file discovery and no skill plugin, so
-  // they get the bundled facts and the repository's own instruction files inline.
-  if (backend === 'gemini' || backend === 'qwen') {
-    parts.push(SKILL_FACTS)
-    parts.push(...(await repoInstructionFiles(row?.worktree_path)))
+  if (inlineRepoFacts) parts.push(SKILL_FACTS, ...(await repoInstructionFiles(row?.worktree_path)))
+  if (row !== undefined) {
+    parts.push(...(await instructionOverlayParts(row.project_id)))
+    if ((row.general ?? '').trim() !== '') parts.push(row.general as string)
+    const names = await envNames(row.project_id)
+    if (names.length > 0) parts.push(envNamesLine(names))
   }
-  if (row !== undefined) parts.push(...(await instructionOverlayParts(row.project_id)))
-  const general = row?.general
-  if (general !== null && general !== undefined && general.trim() !== '') parts.push(general)
-  const names = row === undefined ? [] : await envNames(row.project_id)
-  if (names.length > 0) parts.push(envNamesLine(names))
   return parts.join('\n\n')
 }
 
@@ -582,26 +581,6 @@ function envNamesLine(names: string[]): string {
     `Environment variables available in your shell and process environment: ${names.join(', ')}. ` +
     'Their values are secret: reference them as $NAME and never echo, print, log or commit them.'
   )
-}
-
-/** The managed root AGENTS.md body: everything codex cannot receive through a flag. */
-async function composeAgentsDoc(db: Database.Database, workspaceId: string): Promise<string> {
-  const row = db
-    .prepare(
-      `SELECT w.worktree_path, p.id AS project_id, p.custom_prompt_general AS general
-       FROM workspaces w JOIN projects p ON p.id = w.project_id WHERE w.id = ?`
-    )
-    .get(workspaceId) as { worktree_path: string; project_id: string; general: string | null } | undefined
-  const parts = [AUTOLINK_SYSTEM_PROMPT, SKILL_FACTS]
-  // codex reads AGENTS.md but never CLAUDE.md; while Loom owns the root path the companion
-  // is the only place the repo's CLAUDE.md can reach a codex session.
-  if (row !== undefined) parts.push(...(await repoInstructionFiles(row.worktree_path)))
-  if (row !== undefined) parts.push(...(await instructionOverlayParts(row.project_id)))
-  const general = row?.general
-  if (general !== null && general !== undefined && general.trim() !== '') parts.push(general)
-  const names = row === undefined ? [] : await envNames(row.project_id)
-  if (names.length > 0) parts.push(envNamesLine(names))
-  return parts.join('\n\n')
 }
 
 export async function cancelTurn(db: Database.Database, sessionId: string): Promise<void> {
@@ -684,17 +663,11 @@ export async function forkSession(db: Database.Database, input: ForkInput): Prom
   )
   // Fire-and-forget: the fork returns as soon as the row exists; the seeded turn
   // streams in over the event channel and failures surface as error events.
-  void sendTurn(
+  sendDetached(
     db,
     created.id,
-    `Continuing from a previous session. The full transcript is at ${transcriptPath} — read it before answering.`
-  ).catch((error: unknown) => {
-    appendEvent(db, created.id, {
-      type: 'error',
-      code: 'fork.send',
-      message: String(error),
-      retryable: false
-    })
-  })
+    `Continuing from a previous session. The full transcript is at ${transcriptPath} — read it before answering.`,
+    'fork.send'
+  )
   return { ...created, forkedFrom: input.sourceSessionId }
 }

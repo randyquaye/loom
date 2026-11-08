@@ -3,8 +3,6 @@
  * per-turn collapsible tool groups, single-line tool rows, streaming caret, thinking row.
  * Tokens only. Spacing grid: 8px baseline; column padding 16 (--s-4), turn gap 16, block gap 12
  * (--s-3), control gap 8 (--s-2), row padding 4/8, row height 32.
- * tokens.css is imported after component css, so every rule here uses chat-* classes rather than
- * restyling the legacy .messages/.msg selectors it defines.
  *
  * Layout note (R6): the old tool cards were `overflow: hidden` flex items in this scrolling
  * flex column. A non-visible overflow makes `min-height: auto` resolve to 0, so once the
@@ -313,12 +311,6 @@
   background: var(--surface-1);
 }
 
-.chat-row-toggle:focus-visible,
-.chat-icon-btn:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
 .chat-row-icon {
   flex: none;
   display: inline-flex;
@@ -327,12 +319,6 @@
   width: 16px;
   height: 16px;
   color: var(--text-muted);
-}
-
-.chat-icon {
-  flex: none;
-  width: 16px;
-  height: 16px;
 }
 
 .chat-row-label {
@@ -707,44 +693,35 @@
 
 /* ---------- press-to-talk ---------- */
 
-.talk-btn {
+/* One borderless icon button for every composer tool, so the footer reads as a single row. */
+.composer-icon {
   display: inline-flex;
+  flex: none;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--border);
+  width: var(--s-6);
+  height: var(--s-6);
+  border: none;
+  border-radius: var(--r-1);
+  background: none;
   color: var(--text-muted);
 }
 
-.talk-btn:hover {
-  background: var(--surface-2);
+.composer-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.composer-icon:hover:not(:disabled) {
+  background: var(--surface-1);
   color: var(--text);
 }
 
 .talk-btn[data-phase='capturing'],
-.talk-btn[data-phase='finalizing'] {
-  border-color: var(--accent-1);
-  color: var(--accent-1);
-}
-
-.voice-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--border);
-  color: var(--text-muted);
-}
-
-.voice-btn:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-
-.voice-btn[data-on='true'] {
-  border-color: var(--accent-1);
+.talk-btn[data-phase='finalizing'],
+.voice-btn[data-on='true'],
+.voice-mode-btn[aria-pressed='true'] {
+  background: var(--surface-1);
   color: var(--accent-1);
 }
 

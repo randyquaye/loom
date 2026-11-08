@@ -1,5 +1,5 @@
 /* Workspace PR chip + popover. Tokens only; 8px grid: chip gap 8, popover padding 16,
- * section gap 8, check rows 6/8. Glass frame from .popover; the check list sits solid. */
+ * section gap 8, check rows 6/8. Solid frame from .popover.elevated. */
 
 .pr-status-none {
   flex: none;

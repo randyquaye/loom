@@ -6,6 +6,7 @@ import type {
   ReviewDecision,
   WorkspacePrResult
 } from '../../../shared/ipc-contract'
+import { clampInWindow, useCloseOnAnchorMove, WINDOW_EDGE } from '../ui/anchor'
 import './pr-status.css'
 
 type Tone = 'ok' | 'warn' | 'danger' | 'default'
@@ -28,9 +29,8 @@ const CHECK: Record<PrCheck['state'], { glyph: string; tone: Tone; count: string
 
 const POLL_MS = 60_000
 
-/** Gap between the chip and the popover, and the popover's minimum inset from the window edge. */
+/** Gap between the chip and the popover. */
 const GAP = 8
-const EDGE = 8
 
 const SUMMARY_ORDER: PrCheck['state'][] = ['success', 'failure', 'pending', 'cancelled', 'skipped']
 
@@ -84,7 +84,7 @@ export function PrStatus({ workspaceId, ready }: { workspaceId: string; ready: b
   const triggerRef = useRef<HTMLButtonElement>(null)
   const refreshRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
-  const [position, setPosition] = useState({ left: EDGE, top: EDGE })
+  const [position, setPosition] = useState({ left: WINDOW_EDGE, top: WINDOW_EDGE })
   // Ids the newest request; cleared when that one settles, so a superseded request cannot clear it.
   const inFlight = useRef<number | null>(null)
   const requests = useRef(0)
@@ -155,8 +155,8 @@ export function PrStatus({ workspaceId, ready }: { workspaceId: string; ready: b
     if (rect === undefined || popover === null) return
     const { width, height } = popover.getBoundingClientRect()
     setPosition({
-      left: Math.max(EDGE, Math.min(rect.right - width, window.innerWidth - width - EDGE)),
-      top: Math.max(EDGE, Math.min(rect.bottom + GAP, window.innerHeight - height - EDGE))
+      left: clampInWindow(rect.right - width, width, window.innerWidth),
+      top: clampInWindow(rect.bottom + GAP, height, window.innerHeight)
     })
   }, [popoverOpen])
 
@@ -168,24 +168,17 @@ export function PrStatus({ workspaceId, ready }: { workspaceId: string; ready: b
         return
       setOpenFor(null)
     }
-    const dismiss = () => setOpenFor(null)
-    // Only scrolling that moves the chip detaches the popover; the chat streaming below must not.
-    const onScroll = (e: Event) => {
-      const trigger = triggerRef.current
-      if (trigger !== null && e.target instanceof Node && e.target.contains(trigger)) dismiss()
-    }
     document.addEventListener('mousedown', onDown)
-    document.addEventListener('scroll', onScroll, true)
-    window.addEventListener('resize', dismiss)
     // Deferred a frame so the popover is mounted before it takes focus.
     const frame = requestAnimationFrame(() => refreshRef.current?.focus())
     return () => {
       document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('scroll', onScroll, true)
-      window.removeEventListener('resize', dismiss)
       cancelAnimationFrame(frame)
     }
   }, [popoverOpen])
+
+  const dismiss = useCallback(() => setOpenFor(null), [])
+  useCloseOnAnchorMove(triggerRef, dismiss, popoverOpen)
 
   // Blockers render nothing on purpose. A project not on GitHub would otherwise carry a permanent
   // dead chip, and a missing or signed-out gh would nag identically on every workspace; Settings →
@@ -195,7 +188,7 @@ export function PrStatus({ workspaceId, ready }: { workspaceId: string; ready: b
   if (pr === null) {
     return (
       <span
-        className="badge pill pr-status-none"
+        className="badge pr-status-none"
         title="This branch has no open pull request yet. Loom never pushes branches."
       >
         No PR
@@ -222,7 +215,7 @@ export function PrStatus({ workspaceId, ready }: { workspaceId: string; ready: b
       <button
         ref={triggerRef}
         type="button"
-        className="badge pill pr-status-chip"
+        className="badge pr-status-chip"
         aria-haspopup="dialog"
         aria-expanded={popoverOpen}
         aria-label={chipLabel}
@@ -250,7 +243,7 @@ export function PrStatus({ workspaceId, ready }: { workspaceId: string; ready: b
         createPortal(
           <div
             ref={popoverRef}
-            className="popover glass pr-status-popover"
+            className="popover elevated pr-status-popover"
             style={{ position: 'fixed', left: position.left, top: position.top }}
             role="dialog"
             aria-label={`Pull request #${pr.number}`}
@@ -323,9 +316,8 @@ export function PrStatus({ workspaceId, ready }: { workspaceId: string; ready: b
                 type="button"
                 className="btn"
                 onClick={() => {
-                  // Main's window-open handler denies the window and hands https URLs to the OS.
                   if (!pr.url.startsWith('https://')) return
-                  window.open(pr.url)
+                  void window.loom.shell.openExternal(pr.url)
                   close(false)
                 }}
               >

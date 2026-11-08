@@ -8,6 +8,9 @@ export interface SttState {
 
 export const STT_INITIAL: SttState = { live: '', committed: [], error: null }
 
+/** armed: hands-free mic open, nothing heard yet; capturing: words are arriving. */
+export type TalkPhase = 'idle' | 'armed' | 'capturing' | 'finalizing'
+
 /** Pure fold over the Scribe realtime wire messages; unknown types are ignored, not fatal. */
 export function applySttMessage(state: SttState, message: unknown): SttState {
   if (typeof message !== 'object' || message === null) return state

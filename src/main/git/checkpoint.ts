@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { lstat, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -37,7 +37,6 @@ function assertId(id: string): string {
 }
 
 async function exists(p: string): Promise<boolean> {
-  const { lstat } = await import('node:fs/promises')
   return lstat(p)
     .then(() => true)
     .catch(() => false)
@@ -83,7 +82,8 @@ async function prune(worktreePath: string): Promise<void> {
 /**
  * Non-disruptive save: stages the worktree (including untracked, honouring
  * info/exclude so .context/ stays out) into a throwaway index, writes a commit
- * onto a private ref chain. HEAD, the real index and the working tree never move.
+ * as a standalone commit under its own private ref. HEAD, the real index and the
+ * working tree never move.
  */
 export async function saveCheckpoint(worktreePath: string, label: string): Promise<string> {
   await assertOwnRoot(worktreePath)
@@ -98,14 +98,7 @@ export async function saveCheckpoint(worktreePath: string, label: string): Promi
     const tree = await gitWithEnv(worktreePath, ['write-tree'], env)
     const id = `cp-${Date.now()}-${randomUUID().slice(0, 8)}`
     const ref = CHECKPOINT_REF_PREFIX + id
-    const parent = await git(worktreePath, ['rev-parse', '--verify', ref]).catch(() => '')
-    const commit = await git(worktreePath, [
-      'commit-tree',
-      tree,
-      ...(parent !== '' ? ['-p', parent] : []),
-      '-m',
-      label
-    ])
+    const commit = await git(worktreePath, ['commit-tree', tree, '-m', label])
     await git(worktreePath, ['update-ref', ref, commit])
     await prune(worktreePath)
     return id

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type {
+  BranchPrState,
   PrCheck,
   PullRequestDetail,
   PullRequestSummary,
@@ -70,22 +71,26 @@ function toSummary(pr: z.infer<typeof ghPullRequest>): PullRequestSummary {
   }
 }
 
-/** gh's own process output is a system boundary, so it is validated before use. */
-export function parsePrList(raw: string, args: readonly string[]): PullRequestSummary[] {
+/** gh's own process output is a system boundary, so every `--json` array is validated before use. */
+function parseGhArray<T extends z.ZodTypeAny>(raw: string, args: readonly string[], item: T): z.infer<T>[] {
   let json: unknown
   try {
     json = JSON.parse(raw)
   } catch {
     throw new GhRequestError(args, 'gh returned output that was not JSON')
   }
-  const result = z.array(ghPullRequest).safeParse(json)
+  const result = z.array(item).safeParse(json)
   if (!result.success) {
     throw new GhRequestError(
       args,
       `unexpected gh output shape: ${result.error.issues[0]?.message ?? 'unknown'}`
     )
   }
-  return result.data.map(toSummary)
+  return result.data as z.infer<T>[]
+}
+
+export function parsePrList(raw: string, args: readonly string[]): PullRequestSummary[] {
+  return parseGhArray(raw, args, ghPullRequest).map(toSummary)
 }
 
 export async function listPullRequests(
@@ -184,20 +189,7 @@ export function buildPrHeadArgs(ref: GithubRepoRef, head: string): string[] {
 }
 
 export function parsePrDetailList(raw: string, args: readonly string[]): PullRequestDetail[] {
-  let json: unknown
-  try {
-    json = JSON.parse(raw)
-  } catch {
-    throw new GhRequestError(args, 'gh returned output that was not JSON')
-  }
-  const result = z.array(ghPullRequestDetail).safeParse(json)
-  if (!result.success) {
-    throw new GhRequestError(
-      args,
-      `unexpected gh output shape: ${result.error.issues[0]?.message ?? 'unknown'}`
-    )
-  }
-  return result.data.map(toDetail)
+  return parseGhArray(raw, args, ghPullRequestDetail).map(toDetail)
 }
 
 export async function findPullRequestForBranch(
@@ -210,4 +202,40 @@ export async function findPullRequestForBranch(
   if (head === null || head === '' || head.startsWith('-')) return null
   const args = buildPrHeadArgs(ref, head)
   return (await parsePrDetailList(await exec(args), args))[0] ?? null
+}
+
+/** Recent PRs of any state; the sidebar only badges branches someone is likely still looking at. */
+const BRANCH_PR_LIMIT = 100
+
+/** Head branch and state of the repository's recent PRs, in one call for a whole project. */
+export function buildBranchPrArgs(ref: GithubRepoRef): string[] {
+  return [
+    'pr',
+    'list',
+    `--repo=${ref.owner}/${ref.repo}`,
+    '--state=all',
+    `--limit=${BRANCH_PR_LIMIT}`,
+    '--json=headRefName,state'
+  ]
+}
+
+const ghBranchPr = z.object({ headRefName: z.string(), state: z.string() })
+
+/** A branch with an open PR reads open even if an older PR from it was merged; closed PRs badge nothing. */
+export function parseBranchPrs(raw: string, args: readonly string[]): Record<string, BranchPrState> {
+  const byBranch: Record<string, BranchPrState> = {}
+  for (const pr of parseGhArray(raw, args, ghBranchPr)) {
+    const state = pr.state.toUpperCase()
+    if (state === 'OPEN') byBranch[pr.headRefName] = 'open'
+    else if (state === 'MERGED') byBranch[pr.headRefName] ??= 'merged'
+  }
+  return byBranch
+}
+
+export async function listBranchPrStates(
+  ref: GithubRepoRef,
+  exec: GhExec = ghExec
+): Promise<Record<string, BranchPrState>> {
+  const args = buildBranchPrArgs(ref)
+  return parseBranchPrs(await exec(args), args)
 }

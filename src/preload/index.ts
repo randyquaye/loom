@@ -47,7 +47,8 @@ const api: LoomApi = {
   },
   github: {
     prs: (projectId, query) => invoke('github:prs', { projectId, query: query ?? null }),
-    workspacePr: (workspaceId) => invoke('github:workspacePr', { workspaceId })
+    workspacePr: (workspaceId) => invoke('github:workspacePr', { workspaceId }),
+    branchPrs: (projectId) => invoke('github:branchPrs', { projectId })
   },
   linear: {
     hasKey: () => invoke('linear:hasKey', undefined),

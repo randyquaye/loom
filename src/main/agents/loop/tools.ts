@@ -6,6 +6,8 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { z } from 'zod'
 import { toolName, type ToolName } from '../../../shared/events'
+import { globToRegex } from '../../fs/glob'
+import { SKIPPED_DIRS } from '../../fs/tree'
 import { contain } from '../../security/contain'
 
 const execFileAsync = promisify(execFile)
@@ -111,21 +113,11 @@ async function runBash(args: unknown, ctx: ToolCtx): Promise<ToolResult> {
   }
 }
 
-function globToRegex(pattern: string): RegExp {
-  const source = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*\*\//g, '(?:.*/)?')
-    .replace(/\*\*/g, '.*')
-    .replace(/\*/g, '[^/]*')
-    .replace(/\?/g, '[^/]')
-  return new RegExp(`^${source}$`)
-}
-
 async function walk(dir: string, root: string, out: string[]): Promise<void> {
   if (out.length >= MAX_FILES) return
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     if (out.length >= MAX_FILES) return
-    if (entry.name === '.git' || entry.name === 'node_modules') continue
+    if (SKIPPED_DIRS.has(entry.name)) continue
     // Symlinks are never descended or listed: a planted link must not let glob
     // or grep enumerate or read paths outside the worktree.
     if (entry.isSymbolicLink()) continue
@@ -151,7 +143,17 @@ async function runGrep(args: unknown, ctx: ToolCtx): Promise<ToolResult> {
   try {
     const { stdout } = await execFileAsync(
       '/usr/bin/grep',
-      ['-rn', '--binary-files=without-match', '-m', String(MAX_GREP_LINES), '-E', parsed.pattern, base],
+      [
+        '-rn',
+        '--binary-files=without-match',
+        '-m',
+        String(MAX_GREP_LINES),
+        '-E',
+        '-e',
+        parsed.pattern,
+        '--',
+        base
+      ],
       { cwd: ctx.worktreePath, signal: ctx.signal, maxBuffer: MAX_OUTPUT }
     )
     return { ok: true, output: cap(stdout || '(no matches)') }

@@ -21,7 +21,7 @@ import {
 } from '../git/projects'
 import { slugify } from '../git/slug'
 import { removeWorkspace } from '../workspace/bootstrap'
-import { handle, type IpcDeps } from './index'
+import { handle, type IpcDeps } from './handle'
 
 export function registerProjectsIpc(deps: IpcDeps): void {
   handle('projects:list', () => listProjects(deps.db))

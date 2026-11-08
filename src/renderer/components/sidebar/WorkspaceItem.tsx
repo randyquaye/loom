@@ -1,23 +1,16 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ReactNode,
-  type RefObject
-} from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import type { WorkspaceRow } from '../../../shared/ipc-contract'
+import type { BranchPrState, WorkspaceRow } from '../../../shared/ipc-contract'
 import { useProjects } from '../../state/projects'
 import { useUi } from '../../state/ui'
+import { clampInWindow, topBelowOrAbove, useCloseOnAnchorMove } from '../ui/anchor'
+import { BranchIcon, MergedIcon, PullRequestIcon } from '../ui/icons'
 import { Popover } from '../ui/Popover'
 import { useToasts } from '../ui/Toast'
 import { CheckpointsMenu } from './CheckpointsMenu'
 
-/** Gap between trigger and menu, and the menu's minimum inset from the window edge. */
+/** Gap between trigger and menu. */
 const GAP = 4
-const EDGE = 8
 
 /**
  * Sidebar row actions menu, portalled to body so it floats over `.side-scroll` instead of
@@ -44,24 +37,11 @@ export function RowMenu({
     const menu = wrap?.querySelector('.popover')
     if (wrap === null || rect === undefined || menu === null || menu === undefined) return
     const { width, height } = menu.getBoundingClientRect()
-    const below = rect.bottom + GAP
-    const top = below + height + EDGE > window.innerHeight ? rect.top - GAP - height : below
-    wrap.style.left = `${Math.max(EDGE, Math.min(rect.right - width, window.innerWidth - width - EDGE))}px`
-    wrap.style.top = `${Math.max(EDGE, Math.min(top, window.innerHeight - height - EDGE))}px`
+    wrap.style.left = `${clampInWindow(rect.right - width, width, window.innerWidth)}px`
+    wrap.style.top = `${clampInWindow(topBelowOrAbove(rect, height, GAP), height, window.innerHeight)}px`
   }, [anchorRef])
 
-  useEffect(() => {
-    const onScroll = (e: Event) => {
-      const anchor = anchorRef.current
-      if (anchor !== null && e.target instanceof Node && e.target.contains(anchor)) onClose()
-    }
-    document.addEventListener('scroll', onScroll, true)
-    window.addEventListener('resize', onClose)
-    return () => {
-      document.removeEventListener('scroll', onScroll, true)
-      window.removeEventListener('resize', onClose)
-    }
-  }, [anchorRef, onClose])
+  useCloseOnAnchorMove(anchorRef, onClose)
 
   return createPortal(
     <div ref={wrapRef} className="popover-wrap row-menu-anchor">
@@ -79,13 +59,18 @@ export function RowMenu({
 }
 
 /** One sidebar workspace row plus its hover/focus "⋯" actions and checkpoints. */
+const PR_TITLES: Record<BranchPrState, string> = { open: 'Pull request open', merged: 'Pull request merged' }
+
 export function WorkspaceItem({
   workspace,
   active,
+  pr,
   onDelete
 }: {
   workspace: WorkspaceRow
   active: boolean
+  /** The PR on this workspace's branch, if GitHub reports one; undefined shows the plain branch. */
+  pr?: BranchPrState | undefined
   onDelete: () => void
 }) {
   const navigate = useUi((s) => s.navigate)
@@ -128,7 +113,10 @@ export function WorkspaceItem({
         aria-current={active ? 'page' : undefined}
         onClick={open}
       >
-        {workspace.name}
+        <span className="ws-icon" data-pr={pr} title={pr === undefined ? undefined : PR_TITLES[pr]}>
+          {pr === 'merged' ? <MergedIcon /> : pr === 'open' ? <PullRequestIcon /> : <BranchIcon />}
+        </span>
+        <span className="ws-name">{workspace.name}</span>
         <span className="ws-state-slot">
           {statusTitle !== null && (
             <span

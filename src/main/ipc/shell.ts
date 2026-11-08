@@ -1,5 +1,5 @@
 import { openExternalSafe } from '../shell/open'
-import { handle } from './index'
+import { handle } from './handle'
 
 /** Transcript links open in the OS default browser through the same allowlisted gate the
  * window-navigation lock uses; the renderer can never navigate the app window itself. */

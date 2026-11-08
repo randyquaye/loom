@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { AgentEvent } from './events'
+import { MAX_ATTACHMENTS } from './limits'
 import { EFFORTS } from './models'
 import type { AuthStatus, BackendId, Effort, ModelDescriptor } from './models'
 
@@ -135,6 +136,12 @@ export interface PullRequestSummary {
 
 export type PullRequestListResult = { kind: 'ok'; pullRequests: PullRequestSummary[] } | IntegrationBlocker
 
+/** What the sidebar badges a workspace with; closed-unmerged PRs and no PR show the plain branch. */
+export type BranchPrState = 'open' | 'merged'
+
+/** Keyed by head branch name. */
+export type BranchPrsResult = { kind: 'ok'; byBranch: Record<string, BranchPrState> } | IntegrationBlocker
+
 /** One CI check, normalised from GitHub's two statusCheckRollup shapes (check runs and commit statuses). */
 export interface PrCheck {
   name: string
@@ -235,6 +242,7 @@ export interface IpcContract {
   'integrations:status': { in: void; out: IntegrationsStatus }
   'github:prs': { in: { projectId: string; query: string | null }; out: PullRequestListResult }
   'github:workspacePr': { in: { workspaceId: string }; out: WorkspacePrResult }
+  'github:branchPrs': { in: { projectId: string }; out: BranchPrsResult }
 
   'linear:hasKey': { in: void; out: SecretPresence }
   'linear:setKey': { in: { value: string }; out: void }
@@ -320,7 +328,7 @@ export interface IpcContract {
 }
 
 const id = z.string().min(1).max(64)
-const attachPaths = z.array(z.string().min(1).max(4096)).max(8).default([])
+const attachPaths = z.array(z.string().min(1).max(4096)).max(MAX_ATTACHMENTS).default([])
 
 const nullableId = z.string().min(1).max(64).nullable()
 const relPath = z
@@ -345,6 +353,7 @@ export const ipcSchemas = {
   'integrations:status': z.undefined(),
   'github:prs': z.object({ projectId: id, query: z.string().max(200).nullable() }),
   'github:workspacePr': z.object({ workspaceId: id }),
+  'github:branchPrs': z.object({ projectId: id }),
   'linear:hasKey': z.undefined(),
   'linear:setKey': z.object({ value: z.string().min(1).max(4096) }),
   'linear:deleteKey': z.undefined(),
@@ -542,6 +551,7 @@ export interface LoomApi {
   github: {
     prs(projectId: string, query?: string | null): Promise<PullRequestListResult>
     workspacePr(workspaceId: string): Promise<WorkspacePrResult>
+    branchPrs(projectId: string): Promise<BranchPrsResult>
   }
   linear: {
     hasKey(): Promise<SecretPresence>

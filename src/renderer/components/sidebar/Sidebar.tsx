@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ProjectRow, WorkspaceRow } from '../../../shared/ipc-contract'
+import type { BranchPrState, ProjectRow, WorkspaceRow } from '../../../shared/ipc-contract'
 import { MAX_WORKSPACES_PER_PROJECT } from '../../../shared/limits'
 import { useProjects } from '../../state/projects'
 import { useUi } from '../../state/ui'
@@ -57,6 +57,41 @@ function ProjectActions({ project, onRemove }: { project: ProjectRow; onRemove: 
   )
 }
 
+/** gh is a subprocess per call, so badges refresh on a slow poll and when the window regains focus. */
+const PR_POLL_MS = 60_000
+
+/**
+ * Open/merged PR per head branch, per project: one `gh pr list` per project rather than one per
+ * workspace. Projects without a GitHub remote, or without gh, simply show plain branch icons.
+ */
+function useBranchPrs(projectIds: string[]): Record<string, Record<string, BranchPrState>> {
+  const [byProject, setByProject] = useState<Record<string, Record<string, BranchPrState>>>({})
+  const key = projectIds.join(',')
+  useEffect(() => {
+    let active = true
+    const ids = key === '' ? [] : key.split(',')
+    const refresh = () => {
+      void Promise.all(
+        ids.map(async (id) => {
+          const result = await window.loom.github.branchPrs(id).catch(() => null)
+          return [id, result?.kind === 'ok' ? result.byBranch : {}] as const
+        })
+      ).then((entries) => {
+        if (active) setByProject(Object.fromEntries(entries))
+      })
+    }
+    refresh()
+    const timer = setInterval(refresh, PR_POLL_MS)
+    window.addEventListener('focus', refresh)
+    return () => {
+      active = false
+      clearInterval(timer)
+      window.removeEventListener('focus', refresh)
+    }
+  }, [key])
+  return byProject
+}
+
 export function Sidebar() {
   const { projects, workspacesByProject, error, load } = useProjects()
   // Provider detail lives in Settings; the sidebar only signals that something needs attention.
@@ -75,6 +110,7 @@ export function Sidebar() {
   const closeDelete = useCallback(() => setDeleting(null), [])
   const [removing, setRemoving] = useState<ProjectRow | null>(null)
   const closeRemove = useCallback(() => setRemoving(null), [])
+  const prsByProject = useBranchPrs(projects.map((p) => p.id))
 
   // Stored as the collapsed set so every project, including newly added ones, starts expanded.
   const toggleCollapsed = (projectId: string) =>
@@ -199,6 +235,7 @@ export function Sidebar() {
                             key={ws.id}
                             workspace={ws}
                             active={ws.id === activeWorkspaceId}
+                            pr={prsByProject[project.id]?.[ws.branch]}
                             onDelete={() => setDeleting(ws)}
                           />
                         ))}
@@ -222,6 +259,7 @@ export function Sidebar() {
                           key={ws.id}
                           workspace={ws}
                           active={ws.id === activeWorkspaceId}
+                          pr={prsByProject[project.id]?.[ws.branch]}
                           onDelete={() => setDeleting(ws)}
                         />
                       ))}

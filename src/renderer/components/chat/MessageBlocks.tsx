@@ -21,7 +21,7 @@ type FileOpen = (path: string, line?: number) => void
 function Svg({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <svg
-      className={`chat-icon${className === undefined ? '' : ` ${className}`}`}
+      className={`icon${className === undefined ? '' : ` ${className}`}`}
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"

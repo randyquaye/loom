@@ -3,6 +3,7 @@ import type { GithubStatus, IntegrationsStatus, SecretPresence } from '../../../
 import { Field } from '../../components/ui/Field'
 import { Modal } from '../../components/ui/Modal'
 import { useToasts } from '../../components/ui/Toast'
+import { SPEECH_SPEED_MAX, SPEECH_SPEED_MIN, useDefaults } from '../../state/defaults'
 
 // Integration states differ from provider states, so they get their own mappers.
 function githubTone(status: GithubStatus): 'ok' | 'warn' | 'danger' {
@@ -38,6 +39,12 @@ function presenceText(presence: SecretPresence | null): string {
 /** Settings "Integrations": GitHub CLI status plus stored keys for Linear and ElevenLabs. */
 export function IntegrationsPage() {
   const push = useToasts((s) => s.push)
+  const voiceId = useDefaults((s) => s.voiceId)
+  const setVoiceId = useDefaults((s) => s.setVoiceId)
+  const [voiceValue, setVoiceValue] = useState(voiceId)
+  const speechSpeed = useDefaults((s) => s.speechSpeed)
+  const setSpeechSpeed = useDefaults((s) => s.setSpeechSpeed)
+  const [speedValue, setSpeedValue] = useState(String(speechSpeed))
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState('')
   const [editingEl, setEditingEl] = useState(false)
@@ -150,6 +157,19 @@ export function IntegrationsPage() {
       .catch((e: unknown) => push(`Could not remove ElevenLabs key: ${String(e)}`, 'err'))
   }
 
+  function saveVoice() {
+    try {
+      setVoiceId(voiceValue)
+      setSpeechSpeed(speedValue)
+      const saved = useDefaults.getState()
+      setVoiceValue(saved.voiceId)
+      setSpeedValue(String(saved.speechSpeed))
+      push('Saved voice')
+    } catch (err) {
+      push(`Could not save voice: ${String(err)}`, 'err')
+    }
+  }
+
   return (
     <>
       <section className="settings-section">
@@ -223,6 +243,47 @@ export function IntegrationsPage() {
           encrypted in the macOS Keychain; Linear’s never leaves this machine except to api.linear.app,
           ElevenLabs’ except to api.elevenlabs.io.
         </p>
+      </section>
+      <section className="settings-section">
+        <div className="settings-label">ElevenLabs voice</div>
+        <Field
+          label="Voice ID"
+          hint="Applies to the next spoken reply. Leave blank to restore the default voice."
+        >
+          <input
+            className="input"
+            value={voiceValue}
+            maxLength={128}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(e) => setVoiceValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') saveVoice()
+            }}
+          />
+        </Field>
+        <Field
+          label="Speed"
+          hint={`${SPEECH_SPEED_MIN}–${SPEECH_SPEED_MAX}; 1.0 is normal. Leave blank to restore 1.0.`}
+        >
+          <input
+            className="input"
+            type="number"
+            min={SPEECH_SPEED_MIN}
+            max={SPEECH_SPEED_MAX}
+            step={0.05}
+            value={speedValue}
+            onChange={(e) => setSpeedValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') saveVoice()
+            }}
+          />
+        </Field>
+        <div>
+          <button className="btn" onClick={saveVoice}>
+            Save voice
+          </button>
+        </div>
       </section>
       <Modal
         open={editing}

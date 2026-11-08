@@ -1,4 +1,9 @@
-import type { IntegrationBlocker, PullRequestListResult, WorkspacePrResult } from '../../shared/ipc-contract'
+import type {
+  BranchPrsResult,
+  IntegrationBlocker,
+  PullRequestListResult,
+  WorkspacePrResult
+} from '../../shared/ipc-contract'
 import { getProjectOrThrow } from '../db/repos/projects'
 import { getWorkspaceOrThrow } from '../db/repos/workspaces'
 import { makeWorktreeResolver } from '../fs/workspace-root'
@@ -9,9 +14,9 @@ import {
   GhNotAuthenticatedError,
   GhNotInstalledError
 } from '../integrations/github/errors'
-import { findPullRequestForBranch, listPullRequests } from '../integrations/github/prs'
+import { findPullRequestForBranch, listBranchPrStates, listPullRequests } from '../integrations/github/prs'
 import { parseGithubRepo } from '../integrations/github/repo-ref'
-import { handle, type IpcDeps } from './index'
+import { handle, type IpcDeps } from './handle'
 
 /** Integration failures reach the renderer as data, so each one can render its own state. */
 function toBlocker(err: unknown): IntegrationBlocker {
@@ -28,6 +33,16 @@ export function registerGithubIpc(deps: IpcDeps): void {
     if (ref === null) return { kind: 'no-remote' }
     try {
       return { kind: 'ok', pullRequests: await listPullRequests(ref, query) }
+    } catch (err) {
+      return toBlocker(err)
+    }
+  })
+
+  handle('github:branchPrs', async ({ projectId }): Promise<BranchPrsResult> => {
+    const ref = parseGithubRepo(getProjectOrThrow(deps.db, projectId).remoteUrl)
+    if (ref === null) return { kind: 'no-remote' }
+    try {
+      return { kind: 'ok', byBranch: await listBranchPrStates(ref) }
     } catch (err) {
       return toBlocker(err)
     }

@@ -1,0 +1,113 @@
+/* Voice mode: the session composer grows to fill the pane and the stage replaces the transcript. */
+.composer.composer-session[data-voice='true'] {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.composer-session[data-voice='true']
+  :is(.stt-strip, .composer-attach, .composer-attach-wrap, .voice-btn, .composer-sendnow, .send-btn) {
+  display: none;
+}
+
+.voice-stage {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-4);
+  min-height: 0;
+  padding: var(--s-5);
+  text-align: center;
+}
+
+.voice-orb {
+  --level: 0;
+  width: 160px;
+  height: 160px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 40%, var(--surface-2), var(--surface-1) 70%);
+  transform: scale(calc(1 + var(--level) * 0.35));
+  transition: border-color var(--dur-1) var(--ease);
+  cursor: pointer;
+}
+
+.voice-stage[data-state='listening'] .voice-orb,
+.voice-stage[data-state='speaking'] .voice-orb {
+  border-color: var(--accent-1);
+}
+
+.composer-session[data-voice='true']:not([data-typing='true']) textarea {
+  display: none;
+}
+
+/* With the text box hidden the footer is the whole box: even padding instead of a top gap. */
+.composer-session[data-voice='true']:not([data-typing='true']) .composer-box {
+  padding-top: var(--s-2);
+}
+
+.composer-session[data-voice='true']:not([data-typing='true']) .composer-footer {
+  padding-top: 0;
+}
+
+.voice-eyes {
+  display: flex;
+  gap: var(--s-2);
+}
+
+/* Hands-free keeps a visible "mic is open" ring even while idle. */
+.voice-stage[data-hands-free='true'] .voice-orb {
+  outline: 1px solid var(--accent-1);
+  outline-offset: 6px;
+}
+
+.hands-free-btn[aria-pressed='true'] {
+  background: var(--surface-1);
+  color: var(--accent-1);
+}
+
+.voice-stage[data-state='error'] .voice-orb {
+  border-color: var(--danger);
+}
+
+.voice-stage:is([data-state='thinking'], [data-state='working'], [data-state='finalizing']) .voice-orb {
+  animation: voice-pulse 1.6s var(--ease) infinite alternate;
+}
+
+@keyframes voice-pulse {
+  to {
+    opacity: 0.55;
+  }
+}
+
+.voice-status {
+  max-width: 640px;
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-lg);
+}
+
+.voice-stage[data-state='error'] .voice-status {
+  color: var(--danger);
+}
+
+.voice-note,
+.voice-last {
+  max-width: 640px;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-orb {
+    transform: none;
+    animation: none !important;
+  }
+}

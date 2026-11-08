@@ -1,22 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { WorkspaceRow } from '../../shared/ipc-contract'
 import { Popover } from '../components/ui/Popover'
+import { relativeTime } from '../components/ui/relativeTime'
+import { WeaveMark } from '../components/ui/WeaveMark'
 import { useProjects } from '../state/projects'
 import { useSessions } from '../state/sessions'
 import { useUi } from '../state/ui'
 import './home.css'
-
-function relativeTime(createdAt: number): string {
-  const ms = createdAt < 1e12 ? createdAt * 1000 : createdAt
-  const minutes = Math.round((Date.now() - ms) / 60_000)
-  if (minutes < 1) return 'just now'
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.round(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.round(hours / 24)
-  if (days < 30) return `${days}d ago`
-  return new Date(ms).toLocaleDateString()
-}
 
 /** Home lists conversations (live workspaces), newest first; a row resumes its latest session. */
 export function Home() {
@@ -35,7 +25,9 @@ export function Home() {
   const openAddProject = useUi((s) => s.openAddProject)
 
   function startSomething(prompt?: string) {
-    const first = Object.values(workspacesByProject).flat()[0]
+    const first = Object.values(workspacesByProject)
+      .flat()
+      .find((w) => !w.archived)
     if (prompt !== undefined) useUi.getState().setDraft(prompt)
     if (first === undefined) {
       openAddProject()
@@ -122,6 +114,7 @@ export function Home() {
               open={filterOpen}
               onClose={closeFilter}
               anchorRef={filterRef}
+              align="right"
               className="home-filter-menu"
             >
               <button
@@ -162,10 +155,8 @@ export function Home() {
         {shown.length > 0 && <div className="home-label">{q === '' ? 'Recent' : 'Results'}</div>}
         {shown.map((ws) => (
           <button key={ws.id} type="button" className="home-card" onClick={() => void resume(ws.id)}>
-            <div className="home-card-title">
-              <span className="grow home-card-name">{ws.name}</span>
-              <span className="home-tag">{projectName.get(ws.projectId) ?? 'Unknown project'}</span>
-            </div>
+            <span className="grow home-card-name">{ws.name}</span>
+            <span className="home-card-project">{projectName.get(ws.projectId) ?? 'Unknown project'}</span>
             <span className="home-time">{relativeTime(ws.createdAt)}</span>
           </button>
         ))}
@@ -188,7 +179,7 @@ export function Home() {
         )}
         {all.length === 0 && (
           <div className="empty-state">
-            <div className="orb" />
+            <WeaveMark />
             <div className="empty-title">Ready to Create Something New?</div>
             <div className="quick-chips">
               <button className="chip" onClick={() => startSomething('Summarize this repository.')}>

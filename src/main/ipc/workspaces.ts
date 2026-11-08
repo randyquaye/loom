@@ -3,7 +3,7 @@ import { getWorkspaceOrThrow, listWorkspaces, setWorkspaceArchived } from '../db
 import { readRepoSettings } from '../config/repo-settings'
 import { createTerminal, terminalIdForCwd, writeTerminal } from '../pty'
 import { createWorkspace, removeWorkspace, workspaceEnv } from '../workspace/bootstrap'
-import { handle, type IpcDeps } from './index'
+import { handle, type IpcDeps } from './handle'
 
 export function registerWorkspacesIpc(deps: IpcDeps): void {
   handle('workspaces:list', ({ projectId }) => listWorkspaces(deps.db, projectId))

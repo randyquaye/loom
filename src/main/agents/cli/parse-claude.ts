@@ -1,34 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import type { AgentEvent, ToolName } from '../../../shared/events'
+import { errorEvent, isRec, list, num, str, sub, tryParseRecord, type Rec } from './record'
 
 /** Used when a record carries no `session_id` of its own. */
 export const CLAUDE_FALLBACK_TURN_ID = 'turn'
-
-type Rec = Record<string, unknown>
-
-function isRec(value: unknown): value is Rec {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function str(source: Rec, key: string): string | undefined {
-  const value = source[key]
-  return typeof value === 'string' ? value : undefined
-}
-
-function num(source: Rec, key: string): number | undefined {
-  const value = source[key]
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
-}
-
-function sub(source: Rec, key: string): Rec | undefined {
-  const value = source[key]
-  return isRec(value) ? value : undefined
-}
-
-function list(source: Rec, key: string): Rec[] {
-  const value = source[key]
-  return Array.isArray(value) ? value.filter(isRec) : []
-}
 
 /** claude names its built-in tools in PascalCase; AgentEvent's vocabulary is not. */
 const CLAUDE_TOOLS: Record<string, ToolName> = {
@@ -293,10 +268,6 @@ function resultEvents(record: Rec, turnId: string): AgentEvent[] {
   return events
 }
 
-function errorEvent(turnId: string, code: string, message: string, retryable: boolean): AgentEvent {
-  return { type: 'error', turnId, code, message, retryable }
-}
-
 /**
  * Maps one `claude --output-format=stream-json` record onto AgentEvents.
  *
@@ -322,22 +293,19 @@ export function parseClaudeStreamLine(
   }
   if (!isRec(parsed)) return []
 
-  const record = parsed
-  const resolvedTurn = turnId
-
-  switch (str(record, 'type')) {
+  switch (str(parsed, 'type')) {
     // The init record is the only place claude states the session id up front,
     // so it owns the turn boundary; other system records carry subagent lifecycle.
     case 'system':
-      return str(record, 'subtype') === 'init'
-        ? [{ type: 'turn.started', turnId: resolvedTurn, at: num(record, 'timestamp_ms') ?? 0 }]
-        : taskEvents(record, resolvedTurn, state)
+      return str(parsed, 'subtype') === 'init'
+        ? [{ type: 'turn.started', turnId, at: num(parsed, 'timestamp_ms') ?? 0 }]
+        : taskEvents(parsed, turnId, state)
     case 'assistant':
-      return assistantEvents(record, resolvedTurn, state)
+      return assistantEvents(parsed, turnId, state)
     case 'user':
-      return toolResultEvents(record, resolvedTurn, state)
+      return toolResultEvents(parsed, turnId, state)
     case 'result':
-      return resultEvents(record, resolvedTurn)
+      return resultEvents(parsed, turnId)
     default:
       return []
   }
@@ -356,20 +324,8 @@ export function createClaudeParser(turnId: string = randomUUID()): ClaudeLinePar
   return {
     parse(line: string): AgentEvent[] {
       const events = parseClaudeStreamLine(line, turnId, state)
-      if (session === undefined) {
-        const trimmed = line.trim()
-        if (trimmed.length > 0) {
-          try {
-            const parsed: unknown = JSON.parse(trimmed)
-            if (isRec(parsed)) {
-              const id = str(parsed, 'session_id')
-              if (id !== undefined) session = id
-            }
-          } catch {
-            // parse failures are already reported as events by the line parser
-          }
-        }
-      }
+      // Malformed lines were already reported as events by the line parser.
+      if (session === undefined) session = str(tryParseRecord(line) ?? {}, 'session_id')
       return events
     },
     sessionId() {

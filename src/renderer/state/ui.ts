@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { MAX_ATTACHMENTS } from '../../shared/limits'
 import { useProjects } from './projects'
 import { useSessions } from './sessions'
 
@@ -18,8 +19,7 @@ export interface ModalFlags {
   projectMenu: boolean
 }
 
-/** Mirrors main's per-send cap; the composer stops offering more once a session reaches it. */
-export const MAX_ATTACHMENTS = 8
+export { MAX_ATTACHMENTS }
 
 const CLOSED: ModalFlags = { addWorkspaceFor: null, projectMenu: false }
 
@@ -57,14 +57,31 @@ interface UiState {
   /** Spoken replies for foreground prose; opt-in and default off, per the blazing-fast bar. */
   voiceEnabled: boolean
   setVoiceEnabled(enabled: boolean): void
+  /** Audio-first session view. Entering forces spoken replies on; leaving restores the prior choice. */
+  voiceMode: boolean
+  setVoiceMode(on: boolean): void
 }
 
-export const useUi = create<UiState>((set) => ({
+/** voiceEnabled as it was before voice mode forced it on; null outside voice mode. */
+let voiceEnabledBeforeMode: boolean | null = null
+
+export const useUi = create<UiState>((set, get) => ({
   route: { name: 'home' },
   modals: CLOSED,
   paletteOpen: false,
   voiceEnabled: false,
   setVoiceEnabled: (voiceEnabled) => set({ voiceEnabled }),
+  voiceMode: false,
+  setVoiceMode: (on) => {
+    if (on === get().voiceMode) return
+    if (on) {
+      voiceEnabledBeforeMode = get().voiceEnabled
+      set({ voiceMode: true, voiceEnabled: true })
+    } else {
+      set({ voiceMode: false, voiceEnabled: voiceEnabledBeforeMode ?? get().voiceEnabled })
+      voiceEnabledBeforeMode = null
+    }
+  },
   draft: null,
   setDraft: (draft) => set({ draft }),
   draftBySession: {},

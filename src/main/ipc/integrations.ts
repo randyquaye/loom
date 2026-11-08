@@ -3,7 +3,7 @@ import { GH_AUTH_HINT, GH_INSTALL_HINT } from '../integrations/github/errors'
 import { ghAuthState } from '../integrations/github/gh'
 import { LINEAR_KEY_HINT } from '../integrations/linear/client'
 import { elevenlabsStatus } from './elevenlabs'
-import { handle, type IpcDeps } from './index'
+import { handle, type IpcDeps } from './handle'
 
 async function linearStatus(deps: IpcDeps): Promise<LinearStatus> {
   try {
