@@ -8,6 +8,7 @@ import { useProjects } from '../../state/projects'
 import { isTurnRunning, useSessions } from '../../state/sessions'
 import { MAX_ATTACHMENTS, useUi } from '../../state/ui'
 import { MicGlyph, useTalk } from '../../audio/talk'
+import { talkHandoff } from '../../../shared/stt'
 import { ErrorState } from '../ui/ErrorState'
 import { useToasts } from '../ui/Toast'
 import { WeaveMark } from '../ui/WeaveMark'
@@ -612,7 +613,20 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
   const running = useSessions((s) => isTurnRunning(s.eventsBySession[sessionId] ?? []))
   const push = useToasts((s) => s.push)
   const { text, setText, ref } = useComposeText(sessionId)
-  const talk = useTalk(sessionId)
+  const talk = useTalk(sessionId, (utterance) => {
+    const ui = useUi.getState()
+    const draft = ui.draftBySession[sessionId] ?? text
+    const attachmentCount = (ui.attachmentsBySession[sessionId] ?? []).length
+    const handoff = talkHandoff(draft, attachmentCount, running)
+    if (handoff.kind === 'append') {
+      // Preserve unrelated draft material: the utterance joins it for review, no auto-send.
+      setText(draft.trim() === '' ? utterance : `${draft}\n${utterance}`)
+      return
+    }
+    setText(utterance)
+    if (handoff.interrupt) void submitNow()
+    else void submit()
+  })
   const [queue, setQueue] = useState<string[]>([])
   const [removing, setRemoving] = useState(false)
   const queueRequest = useRef({ revision: 0, removing: false, active: false })
@@ -736,12 +750,10 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
         </ol>
       </div>
       <AttachChips sessionId={sessionId} disabled={disabled} />
-      {(talk.phase !== 'idle' || talk.finalized !== null || talk.stt.error !== null) && (
+      {(talk.phase !== 'idle' || talk.stt.error !== null) && (
         <div className="stt-strip" role="status">
           {talk.stt.error !== null ? (
             <span className="stt-error">{talk.stt.error}</span>
-          ) : talk.finalized !== null ? (
-            <span className="stt-final">{talk.finalized}</span>
           ) : (
             <span className="stt-live">
               {[...talk.stt.committed, talk.stt.live].filter((part) => part !== '').join(' ')}

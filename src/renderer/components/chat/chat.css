@@ -745,10 +745,6 @@
   color: var(--accent-1);
 }
 
-.stt-final {
-  color: var(--text);
-}
-
 .stt-error {
   color: var(--danger);
 }

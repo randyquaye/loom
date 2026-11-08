@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applySttMessage, STT_INITIAL, utteranceOf, type SttState } from '../src/shared/stt'
+import { applySttMessage, STT_INITIAL, talkHandoff, utteranceOf, type SttState } from '../src/shared/stt'
 
 function feed(state: SttState, ...messages: unknown[]): SttState {
   return messages.reduce(applySttMessage, state)
@@ -46,5 +46,17 @@ describe('scribe realtime reducer', () => {
 
   it('an empty capture yields no utterance', () => {
     expect(utteranceOf(STT_INITIAL)).toBe('')
+  })
+})
+
+describe('talk handoff', () => {
+  it('submits once through the delivery behavior when the composer is clean', () => {
+    expect(talkHandoff('', 0, false)).toEqual({ kind: 'submit', interrupt: false })
+    expect(talkHandoff('   ', 0, true)).toEqual({ kind: 'submit', interrupt: true })
+  })
+
+  it('preserves existing draft or attachments by appending for review', () => {
+    expect(talkHandoff('typed thoughts', 0, false)).toEqual({ kind: 'append' })
+    expect(talkHandoff('', 2, true)).toEqual({ kind: 'append' })
   })
 })

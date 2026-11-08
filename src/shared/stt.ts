@@ -34,3 +34,17 @@ export function utteranceOf(state: SttState): string {
   const parts = state.live.trim() === '' ? state.committed : [...state.committed, state.live.trim()]
   return parts.join(' ').trim()
 }
+
+/**
+ * Release-to-send handoff: a clean composer submits the utterance once through the existing
+ * delivery behavior (Send-now semantics when a turn is running); any existing draft or
+ * attachment is preserved by appending the utterance for review instead of consuming it.
+ */
+export function talkHandoff(
+  draft: string,
+  attachmentCount: number,
+  running: boolean
+): { kind: 'submit'; interrupt: boolean } | { kind: 'append' } {
+  if (draft.trim() !== '' || attachmentCount > 0) return { kind: 'append' }
+  return { kind: 'submit', interrupt: running }
+}

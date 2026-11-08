@@ -25,16 +25,18 @@ export function MicGlyph() {
 /**
  * Press-to-talk capture for one session: mints the single-use token through the bridge,
  * opens the direct Scribe socket, and keeps the live transcript separate from the
- * conversation. Release finalizes the utterance; cancel, session changes and unmount
+ * conversation. Release finalizes the utterance and hands it to the composer callback
+ * (submit or draft-append per the handoff rule); cancel, session changes and unmount
  * invalidate everything, so late provider callbacks can never reach another conversation.
  */
-export function useTalk(sessionId: string) {
+export function useTalk(sessionId: string, onUtterance: (utterance: string) => void) {
   const push = useToasts((s) => s.push)
   const [phase, setPhase] = useState<TalkPhase>('idle')
   const [stt, setStt] = useState<SttState>(STT_INITIAL)
-  const [finalized, setFinalized] = useState<string | null>(null)
   const client = useRef<SttClient | null>(null)
   const stopMic = useRef<(() => void) | null>(null)
+  const utteranceRef = useRef(onUtterance)
+  utteranceRef.current = onUtterance
 
   const teardown = useCallback(() => {
     stopMic.current?.()
@@ -47,7 +49,6 @@ export function useTalk(sessionId: string) {
 
   const press = useCallback(async () => {
     if (client.current !== null) return
-    setFinalized(null)
     setStt(STT_INITIAL)
     const token = await window.loom.elevenlabs.sttToken().catch((err: unknown) => {
       push(`Speech setup failed: ${String(err)}`, 'err')
@@ -84,20 +85,16 @@ export function useTalk(sessionId: string) {
     const utterance = await sttClient.release()
     client.current = null
     setPhase('idle')
-    if (utterance === null) {
-      // Empty or cancelled capture: return to ready without touching the conversation.
-      setStt(STT_INITIAL)
-      return
-    }
-    setFinalized(utterance)
+    setStt(STT_INITIAL)
+    // Empty or cancelled captures return to ready without touching the conversation.
+    if (utterance !== null) utteranceRef.current(utterance)
   }, [])
 
   const cancel = useCallback(() => {
     teardown()
     setPhase('idle')
     setStt(STT_INITIAL)
-    setFinalized(null)
   }, [teardown])
 
-  return { phase, stt, finalized, press, release, cancel }
+  return { phase, stt, press, release, cancel }
 }
