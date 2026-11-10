@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import {
   SESSION_EVENT_CHANNEL,
+  SESSION_ACTIVITY_CHANNEL,
   SESSION_QUEUE_CHANNEL,
   SESSION_TITLE_CHANNEL,
   TERMINAL_DATA_CHANNEL,
@@ -9,6 +10,7 @@ import {
   type IpcContract,
   type LoomApi,
   type SessionEventPush,
+  type SessionActivity,
   type SessionQueuePush,
   type SessionTitlePush,
   type TerminalDataPush,
@@ -99,6 +101,7 @@ const api: LoomApi = {
     diffCheckpoint: (workspaceId, id) => invoke('git:diffCheckpoint', { workspaceId, id })
   },
   sessions: {
+    activity: () => invoke('sessions:activity', undefined),
     list: (workspaceId) => invoke('sessions:list', { workspaceId }),
     create: (input) => invoke('sessions:create', input),
     send: (sessionId, text, attachments) =>
@@ -128,6 +131,8 @@ const api: LoomApi = {
     tree: (workspaceId) => invoke('files:tree', { workspaceId }),
     listDir: (workspaceId, path) => invoke('files:listDir', { workspaceId, path }),
     read: (workspaceId, path) => invoke('files:read', { workspaceId, path }),
+    preview: (workspaceId, path) => invoke('files:preview', { workspaceId, path }),
+    reveal: (workspaceId, path) => invoke('files:reveal', { workspaceId, path }),
     pickExternal: () => invoke('files:pickExternal', undefined)
   },
   env: {
@@ -150,6 +155,7 @@ const api: LoomApi = {
     search: (query, projectId) => invoke('history:search', { query, projectId })
   },
   onSessionEvent: (cb) => subscribe<SessionEventPush>(SESSION_EVENT_CHANNEL, cb),
+  onSessionActivity: (cb) => subscribe<SessionActivity>(SESSION_ACTIVITY_CHANNEL, cb),
   onTerminalData: (cb) => subscribe<TerminalDataPush>(TERMINAL_DATA_CHANNEL, cb),
   onTerminalExit: (cb) => subscribe<TerminalExitPush>(TERMINAL_EXIT_CHANNEL, cb),
   onWorkspaceState: (cb) => subscribe<WorkspaceStatePush>(WORKSPACE_STATE_CHANNEL, cb),

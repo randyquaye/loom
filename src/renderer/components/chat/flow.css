@@ -204,6 +204,7 @@ body[data-modality='keyboard'] .tab-pin:focus-within .tab-close {
 /* Minimal provider mark: the same identity dot Settings and the model picker use. */
 .tab-backend-dot {
   flex: none;
+  margin: 4.5px;
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -709,7 +710,7 @@ body:not([data-modality='keyboard']) .tab-history:focus-visible,
 }
 
 /* Pinned viewer header: attach the open file to the active session. */
-.viewer-head .viewer-attach {
+.viewer-head .viewer-action {
   flex: none;
   padding: var(--s-1) var(--s-3);
   font-size: var(--fs-sm);

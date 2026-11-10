@@ -4,6 +4,7 @@ import type { SessionRow } from '../../../shared/ipc-contract'
 import { MAX_SESSIONS_PER_WORKSPACE } from '../../../shared/limits'
 import type { Effort } from '../../../shared/models'
 import { useSessions } from '../../state/sessions'
+import { SessionActivityIndicator } from '../ui/SessionActivityIndicator'
 import { useUi } from '../../state/ui'
 import { Popover } from '../ui/Popover'
 import { useToasts } from '../ui/Toast'
@@ -30,6 +31,7 @@ export function SessionTabs({
   onSelect: () => void
 }) {
   const sessions = useSessions((s) => s.sessionsByWorkspace[workspaceId]) ?? []
+  const running = useSessions((s) => s.activity.bySession)
   const activeId = useSessions((s) => s.activeSessionByWorkspace[workspaceId] ?? null)
   const setActive = useSessions((s) => s.setActive)
   const closeSession = useSessions((s) => s.close)
@@ -105,7 +107,11 @@ export function SessionTabs({
                 setMenu({ session, x: rect.left, y: rect.bottom })
               }}
             >
-              <span className="tab-backend-dot" data-backend={session.backend} aria-hidden="true" />
+              {running[session.id] === undefined ? (
+                <span className="tab-backend-dot" data-backend={session.backend} aria-hidden="true" />
+              ) : (
+                <SessionActivityIndicator />
+              )}
               <span className="tab-label">{session.title}</span>
             </button>
             <button

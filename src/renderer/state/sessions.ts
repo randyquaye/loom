@@ -1,9 +1,10 @@
 import { create } from 'zustand'
-import type { SessionForkInput, SessionRow } from '../../shared/ipc-contract'
+import type { SessionActivity, SessionForkInput, SessionRow } from '../../shared/ipc-contract'
 import type { AgentEvent } from '../../shared/events'
 import type { BackendId, Effort, ModelDescriptor } from '../../shared/models'
 
 interface SessionsState {
+  activity: SessionActivity
   sessionsByWorkspace: Record<string, SessionRow[]>
   eventsBySession: Record<string, AgentEvent[]>
   activeSessionByWorkspace: Record<string, string | null>
@@ -31,6 +32,7 @@ interface SessionsState {
 }
 
 export const useSessions = create<SessionsState>((set, get) => ({
+  activity: { revision: -1, bySession: {} },
   sessionsByWorkspace: {},
   eventsBySession: {},
   activeSessionByWorkspace: {},
@@ -170,6 +172,16 @@ let subscribed = false
 export function subscribeSessionEvents(): void {
   if (subscribed) return
   subscribed = true
+  const applyActivity = (activity: SessionActivity) => {
+    useSessions.setState((s) => (activity.revision > s.activity.revision ? { activity } : s))
+  }
+  window.loom.onSessionActivity(applyActivity)
+  void window.loom.sessions
+    .activity()
+    .then(applyActivity)
+    .catch((error: unknown) => {
+      console.error('Could not load session activity', error)
+    })
   window.loom.onSessionEvent(({ sessionId, event }) => {
     useSessions.setState((s) => ({
       eventsBySession: {

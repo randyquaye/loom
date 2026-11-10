@@ -56,6 +56,11 @@ export interface SessionRow {
   providerSessionId: string | null
 }
 
+export interface SessionActivity {
+  revision: number
+  bySession: Record<string, string>
+}
+
 export interface FileNode {
   name: string
   path: string
@@ -89,6 +94,9 @@ export interface Diagnostic {
   endLine?: number
   endColumn?: number
 }
+
+export type FilePreview =
+  { kind: 'text'; text: string; language: string } | { kind: 'image'; mimeType: string; dataUrl: string }
 
 export interface SecretPresence {
   present: boolean
@@ -288,6 +296,7 @@ export interface IpcContract {
   'git:diffCheckpoint': { in: { workspaceId: string; id: string }; out: string }
 
   'sessions:list': { in: { workspaceId: string }; out: SessionRow[] }
+  'sessions:activity': { in: void; out: SessionActivity }
   'sessions:create': { in: SessionCreateInput; out: SessionRow }
   'sessions:send': { in: { sessionId: string; text: string; attachments: string[] }; out: void }
   'sessions:steer': { in: { sessionId: string; text: string; attachments: string[] }; out: void }
@@ -312,6 +321,8 @@ export interface IpcContract {
   'files:tree': { in: { workspaceId: string }; out: FileNode[] }
   'files:listDir': { in: { workspaceId: string; path: string }; out: FileNode[] }
   'files:read': { in: { workspaceId: string; path: string }; out: { text: string; language: string } }
+  'files:preview': { in: { workspaceId: string; path: string }; out: FilePreview }
+  'files:reveal': { in: { workspaceId: string; path: string }; out: void }
   'files:pickExternal': { in: void; out: { paths: string[] } }
   'lint:run': { in: { workspaceId: string; path: string; text: string }; out: Diagnostic[] }
 
@@ -456,6 +467,7 @@ export const ipcSchemas = {
   'sessions:closed': z.object({ workspaceId: id }),
   'sessions:reopen': z.object({ sessionId: id }),
   'sessions:queue': z.object({ sessionId: id }),
+  'sessions:activity': z.undefined(),
   'sessions:dequeue': z.object({ sessionId: id, index: z.number().int().min(0).max(99) }),
   'comments:list': z.object({ workspaceId: id }),
   'comments:add': z.object({
@@ -468,6 +480,8 @@ export const ipcSchemas = {
   'files:tree': z.object({ workspaceId: id }),
   'files:listDir': z.object({ workspaceId: id, path: relPath }),
   'files:read': z.object({ workspaceId: id, path: relPath }),
+  'files:preview': z.object({ workspaceId: id, path: relPath }),
+  'files:reveal': z.object({ workspaceId: id, path: relPath }),
   'files:pickExternal': z.undefined(),
   'lint:run': z.object({ workspaceId: id, path: relPath, text: z.string().max(2000000) }),
   'terminal:create': z.object({ workspaceId: id }),
@@ -484,6 +498,7 @@ export const ipcSchemas = {
 } satisfies { [K in keyof IpcContract]: z.ZodType<IpcContract[K]['in']> }
 
 export const SESSION_EVENT_CHANNEL = 'session:event'
+export const SESSION_ACTIVITY_CHANNEL = 'session:activity'
 export interface SessionEventPush {
   sessionId: string
   event: AgentEvent
@@ -614,6 +629,7 @@ export interface LoomApi {
     diffCheckpoint(workspaceId: string, id: string): Promise<string>
   }
   sessions: {
+    activity(): Promise<SessionActivity>
     list(workspaceId: string): Promise<SessionRow[]>
     create(input: SessionCreateInput): Promise<SessionRow>
     send(sessionId: string, text: string, attachments?: string[]): Promise<void>
@@ -641,6 +657,8 @@ export interface LoomApi {
     tree(workspaceId: string): Promise<FileNode[]>
     listDir(workspaceId: string, path: string): Promise<FileNode[]>
     read(workspaceId: string, path: string): Promise<{ text: string; language: string }>
+    preview(workspaceId: string, path: string): Promise<FilePreview>
+    reveal(workspaceId: string, path: string): Promise<void>
     /** Native open dialog for attaching files outside the worktree; main still vets every path. */
     pickExternal(): Promise<{ paths: string[] }>
   }
@@ -660,6 +678,7 @@ export interface LoomApi {
     search(query: string, projectId: string | null): Promise<HistoryHit[]>
   }
   onSessionEvent(cb: (push: SessionEventPush) => void): () => void
+  onSessionActivity(cb: (push: SessionActivity) => void): () => void
   onTerminalData(cb: (push: TerminalDataPush) => void): () => void
   onTerminalExit(cb: (push: TerminalExitPush) => void): () => void
   onWorkspaceState(cb: (push: WorkspaceStatePush) => void): () => void

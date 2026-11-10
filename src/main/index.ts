@@ -8,6 +8,7 @@ import { createSecretStore, safeStorageCipher } from './secrets'
 import { setEnvSecretStore } from './env/vars'
 import {
   setSessionSink,
+  setActivitySink,
   closeAllSessions,
   setLoomDataRoot,
   setLoomSkillDir,
@@ -19,6 +20,7 @@ import { openExternalSafe } from './shell/open'
 import { setWorkspaceStateSink } from './workspace/bootstrap'
 import {
   SESSION_EVENT_CHANNEL,
+  SESSION_ACTIVITY_CHANNEL,
   SESSION_QUEUE_CHANNEL,
   SESSION_TITLE_CHANNEL,
   WORKSPACE_STATE_CHANNEL
@@ -50,6 +52,9 @@ function createWindow(): void {
   })
   setSessionSink((push) => {
     if (!win.isDestroyed()) win.webContents.send(SESSION_EVENT_CHANNEL, push)
+  })
+  setActivitySink((push) => {
+    if (!win.isDestroyed()) win.webContents.send(SESSION_ACTIVITY_CHANNEL, push)
   })
   setWorkspaceStateSink((push) => {
     if (!win.isDestroyed()) win.webContents.send(WORKSPACE_STATE_CHANNEL, push)

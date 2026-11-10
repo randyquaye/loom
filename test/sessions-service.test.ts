@@ -25,6 +25,7 @@ import {
   sendTurn,
   SessionLimitError,
   sessionEvents,
+  sessionActivity,
   sessionQueue,
   setLoomDataRoot,
   setSessionSink,
@@ -110,6 +111,45 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 describe('session service', () => {
+  it.each(['end', 'cancelled', 'error'] as const)(
+    'keeps other sessions active after a turn ends with %s',
+    async (stopReason) => {
+      const db = seedWorkspace()
+      const h = fakeBackend([], true)
+      const backend = getBackend('qwen')!
+      const start = backend.startSession.bind(backend)
+      const streams = [createEventQueue(), createEventQueue()]
+      backend.startSession = async (opts) => {
+        const session = await start(opts)
+        session.events = streams[h.sessions.length - 1]!.iterable
+        return session
+      }
+      const rows = [1, 2].map(() =>
+        createSession(db, {
+          workspaceId: 'w1',
+          backend: 'qwen',
+          model: 'qwen3-max',
+          effort: 'medium',
+          title: 'activity'
+        })
+      )
+      try {
+        for (const row of rows) await sendTurn(db, row.id, 'work')
+        const initial = sessionActivity()
+        expect(rows.map((row) => initial.bySession[row.id])).toEqual(['w1', 'w1'])
+        streams[0]!.push({ type: 'turn.done', turnId: 'first', stopReason })
+        await vi.waitFor(() => expect(sessionActivity().bySession[rows[0]!.id]).toBeUndefined())
+        expect(sessionActivity().bySession[rows[1]!.id]).toBe('w1')
+        closeSessionRow(db, rows[1]!.id)
+        expect(sessionActivity().bySession[rows[1]!.id]).toBeUndefined()
+        expect(sessionActivity().revision).toBeGreaterThan(initial.revision)
+      } finally {
+        rows.forEach((row) => closeSessionRow(db, row.id))
+        streams.forEach((stream) => stream.end())
+      }
+    }
+  )
+
   it('submits late nonblocking answers as explicit follow-ups without storing secret values', async () => {
     const db = seedWorkspace()
     const script: AgentEvent[] = [

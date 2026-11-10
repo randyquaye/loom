@@ -13,10 +13,12 @@ import {
   sendTurn,
   steerTurn,
   sessionEvents,
+  sessionActivity,
   sessionQueue
 } from '../sessions/service'
 
 export function registerSessionsIpc(deps: IpcDeps): void {
+  handle('sessions:activity', () => sessionActivity())
   handle('sessions:list', ({ workspaceId }) => listSessions(deps.db, workspaceId))
   handle('sessions:create', (input) => createSession(deps.db, input))
   handle('sessions:send', ({ sessionId, text, attachments }) =>

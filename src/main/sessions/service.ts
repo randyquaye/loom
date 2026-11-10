@@ -5,6 +5,7 @@ import type Database from 'better-sqlite3'
 import { renderEventForSearch, type AgentEvent, type QuestionAnswer } from '../../shared/events'
 import { questionAnswerText, validateQuestionAnswers, visibleQuestionAnswers } from '../../shared/questions'
 import {
+  type SessionActivity,
   type SessionCreateInput,
   type SessionEventPush,
   type SessionRow,
@@ -49,6 +50,25 @@ export function setSessionSink(fn: Sink): void {
 }
 
 const live = new Map<string, RunningSession>()
+let activity: SessionActivity = { revision: 0, bySession: {} }
+let activitySink: ((push: SessionActivity) => void) | null = null
+
+export function sessionActivity(): SessionActivity {
+  return activity
+}
+
+export function setActivitySink(fn: (push: SessionActivity) => void): void {
+  activitySink = fn
+}
+
+function setActivity(sessionId: string, workspaceId?: string): void {
+  if (activity.bySession[sessionId] === workspaceId) return
+  const bySession = { ...activity.bySession }
+  if (workspaceId === undefined) delete bySession[sessionId]
+  else bySession[sessionId] = workspaceId
+  activity = { revision: activity.revision + 1, bySession }
+  activitySink?.(activity)
+}
 interface PreparedTurn {
   text: string
   images: PromptImage[]
@@ -253,6 +273,7 @@ const immediate = new Map<string, PreparedTurn[]>()
  */
 function settleTurn(db: Database.Database, sessionId: string, drain: boolean): void {
   busyTurns.delete(sessionId)
+  setActivity(sessionId)
   const pending = immediate.get(sessionId)
   const now = pending?.shift()
   if (now !== undefined) {
@@ -490,6 +511,7 @@ async function sendPreparedTurn(
   }
   const turnId = randomUUID()
   busyTurns.set(sessionId, turnId)
+  setActivity(sessionId, row.workspace_id)
   try {
     const isFirstPrompt =
       (
@@ -760,6 +782,7 @@ export function closeSession(sessionId: string): void {
   }
   busyTurns.delete(sessionId)
   queues.delete(sessionId)
+  setActivity(sessionId)
   immediate.delete(sessionId)
 }
 

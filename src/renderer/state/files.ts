@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ChangeEntry, Diagnostic, FileNode } from '../../shared/ipc-contract'
+import type { ChangeEntry, Diagnostic, FileNode, FilePreview } from '../../shared/ipc-contract'
 import { useToasts } from '../components/ui/Toast'
 
 /** Content caches are per workspace: the same relative path differs between worktrees. */
@@ -16,7 +16,7 @@ interface FilesState {
   openPathByWorkspace: Record<string, string | null>
   viewerModeByWorkspace: Record<string, ViewerMode>
   revealLineByWorkspace: Record<string, number | null>
-  contentByPath: Record<string, { text: string; language: string }>
+  contentByPath: Record<string, FilePreview>
   diffByPath: Record<string, string>
   diagnosticsByPath: Record<string, Diagnostic[]>
   changesByWorkspace: Record<string, ChangeEntry[]>
@@ -95,9 +95,9 @@ export const useFiles = create<FilesState>((set, get) => ({
 
   async open(workspaceId, path) {
     const push = useToasts.getState().push
-    let content: { text: string; language: string }
+    let content: FilePreview
     try {
-      content = await window.loom.files.read(workspaceId, path)
+      content = await window.loom.files.preview(workspaceId, path)
     } catch (err) {
       // Keep whatever file was showing; a failed read must not blank the viewer or spin forever.
       push(`Could not open ${path}: ${String(err)}`, 'err')
@@ -105,7 +105,9 @@ export const useFiles = create<FilesState>((set, get) => ({
     }
     let diagnostics: Diagnostic[] = []
     try {
-      diagnostics = await window.loom.lint.run(workspaceId, path, content.text)
+      if (content.kind === 'text') {
+        diagnostics = await window.loom.lint.run(workspaceId, path, content.text)
+      }
     } catch (err) {
       // The file is still worth showing without diagnostics.
       push(`Lint failed for ${path}: ${String(err)}`, 'err')

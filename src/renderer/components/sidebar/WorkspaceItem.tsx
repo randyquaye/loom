@@ -2,9 +2,11 @@ import { useCallback, useLayoutEffect, useRef, useState, type ReactNode, type Re
 import { createPortal } from 'react-dom'
 import type { BranchPrState, WorkspaceRow } from '../../../shared/ipc-contract'
 import { useProjects } from '../../state/projects'
+import { useSessions } from '../../state/sessions'
 import { useUi } from '../../state/ui'
 import { clampInWindow, topBelowOrAbove, useCloseOnAnchorMove } from '../ui/anchor'
 import { BranchIcon, MergedIcon, PullRequestIcon } from '../ui/icons'
+import { SessionActivityIndicator } from '../ui/SessionActivityIndicator'
 import { Popover } from '../ui/Popover'
 import { useToasts } from '../ui/Toast'
 import { CheckpointsMenu } from './CheckpointsMenu'
@@ -74,6 +76,8 @@ export function WorkspaceItem({
   onDelete: () => void
 }) {
   const navigate = useUi((s) => s.navigate)
+  const running = useSessions((s) => Object.values(s.activity.bySession).includes(workspace.id))
+  const GitIcon = pr === 'merged' ? MergedIcon : pr === 'open' ? PullRequestIcon : BranchIcon
   const setArchived = useProjects((s) => s.setArchived)
   const push = useToasts((s) => s.push)
   const [menu, setMenu] = useState(false)
@@ -113,8 +117,12 @@ export function WorkspaceItem({
         aria-current={active ? 'page' : undefined}
         onClick={open}
       >
-        <span className="ws-icon" data-pr={pr} title={pr === undefined ? undefined : PR_TITLES[pr]}>
-          {pr === 'merged' ? <MergedIcon /> : pr === 'open' ? <PullRequestIcon /> : <BranchIcon />}
+        <span
+          className="ws-icon"
+          data-pr={pr}
+          title={running ? 'Session running' : pr === undefined ? undefined : PR_TITLES[pr]}
+        >
+          {running ? <SessionActivityIndicator /> : <GitIcon />}
         </span>
         <span className="ws-name">{workspace.name}</span>
         <span className="ws-state-slot">

@@ -5,6 +5,7 @@ import { useToasts } from '../ui/Toast'
 import '../panels/panels.css'
 import { DiagnosticsPanel } from './DiagnosticsPanel'
 import { DiffView } from './DiffView'
+import { ImageView } from './ImageView'
 import { MarkdownView } from './MarkdownView'
 import { MonacoView } from './MonacoView'
 
@@ -43,11 +44,27 @@ export function ViewerHost({ workspaceId }: { workspaceId: string }) {
           )}
           <span className="viewer-name">{checkpointName ?? openPath.slice(slash + 1)}</span>
         </span>
-        <span className="panel-pill">{mode === 'diff' ? 'diff' : content?.language}</span>
+        <span className="panel-pill">
+          {mode === 'diff' ? 'diff' : content?.kind === 'image' ? content.mimeType : content?.language}
+        </span>
         {mode === 'content' && problemCount > 0 && (
           <span className="panel-pill" data-tone={hasErrors ? 'danger' : 'warn'}>
             {problemCount}
           </span>
+        )}
+        {checkpointName === null && (
+          <button
+            type="button"
+            className="btn btn-ghost viewer-action"
+            title="Reveal this file in Finder"
+            onClick={() => {
+              void window.loom.files.reveal(workspaceId, openPath).catch((err: unknown) => {
+                push(`Could not reveal ${openPath}: ${String(err)}`, 'err')
+              })
+            }}
+          >
+            Reveal in Finder
+          </button>
         )}
         {checkpointName === null && (
           <AttachButton
@@ -62,6 +79,8 @@ export function ViewerHost({ workspaceId }: { workspaceId: string }) {
       <div className="viewer-body">
         {mode === 'diff' ? (
           <DiffView workspaceId={workspaceId} path={openPath} />
+        ) : content?.kind === 'image' ? (
+          <ImageView key={key} src={content.dataUrl} label={openPath} />
         ) : content?.language === 'markdown' ? (
           <MarkdownView text={content.text} onOpen={(path, line) => void openAt(workspaceId, path, line)} />
         ) : content !== undefined ? (
@@ -73,7 +92,7 @@ export function ViewerHost({ workspaceId }: { workspaceId: string }) {
           />
         ) : null}
       </div>
-      {mode === 'content' && <DiagnosticsPanel diagnostics={diagnostics} />}
+      {mode === 'content' && content?.kind === 'text' && <DiagnosticsPanel diagnostics={diagnostics} />}
     </div>
   )
 }
@@ -103,7 +122,7 @@ function AttachButton({
   return (
     <button
       type="button"
-      className="btn btn-ghost viewer-attach"
+      className="btn btn-ghost viewer-action"
       disabled={sessionId === null || attached || full}
       title={title}
       onClick={() => {
