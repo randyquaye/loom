@@ -10,6 +10,11 @@
   border-bottom: 1px solid var(--hairline);
 }
 
+.settings-back {
+  align-self: flex-start;
+  margin-bottom: var(--s-2);
+}
+
 .settings-page-title {
   margin: 0;
   overflow-wrap: anywhere;

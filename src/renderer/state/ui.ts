@@ -37,6 +37,8 @@ const CLOSED: ModalFlags = { addWorkspaceFor: null, projectMenu: false }
 
 interface UiState {
   route: Route
+  /** Captured on entry to Settings; switching Settings pages keeps the original destination. */
+  settingsReturnRoute: Exclude<Route, { name: 'settings' }>
   workspacePane: 'chat' | 'viewer'
   modals: ModalFlags
   paletteOpen: boolean
@@ -62,6 +64,7 @@ interface UiState {
   removeAttachment(sessionId: string, index: number): void
   clearAttachments(sessionId: string): void
   navigate(route: Route): void
+  leaveSettings(): void
   openAddProject(): void
   /** null opens the modal prompt-first with no project chosen yet. */
   openAddWorkspace(projectId: string | null): void
@@ -83,6 +86,7 @@ let voiceEnabledBeforeMode: boolean | null = null
 
 export const useUi = create<UiState>((set, get) => ({
   route: { name: 'home' },
+  settingsReturnRoute: { name: 'home' },
   workspacePane: 'chat',
   modals: CLOSED,
   paletteOpen: false,
@@ -142,7 +146,22 @@ export const useUi = create<UiState>((set, get) => ({
       delete attachmentsBySession[sessionId]
       return { attachmentsBySession }
     }),
-  navigate: (route) => set({ route }),
+  navigate: (route) =>
+    set((s) => ({
+      route,
+      settingsReturnRoute:
+        route.name === 'settings' && s.route.name !== 'settings' ? s.route : s.settingsReturnRoute
+    })),
+  leaveSettings: () => {
+    if (get().route.name !== 'settings') return
+    const route = get().settingsReturnRoute
+    const exists =
+      route.name !== 'workspace' ||
+      Object.values(useProjects.getState().workspacesByProject).some((rows) =>
+        rows.some((workspace) => workspace.id === route.workspaceId)
+      )
+    get().navigate(exists ? route : { name: 'home' })
+  },
   // Only one modal is ever open, so each opener replaces the whole flag set.
   // Projects are acquired inside the New Workspace modal, so "new project" opens it on its project menu.
   openAddProject: () =>

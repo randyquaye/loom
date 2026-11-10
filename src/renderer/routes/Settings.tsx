@@ -30,6 +30,7 @@ function isProjectPage(page: SettingsPage): page is `project:${string}` {
 /** Settings: one page at a time; the sidebar holds the page nav while this route is open. */
 export function Settings() {
   const route = useUi((s) => s.route)
+  const leaveSettings = useUi((s) => s.leaveSettings)
   const page = (route.name === 'settings' ? route.page : undefined) ?? DEFAULT_SETTINGS_PAGE
   const projectId = isProjectPage(page) ? page.slice('project:'.length) : null
   const projectName = useProjects((s) =>
@@ -42,6 +43,10 @@ export function Settings() {
   return (
     <main className="main elevated">
       <header className="settings-head">
+        <button type="button" className="btn btn-ghost settings-back" onClick={leaveSettings}>
+          <span aria-hidden="true">←</span>
+          Back
+        </button>
         <h1 className="settings-page-title">{head.title}</h1>
         <p className="settings-page-desc">{head.description}</p>
       </header>

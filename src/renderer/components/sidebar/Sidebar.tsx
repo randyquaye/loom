@@ -100,6 +100,7 @@ export function Sidebar() {
     needsSetup > 0 ? `${needsSetup} provider(s) need setup` : 'Providers, keys and default models'
   const route = useUi((s) => s.route)
   const navigate = useUi((s) => s.navigate)
+  const leaveSettings = useUi((s) => s.leaveSettings)
   const openAddProject = useUi((s) => s.openAddProject)
   const openAddWorkspace = useUi((s) => s.openAddWorkspace)
   const openPalette = useUi((s) => s.openPalette)
@@ -280,7 +281,7 @@ export function Sidebar() {
             data-active={route.name === 'settings'}
             aria-current={route.name === 'settings' ? 'page' : undefined}
             title={settingsHint}
-            onClick={() => navigate(route.name === 'settings' ? { name: 'home' } : { name: 'settings' })}
+            onClick={() => (route.name === 'settings' ? leaveSettings() : navigate({ name: 'settings' }))}
           >
             <span className="side-foot-glyph" aria-hidden="true">
               ⚙
