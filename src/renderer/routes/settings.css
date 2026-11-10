@@ -45,6 +45,12 @@
   max-width: 760px;
 }
 
+.preferences-toggle {
+  accent-color: var(--accent-1);
+  width: 16px;
+  height: 16px;
+}
+
 /* Label and notes indent one row-pad so their text lines up with row content, not the hover fill. */
 .settings-label {
   padding: 0 var(--s-2);
@@ -119,6 +125,10 @@
   padding: 0 var(--s-2);
   font-size: var(--fs-sm);
   color: var(--text-muted);
+}
+
+.settings-note a {
+  color: inherit;
 }
 
 .settings-note code {

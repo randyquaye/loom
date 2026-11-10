@@ -4,10 +4,17 @@ import { useProjects } from './projects'
 import { useSessions } from './sessions'
 
 export type SettingsPage =
-  'shortcuts' | 'integrations' | 'env' | 'instructions' | 'models' | 'agents' | `project:${string}`
+  | 'preferences'
+  | 'shortcuts'
+  | 'integrations'
+  | 'env'
+  | 'instructions'
+  | 'models'
+  | 'agents'
+  | `project:${string}`
 
 /** Where `{ name: 'settings' }` without a page lands. */
-export const DEFAULT_SETTINGS_PAGE: SettingsPage = 'shortcuts'
+export const DEFAULT_SETTINGS_PAGE: SettingsPage = 'preferences'
 
 export type Route =
   { name: 'home' } | { name: 'workspace'; workspaceId: string } | { name: 'settings'; page?: SettingsPage }
@@ -30,6 +37,7 @@ const CLOSED: ModalFlags = { addWorkspaceFor: null, projectMenu: false }
 
 interface UiState {
   route: Route
+  workspacePane: 'chat' | 'viewer'
   modals: ModalFlags
   paletteOpen: boolean
   /** One-shot prompt seeded by quick chips, consumed by whichever composer is mounted. */
@@ -75,6 +83,7 @@ let voiceEnabledBeforeMode: boolean | null = null
 
 export const useUi = create<UiState>((set, get) => ({
   route: { name: 'home' },
+  workspacePane: 'chat',
   modals: CLOSED,
   paletteOpen: false,
   voiceEnabled: false,

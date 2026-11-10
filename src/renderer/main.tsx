@@ -6,10 +6,11 @@ import './theme/ui.css'
 import { App } from './App'
 import { installFocusTracking } from './components/ui/focus'
 import { subscribeSessionEvents } from './state/sessions'
+import { shouldPlayCompletionSound } from './audio/completionPolicy'
 
 installFocusTracking()
 // Live agent events (streaming text, turn.started/turn.done) feed the chat and the composer's running state.
-subscribeSessionEvents()
+subscribeSessionEvents(shouldPlayCompletionSound)
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

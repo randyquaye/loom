@@ -60,7 +60,8 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
   const setRightHidden = usePanels((s) => s.setRightHidden)
   const push = useToasts((s) => s.push)
   const commitPanels = usePanels((s) => s.commit)
-  const [pane, setPane] = useState<'chat' | 'viewer'>('chat')
+  const pane = useUi((s) => s.workspacePane)
+  const setPane = (workspacePane: 'chat' | 'viewer') => useUi.setState({ workspacePane })
   const [scripts, setScripts] = useState<{
     workspaceId: string
     actions: RepoScriptsInfo['actions']

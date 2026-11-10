@@ -6,6 +6,7 @@ import { EnvPage } from './settings/EnvPage'
 import { InstructionsPage } from './settings/InstructionsPage'
 import { IntegrationsPage } from './settings/IntegrationsPage'
 import { ProjectPage } from './settings/ProjectPage'
+import { PreferencesPage } from './settings/PreferencesPage'
 import { ShortcutsPage } from './settings/ShortcutsPage'
 import './settings.css'
 
@@ -13,6 +14,7 @@ const PAGE_HEAD: Record<
   Exclude<SettingsPage, `project:${string}`>,
   { title: string; description: string }
 > = {
+  preferences: { title: 'Preferences', description: 'Make Loom work the way you prefer.' },
   shortcuts: { title: 'Shortcuts', description: 'Keyboard shortcuts available across Loom.' },
   integrations: { title: 'Integrations', description: 'Connect GitHub and Linear to your workspaces.' },
   env: { title: 'Environment', description: 'Variables passed to agents, terminals and run actions.' },
@@ -44,6 +46,7 @@ export function Settings() {
         <p className="settings-page-desc">{head.description}</p>
       </header>
       <div className="settings-scroll">
+        {page === 'preferences' && <PreferencesPage />}
         {projectId !== null && <ProjectPage projectId={projectId} />}
         {page === 'shortcuts' && <ShortcutsPage />}
         {page === 'integrations' && <IntegrationsPage />}

@@ -2,6 +2,7 @@ import { useProjects } from '../../state/projects'
 import { DEFAULT_SETTINGS_PAGE, useUi, type SettingsPage } from '../../state/ui'
 
 const GENERAL: { page: SettingsPage; label: string; glyph: string }[] = [
+  { page: 'preferences', label: 'Preferences', glyph: '⚙' },
   { page: 'shortcuts', label: 'Shortcuts', glyph: '⌘' },
   { page: 'integrations', label: 'Integrations', glyph: '⇄' },
   { page: 'env', label: 'Environment', glyph: '$' },

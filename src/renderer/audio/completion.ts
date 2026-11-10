@@ -10,7 +10,10 @@ function playChime(): void {
 }
 
 /** Observe live events only; loading transcript history must never replay notifications. */
-export function createCompletionChime(play = playChime): (push: SessionEventPush) => void {
+export function createCompletionChime(
+  play = playChime,
+  shouldPlay: (sessionId: string) => boolean = () => true
+): (push: SessionEventPush) => void {
   const turns = new Map<string, { turnId: string; complete: boolean }>()
   return ({ sessionId, event }) => {
     const previous = turns.get(sessionId)
@@ -19,7 +22,7 @@ export function createCompletionChime(play = playChime): (push: SessionEventPush
     } else if (event.type === 'turn.done') {
       if (previous?.complete || (previous !== undefined && previous.turnId !== event.turnId)) return
       turns.set(sessionId, { turnId: event.turnId, complete: true })
-      if (event.stopReason === 'end') play()
+      if (event.stopReason === 'end' && shouldPlay(sessionId)) play()
     }
   }
 }

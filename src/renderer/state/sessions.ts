@@ -170,10 +170,10 @@ export function isTurnRunning(events: AgentEvent[]): boolean {
 }
 
 let subscribed = false
-export function subscribeSessionEvents(): void {
+export function subscribeSessionEvents(shouldPlayCompletionSound?: (sessionId: string) => boolean): void {
   if (subscribed) return
   subscribed = true
-  const completionChime = createCompletionChime()
+  const completionChime = createCompletionChime(undefined, shouldPlayCompletionSound)
   const applyActivity = (activity: SessionActivity) => {
     useSessions.setState((s) => (activity.revision > s.activity.revision ? { activity } : s))
   }
