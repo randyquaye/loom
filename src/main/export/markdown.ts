@@ -23,6 +23,13 @@ export function eventsToMarkdown(meta: SessionMeta, events: AgentEvent[]): strin
       lines.push(block.text, '')
     } else if (block.kind === 'reasoning') {
       lines.push('<details><summary>reasoning</summary>', '', block.text, '', '</details>', '')
+    } else if (block.kind === 'question') {
+      for (const question of block.request.questions) {
+        lines.push(question.question, '')
+        for (const option of question.options ?? []) lines.push(`- ${option.label}: ${option.description}`)
+        const answer = block.answers?.[question.id]
+        if (answer !== undefined) lines.push('', `**Answer:** ${answer.join(', ')}`, '')
+      }
     } else if (block.kind === 'tool') {
       lines.push(
         `<details><summary>${block.name}${block.ok === false ? ' ✗' : ''}</summary>`,

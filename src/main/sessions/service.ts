@@ -2,7 +2,8 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
-import { renderEventForSearch, type AgentEvent } from '../../shared/events'
+import { renderEventForSearch, type AgentEvent, type QuestionAnswer } from '../../shared/events'
+import { questionAnswerText, validateQuestionAnswers, visibleQuestionAnswers } from '../../shared/questions'
 import {
   type SessionCreateInput,
   type SessionEventPush,
@@ -10,10 +11,10 @@ import {
   type SessionTitlePush
 } from '../../shared/ipc-contract'
 import { MAX_SESSIONS_PER_WORKSPACE } from '../../shared/limits'
-import type { BackendId, Effort } from '../../shared/models'
+import type { BackendId, Effort, PromptImage } from '../../shared/models'
 import { cleanTitle, excerptTitle } from './title'
 import { envNames } from '../env/vars'
-import { formatAttachment, readAttachment, resolveAttachment } from './attachments'
+import { AttachmentError, formatAttachment, readPromptAttachment, resolveAttachment } from './attachments'
 import { getBackend } from '../agents/registry'
 import type { RunningSession } from '../agents/types'
 import { AUTOLINK_SYSTEM_PROMPT } from '../agents/prompts/autolink'
@@ -48,6 +49,12 @@ export function setSessionSink(fn: Sink): void {
 }
 
 const live = new Map<string, RunningSession>()
+interface PreparedTurn {
+  text: string
+  images: PromptImage[]
+  promptText?: string
+  displayText?: string
+}
 
 export class SessionLimitError extends Error {}
 
@@ -190,8 +197,10 @@ function appendError(
 }
 
 /** A turn nobody awaits (queue drain, send-now, fork hand-off): failures land in the transcript. */
-function sendDetached(db: Database.Database, sessionId: string, text: string, code: string): void {
-  void sendTurn(db, sessionId, text).catch((error: unknown) => appendError(db, sessionId, code, error))
+function sendDetached(db: Database.Database, sessionId: string, input: PreparedTurn, code: string): void {
+  void sendPreparedTurn(db, sessionId, input).catch((error: unknown) =>
+    appendError(db, sessionId, code, error)
+  )
 }
 
 async function pump(db: Database.Database, sessionId: string, session: RunningSession): Promise<void> {
@@ -203,10 +212,11 @@ async function pump(db: Database.Database, sessionId: string, session: RunningSe
       // Errors do not end a turn: codex reports retryable failures mid-turn and keeps going,
       // and every backend closes a failed turn with turn.done. Settling early let the next
       // message skip the queue into a turn still in flight.
-      if (event.type === 'error') failed = true
+      if (event.type === 'error' && !event.retryable) failed = true
       else if (event.type === 'turn.done') {
         // A failed turn keeps the queue for the user to retry or drop explicitly.
-        settleTurn(db, sessionId, event.stopReason !== 'error' && !failed)
+        if (live.get(sessionId) === session)
+          settleTurn(db, sessionId, event.stopReason !== 'error' && !failed)
         settled = true
         failed = false
       }
@@ -214,18 +224,27 @@ async function pump(db: Database.Database, sessionId: string, session: RunningSe
     // One-shot backends end their stream at turn end without a trailing event. Skipped
     // when the loop already settled: that settle may have started the next turn, whose
     // busy flag this pump must not clear.
-    if (!settled) settleTurn(db, sessionId, !failed)
+    if (live.get(sessionId) === session) {
+      live.delete(sessionId)
+      if (!settled) settleTurn(db, sessionId, !failed)
+    }
   } catch (error) {
     appendError(db, sessionId, 'stream', error)
-    settleTurn(db, sessionId, false)
+    if (live.get(sessionId) === session) {
+      live.delete(sessionId)
+      settleTurn(db, sessionId, false)
+    }
+  } finally {
+    if (live.get(sessionId) === session) live.delete(sessionId)
   }
 }
 
 /** Turns in flight and messages waiting for them, per session (process-local). */
-const busyTurns = new Set<string>()
-const queues = new Map<string, string[]>()
+const busyTurns = new Map<string, string>()
+const queues = new Map<string, PreparedTurn[]>()
+const preparing = new Map<string, { work: Promise<PreparedTurn>; controller: AbortController }>()
 /** A message the user forced over a running turn; sent the moment that turn ends. */
-const immediate = new Map<string, string>()
+const immediate = new Map<string, PreparedTurn[]>()
 
 /**
  * Clears the busy flag at turn end and picks what runs next: a forced send-now message
@@ -234,9 +253,10 @@ const immediate = new Map<string, string>()
  */
 function settleTurn(db: Database.Database, sessionId: string, drain: boolean): void {
   busyTurns.delete(sessionId)
-  const now = immediate.get(sessionId)
+  const pending = immediate.get(sessionId)
+  const now = pending?.shift()
   if (now !== undefined) {
-    immediate.delete(sessionId)
+    if (pending?.length === 0) immediate.delete(sessionId)
     sendDetached(db, sessionId, now, 'send.now')
     return
   }
@@ -256,8 +276,14 @@ export async function sendNow(
   deniedRoots: readonly string[] = []
 ): Promise<void> {
   if (!busyTurns.has(sessionId)) return sendTurn(db, sessionId, text, attachments, deniedRoots)
-  immediate.set(sessionId, await composeWithAttachments(db, sessionId, text, attachments, deniedRoots))
-  await live.get(sessionId)?.cancel()
+  const target = busyTurns.get(sessionId)
+  const work = prepareInput(db, sessionId, text, attachments, deniedRoots)
+  const input = work instanceof Promise ? await work : work
+  if (busyTurns.get(sessionId) !== target) return sendPreparedTurn(db, sessionId, input)
+  const pending = immediate.get(sessionId) ?? []
+  pending.push(input)
+  immediate.set(sessionId, pending)
+  if (pending.length === 1) await cancelTurn(db, sessionId)
 }
 
 type QueueSink = (push: { sessionId: string; items: string[] }) => void
@@ -329,24 +355,66 @@ async function composeWithAttachments(
   text: string,
   attachments: readonly string[],
   deniedRoots: readonly string[]
-): Promise<string> {
-  if (attachments.length === 0) return text
+): Promise<PreparedTurn> {
+  if (attachments.length === 0) return { text, images: [] }
   const ws = db
     .prepare(
-      'SELECT w.worktree_path FROM workspaces w JOIN sessions s ON s.workspace_id = w.id WHERE s.id = ?'
+      'SELECT w.worktree_path, s.backend, s.model FROM workspaces w JOIN sessions s ON s.workspace_id = w.id WHERE s.id = ? AND s.closed_at IS NULL'
     )
-    .get(sessionId) as { worktree_path: string } | undefined
+    .get(sessionId) as { worktree_path: string; backend: BackendId; model: string } | undefined
   if (ws === undefined) throw new Error(`unknown session ${sessionId}`)
   const blocks: string[] = []
+  const images: PromptImage[] = []
   for (const raw of attachments) {
     const resolved = await resolveAttachment(ws.worktree_path, raw, deniedRoots)
-    blocks.push(formatAttachment(resolved.label, await readAttachment(resolved.abs)))
+    const attachment = await readPromptAttachment(resolved.abs, resolved.label)
+    if (attachment.kind === 'image') {
+      images.push(attachment.image)
+      blocks.push(`<attached image: ${resolved.label}>`)
+    } else blocks.push(formatAttachment(resolved.label, attachment.content))
   }
-  return `${blocks.join('\n\n')}\n\n${text}`
+  if (images.length > 0) {
+    const models = await getBackend(ws.backend)?.listModels()
+    if (models?.find((model) => model.id === ws.model)?.supportsImages !== true) {
+      throw new AttachmentError(
+        `${ws.model} does not support image attachments; choose an image-capable model`
+      )
+    }
+  }
+  return { text: `${blocks.join('\n\n')}\n\n${text}`, images, promptText: text }
+}
+
+/** Serializes only preparation, leaving active turns free to receive guidance. */
+function prepareInput(
+  db: Database.Database,
+  sessionId: string,
+  text: string,
+  attachments: readonly string[],
+  deniedRoots: readonly string[]
+): PreparedTurn | Promise<PreparedTurn> {
+  const previous = preparing.get(sessionId)
+  if (attachments.length === 0 && previous === undefined) return { text, images: [] }
+  const controller = previous?.controller ?? new AbortController()
+  const compose = () => {
+    controller.signal.throwIfAborted()
+    return composeWithAttachments(db, sessionId, text, attachments, deniedRoots)
+  }
+  const work = (previous === undefined ? compose() : previous.work.catch(() => undefined).then(compose)).then(
+    (input) => {
+      controller.signal.throwIfAborted()
+      return input
+    }
+  )
+  preparing.set(sessionId, { work, controller })
+  const clear = () => {
+    if (preparing.get(sessionId)?.work === work) preparing.delete(sessionId)
+  }
+  void work.then(clear, clear)
+  return work
 }
 
 export function sessionQueue(sessionId: string): string[] {
-  return [...(queues.get(sessionId) ?? [])]
+  return (queues.get(sessionId) ?? []).map((input) => input.displayText ?? input.text)
 }
 
 export function dequeue(sessionId: string, index: number): string[] {
@@ -367,15 +435,32 @@ function drainQueue(db: Database.Database, sessionId: string): void {
   sendDetached(db, sessionId, next, 'queue.drain')
 }
 
-export async function sendTurn(
+export function sendTurn(
   db: Database.Database,
   sessionId: string,
   text: string,
   attachments: readonly string[] = [],
   deniedRoots: readonly string[] = []
 ): Promise<void> {
+  try {
+    const work = prepareInput(db, sessionId, text, attachments, deniedRoots)
+    return work instanceof Promise
+      ? work.then((input) => sendPreparedTurn(db, sessionId, input))
+      : sendPreparedTurn(db, sessionId, work)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+async function sendPreparedTurn(
+  db: Database.Database,
+  sessionId: string,
+  input: PreparedTurn
+): Promise<void> {
   const row = db
-    .prepare('SELECT workspace_id, backend, model, effort, provider_session_id FROM sessions WHERE id = ?')
+    .prepare(
+      'SELECT workspace_id, backend, model, effort, provider_session_id FROM sessions WHERE id = ? AND closed_at IS NULL'
+    )
     .get(sessionId) as SessionBackendRow | undefined
   if (row === undefined) throw new Error(`unknown session ${sessionId}`)
 
@@ -392,22 +477,19 @@ export async function sendTurn(
   // Inlined before the busy check so a message queued behind a running turn keeps its files.
   // No await on the attachment-free path: an extra tick here lets a settling turn clear the
   // busy flag before the next send arrives, which would silently un-queue it.
-  const body =
-    attachments.length === 0
-      ? text
-      : await composeWithAttachments(db, sessionId, text, attachments, deniedRoots)
+  const body = input.text
 
   // A turn already in flight: queue the message instead of spawning a second
   // process against the same provider session.
   if (busyTurns.has(sessionId)) {
     const queue = queues.get(sessionId) ?? []
-    queue.push(body)
+    queue.push(input)
     queues.set(sessionId, queue)
     pushQueue(sessionId)
     return
   }
-  busyTurns.add(sessionId)
   const turnId = randomUUID()
+  busyTurns.set(sessionId, turnId)
   try {
     const isFirstPrompt =
       (
@@ -416,10 +498,17 @@ export async function sendTurn(
           .get(sessionId, 'user.text') as { n: number }
       ).n === 0
 
-    appendEvent(db, sessionId, { type: 'user.text', turnId, text: body })
+    appendEvent(db, sessionId, { type: 'user.text', turnId, text: input.displayText ?? body })
     // Titles and checkpoints describe what the user asked, not the inlined files.
     if (isFirstPrompt) {
-      void renameFromPrompt(db, sessionId, row.workspace_id, row.backend as BackendId, row.model, text)
+      void renameFromPrompt(
+        db,
+        sessionId,
+        row.workspace_id,
+        row.backend as BackendId,
+        row.model,
+        input.promptText ?? input.displayText ?? body
+      )
     }
 
     const wsRow = db
@@ -448,11 +537,12 @@ export async function sendTurn(
         const owned = await refreshWorkspaceAgentsDoc(wsRow.worktree_path, doc)
         await setAgentsExclude(wsRow.repo_path, owned)
       })().catch(() => {})
-      void autoCheckpoint(wsRow.worktree_path, turnId, text).catch((error: unknown) =>
-        appendError(db, sessionId, 'checkpoint.save', error)
+      void autoCheckpoint(wsRow.worktree_path, turnId, input.promptText ?? input.displayText ?? body).catch(
+        (error: unknown) => appendError(db, sessionId, 'checkpoint.save', error)
       )
     }
 
+    if (busyTurns.get(sessionId) !== turnId) return
     let session = live.get(sessionId)
     if (session === undefined) {
       const backend = getBackend(row.backend as SessionCreateInput['backend'])
@@ -475,10 +565,15 @@ export async function sendTurn(
         env: await workspaceEnv(db, row.workspace_id),
         pluginDir: loomSkillDir ?? undefined
       })
+      if (busyTurns.get(sessionId) !== turnId) {
+        await session.close()
+        return
+      }
       live.set(sessionId, session)
       void pump(db, sessionId, session)
     }
-    await session.send(body)
+    if (input.images.length === 0) await session.send(body)
+    else await session.send(body, input.images)
     const providerId = session.providerSessionId?.()
     if (providerId !== undefined) {
       db.prepare('UPDATE sessions SET provider_session_id = ? WHERE id = ?').run(providerId, sessionId)
@@ -490,7 +585,7 @@ export async function sendTurn(
     // message it failed, so it is not rethrown: callers would report it a second time.
     appendError(db, sessionId, 'send', error, turnId)
     appendEvent(db, sessionId, { type: 'turn.done', turnId, stopReason: 'error' })
-    settleTurn(db, sessionId, false)
+    if (busyTurns.get(sessionId) === turnId) settleTurn(db, sessionId, false)
   }
 }
 
@@ -584,10 +679,80 @@ function envNamesLine(names: string[]): string {
 }
 
 export async function cancelTurn(db: Database.Database, sessionId: string): Promise<void> {
-  await live.get(sessionId)?.cancel()
+  const session = live.get(sessionId)
+  if (session !== undefined) {
+    await session.cancel()
+    return
+  }
+  const turnId = busyTurns.get(sessionId)
+  if (turnId !== undefined) {
+    appendEvent(db, sessionId, { type: 'turn.done', turnId, stopReason: 'cancelled' })
+    settleTurn(db, sessionId, true)
+  }
+}
+
+export async function steerTurn(
+  db: Database.Database,
+  sessionId: string,
+  text: string,
+  attachments: readonly string[] = [],
+  deniedRoots: readonly string[] = []
+): Promise<void> {
+  const session = live.get(sessionId)
+  if (!busyTurns.has(sessionId) || session?.steer === undefined)
+    throw new Error('There is no steerable turn running')
+  const target = busyTurns.get(sessionId)
+  const work = prepareInput(db, sessionId, text, attachments, deniedRoots)
+  const input = work instanceof Promise ? await work : work
+  if (busyTurns.get(sessionId) !== target || live.get(sessionId) !== session)
+    throw new Error('The turn ended before guidance was delivered')
+  if (input.images.length === 0) await session.steer(input.text)
+  else await session.steer(input.text, input.images)
+}
+
+/** Replies stay outside turn scheduling and transcript storage, including secret answers. */
+export async function answerQuestion(
+  db: Database.Database,
+  sessionId: string,
+  answer: QuestionAnswer
+): Promise<void> {
+  const history = sessionEvents(db, sessionId)
+  const requested = history.findLast(
+    (event) => event.type === 'question.requested' && event.requestId === answer.requestId
+  )
+  if (history.some((event) => event.type === 'question.resolved' && event.requestId === answer.requestId))
+    throw new Error('Question is already closed')
+  if (requested?.type === 'question.requested' && !requested.blocking && !busyTurns.has(sessionId)) {
+    const answers = validateQuestionAnswers(requested, answer)
+    const visible = visibleQuestionAnswers(requested, answers)
+    const displayText = questionAnswerText(requested, visible)
+    sendDetached(
+      db,
+      sessionId,
+      { text: questionAnswerText(requested, answers), images: [], displayText, promptText: displayText },
+      'question.followup'
+    )
+    appendEvent(db, sessionId, {
+      type: 'question.answered',
+      turnId: requested.turnId,
+      requestId: requested.requestId,
+      answers: visible
+    })
+    appendEvent(db, sessionId, {
+      type: 'question.resolved',
+      turnId: requested.turnId,
+      requestId: requested.requestId
+    })
+    return
+  }
+  const session = live.get(sessionId)
+  if (session?.answerQuestion === undefined) throw new Error('This session cannot answer questions')
+  await session.answerQuestion(answer)
 }
 
 export function closeSession(sessionId: string): void {
+  preparing.get(sessionId)?.controller.abort()
+  preparing.delete(sessionId)
   const session = live.get(sessionId)
   if (session) {
     void session.close()
@@ -599,7 +764,8 @@ export function closeSession(sessionId: string): void {
 }
 
 export function closeAllSessions(): void {
-  for (const sessionId of [...live.keys()]) closeSession(sessionId)
+  for (const sessionId of new Set([...live.keys(), ...busyTurns.keys(), ...preparing.keys()]))
+    closeSession(sessionId)
 }
 
 /** Marks the row closed and tears down any live backend session for it. */
@@ -666,7 +832,10 @@ export async function forkSession(db: Database.Database, input: ForkInput): Prom
   sendDetached(
     db,
     created.id,
-    `Continuing from a previous session. The full transcript is at ${transcriptPath} — read it before answering.`,
+    {
+      text: `Continuing from a previous session. The full transcript is at ${transcriptPath} — read it before answering.`,
+      images: []
+    },
     'fork.send'
   )
   return { ...created, forkedFrom: input.sourceSessionId }

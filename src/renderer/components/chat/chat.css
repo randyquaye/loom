@@ -745,3 +745,12 @@
 .stt-error {
   color: var(--danger);
 }
+.composer[data-dropping='true'] .composer-box {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.composer-drop-hint {
+  padding: var(--s-2);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}

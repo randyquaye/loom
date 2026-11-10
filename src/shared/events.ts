@@ -10,13 +10,43 @@ export const filePatch = z.object({
 })
 export type FilePatch = z.infer<typeof filePatch>
 
+export const questionRequest = z.object({
+  type: z.literal('question.requested'),
+  requestId: z.string(),
+  turnId: z.string(),
+  callId: z.string().optional(),
+  purpose: z.literal('approval').optional(),
+  blocking: z.boolean(),
+  questions: z.array(
+    z.object({
+      id: z.string(),
+      header: z.string(),
+      question: z.string(),
+      options: z.array(z.object({ label: z.string(), description: z.string() })).nullish(),
+      isOther: z.boolean().default(false),
+      isSecret: z.boolean().default(false),
+      multiSelect: z.boolean().optional()
+    })
+  )
+})
+export type QuestionRequest = z.infer<typeof questionRequest>
+export const questionAnswer = z.object({
+  requestId: z.string(),
+  answers: z.record(z.string(), z.array(z.string()))
+})
+export type QuestionAnswer = z.infer<typeof questionAnswer>
+
 /**
  * The normalization layer: both execution paths (CLI adapters and the own agent
  * loop) emit exactly these events, so UI, export and search never see
  * provider-specific shapes.
  */
 export const agentEvent = z.discriminatedUnion('type', [
+  questionRequest,
+  questionAnswer.extend({ type: z.literal('question.answered'), turnId: z.string() }),
+  z.object({ type: z.literal('question.resolved'), requestId: z.string(), turnId: z.string() }),
   z.object({ type: z.literal('user.text'), turnId: z.string(), text: z.string() }),
+  z.object({ type: z.literal('user.steer'), turnId: z.string(), text: z.string() }),
   z.object({ type: z.literal('turn.started'), turnId: z.string(), at: z.number() }),
   z.object({ type: z.literal('text.delta'), turnId: z.string(), text: z.string() }),
   z.object({ type: z.literal('text.done'), turnId: z.string(), text: z.string() }),
@@ -75,7 +105,12 @@ export const agentEvent = z.discriminatedUnion('type', [
     type: z.literal('usage'),
     turnId: z.string(),
     inputTokens: z.number(),
-    outputTokens: z.number()
+    outputTokens: z.number().optional(),
+    /** Latest request's input footprint, separate from accumulated turn usage. */
+    contextTokens: z.number().optional(),
+    scope: z.enum(['thread', 'turn', 'request']).optional(),
+    cacheReadInputTokens: z.number().optional(),
+    cacheWriteInputTokens: z.number().optional()
   }),
   z.object({
     type: z.literal('error'),
@@ -98,6 +133,7 @@ export type AgentEvent = z.infer<typeof agentEvent>
 export function renderEventForSearch(event: AgentEvent): string {
   switch (event.type) {
     case 'user.text':
+    case 'user.steer':
     case 'text.done':
       return event.text
     case 'tool.call':

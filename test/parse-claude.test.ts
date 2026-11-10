@@ -104,7 +104,15 @@ describe('claude fixture replay', () => {
         turnId: SESSION,
         text: 'All five modules are present; the line buffer is src/main/agents/cli/spawn.ts:88.'
       },
-      { type: 'usage', turnId: SESSION, inputTokens: 3188, outputTokens: 642 },
+      {
+        type: 'usage',
+        turnId: SESSION,
+        scope: 'turn',
+        inputTokens: 6260,
+        outputTokens: 642,
+        cacheReadInputTokens: 1024,
+        cacheWriteInputTokens: 2048
+      },
       { type: 'turn.done', turnId: SESSION, stopReason: 'end' }
     ])
   })
@@ -307,7 +315,7 @@ describe('parseClaudeStreamLine tolerance', () => {
       usage: { input_tokens: 10, output_tokens: 4 }
     })
     expect(parseClaudeStreamLine(success, SESSION)).toEqual([
-      { type: 'usage', turnId: SESSION, inputTokens: 10, outputTokens: 4 },
+      { type: 'usage', turnId: SESSION, scope: 'turn', inputTokens: 10, outputTokens: 4 },
       { type: 'turn.done', turnId: SESSION, stopReason: 'end' }
     ])
 
@@ -326,7 +334,6 @@ describe('parseClaudeStreamLine tolerance', () => {
         message: expect.stringContaining('error_max_turns'),
         retryable: false
       },
-      { type: 'usage', turnId: SESSION, inputTokens: 0, outputTokens: 0 },
       { type: 'turn.done', turnId: SESSION, stopReason: 'limit' }
     ])
 
@@ -345,7 +352,6 @@ describe('parseClaudeStreamLine tolerance', () => {
         message: 'API connection failed',
         retryable: false
       },
-      { type: 'usage', turnId: SESSION, inputTokens: 0, outputTokens: 0 },
       { type: 'turn.done', turnId: SESSION, stopReason: 'error' }
     ])
   })
@@ -359,8 +365,8 @@ describe('parseClaudeStreamLine tolerance', () => {
       result: 'boom'
     })
     const events = parseClaudeStreamLine(line)
-    expect(events.map((e) => e.type)).toEqual(['error', 'usage', 'turn.done'])
-    expect(events[2]).toMatchObject({ stopReason: 'error' })
+    expect(events.map((e) => e.type)).toEqual(['error', 'turn.done'])
+    expect(events[1]).toMatchObject({ stopReason: 'error' })
   })
 
   it('uses the fallback turn id when the record carries no session id', () => {

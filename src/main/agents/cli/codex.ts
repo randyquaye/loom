@@ -1,11 +1,10 @@
 import type { AuthStatus, ModelDescriptor, SessionOpts } from '../../../shared/models'
 import type { AgentBackend, RunningSession } from '../types'
-import { assertSessionOpts, buildCodexArgs, buildCodexResumeArgs } from './args'
+import { assertSessionOpts } from './args'
 import { CODEX_MODELS } from './catalog'
-import { createCodexParser } from './parse-codex'
 import { cliAuthStatus } from './probe'
 import { cliSessionTitle } from './title'
-import { startLazyCliSession, type LazyCliPlan, type ProviderParser } from './spawn'
+import { startCodexSession } from './codex-session'
 
 export const CODEX_BIN = 'codex'
 export const CODEX_INSTALL_HINT = 'Install the Codex CLI (npm i -g @openai/codex), then run `codex login`'
@@ -20,7 +19,9 @@ export function createCodexBackend(): AgentBackend {
     },
 
     listModels(): Promise<ModelDescriptor[]> {
-      return Promise.resolve(CODEX_MODELS)
+      return Promise.resolve(
+        CODEX_MODELS.map((model) => ({ ...model, supportsSteering: true, supportsImages: true }))
+      )
     },
 
     title(prompt: string, model: string): Promise<string | null> {
@@ -32,29 +33,7 @@ export function createCodexBackend(): AgentBackend {
       // turned into argv; an unknown model rejects here rather than spawning.
       assertSessionOpts('codex', opts)
 
-      return Promise.resolve(
-        startLazyCliSession({
-          bin: CODEX_BIN,
-          cwd: opts.worktreePath,
-          initialProviderSessionId: opts.resumeId,
-          env: opts.env,
-          createParser(): ProviderParser {
-            const parser = createCodexParser()
-            return {
-              parse: (line) => parser.parse(line),
-              providerSessionId: () => parser.threadId()
-            }
-          },
-          plan(prompt: string, providerSessionId: string | undefined): LazyCliPlan {
-            const thread = providerSessionId ?? opts.resumeId
-            // First turn has no thread id yet, so the prompt goes over stdin
-            // (`codex exec` reads instructions from a piped stdin).
-            return thread
-              ? { args: buildCodexResumeArgs(opts, thread, prompt), promptOnStdin: false }
-              : { args: buildCodexArgs(opts), promptOnStdin: true }
-          }
-        })
-      )
+      return Promise.resolve(startCodexSession(opts))
     }
   }
 }

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import {
   SESSION_EVENT_CHANNEL,
   SESSION_QUEUE_CHANNEL,
@@ -103,6 +103,9 @@ const api: LoomApi = {
     create: (input) => invoke('sessions:create', input),
     send: (sessionId, text, attachments) =>
       invoke('sessions:send', { sessionId, text, attachments: attachments ?? [] }),
+    steer: (sessionId, text, attachments) =>
+      invoke('sessions:steer', { sessionId, text, attachments: attachments ?? [] }),
+    answerQuestion: (sessionId, answer) => invoke('sessions:answerQuestion', { sessionId, answer }),
     sendNow: (sessionId, text, attachments) =>
       invoke('sessions:sendNow', { sessionId, text, attachments: attachments ?? [] }),
     cancel: (sessionId) => invoke('sessions:cancel', { sessionId }),
@@ -121,6 +124,7 @@ const api: LoomApi = {
     remove: (id) => invoke('comments:remove', { id })
   },
   files: {
+    pathsForFiles: (files) => files.map((file) => webUtils.getPathForFile(file)).filter(Boolean),
     tree: (workspaceId) => invoke('files:tree', { workspaceId }),
     listDir: (workspaceId, path) => invoke('files:listDir', { workspaceId, path }),
     read: (workspaceId, path) => invoke('files:read', { workspaceId, path }),

@@ -2,8 +2,10 @@ import { looksBinary } from '../fs/read'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { contain } from '../security/contain'
+import { MAX_IMAGE_ATTACHMENT_BYTES, MAX_TEXT_ATTACHMENT_BYTES } from '../../shared/limits'
+import type { PromptImage } from '../../shared/models'
 
-export const ATTACH_MAX_BYTES = 256 * 1024
+export const ATTACH_MAX_BYTES = MAX_TEXT_ATTACHMENT_BYTES
 export const ATTACH_MAX_LINES = 4000
 
 export class AttachmentError extends Error {
@@ -90,12 +92,41 @@ export async function readAttachment(abs: string): Promise<AttachmentContent> {
     throw new AttachmentError(`larger than ${ATTACH_MAX_BYTES} bytes: ${abs}`)
   }
   const buffer = await readFile(abs)
+  return textAttachment(buffer, abs)
+}
+
+function textAttachment(buffer: Buffer, abs: string): AttachmentContent {
+  if (buffer.length > ATTACH_MAX_BYTES)
+    throw new AttachmentError(`larger than ${ATTACH_MAX_BYTES} bytes: ${abs}`)
   // A NUL byte in the head means binary; inlining it would put garbage in the transcript.
   if (looksBinary(buffer)) throw new AttachmentError(`binary file: ${abs}`)
   const lines = buffer.toString('utf8').split('\n')
   const truncated = lines.length > ATTACH_MAX_LINES
   const text = truncated ? lines.slice(0, ATTACH_MAX_LINES).join('\n') : lines.join('\n')
   return { text, lines: lines.length, bytes: buffer.length, truncated }
+}
+
+export async function readPromptAttachment(
+  abs: string,
+  label: string
+): Promise<{ kind: 'text'; content: AttachmentContent } | { kind: 'image'; image: PromptImage }> {
+  const info = await stat(abs)
+  if (!info.isFile()) throw new AttachmentError(`not a regular file: ${abs}`)
+  if (info.size > MAX_IMAGE_ATTACHMENT_BYTES)
+    throw new AttachmentError(`larger than ${MAX_IMAGE_ATTACHMENT_BYTES} bytes: ${abs}`)
+  const buffer = await readFile(abs)
+  let mimeType: PromptImage['mimeType'] | undefined
+  if (buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) mimeType = 'image/png'
+  else if (buffer[0] === 255 && buffer[1] === 216 && buffer[2] === 255) mimeType = 'image/jpeg'
+  else if (['GIF87a', 'GIF89a'].includes(buffer.subarray(0, 6).toString('ascii'))) mimeType = 'image/gif'
+  else if (
+    buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
+    buffer.subarray(8, 12).toString('ascii') === 'WEBP'
+  )
+    mimeType = 'image/webp'
+  if (mimeType !== undefined)
+    return { kind: 'image', image: { label, mimeType, data: buffer.toString('base64') } }
+  return { kind: 'text', content: textAttachment(buffer, abs) }
 }
 
 /** The block the agent sees: a header naming the file, then its content in a fence. */

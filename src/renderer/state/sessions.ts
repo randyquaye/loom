@@ -155,12 +155,13 @@ export const useSessions = create<SessionsState>((set, get) => ({
   }
 }))
 
-/** A turn is in flight when the newest turn boundary is a start (user.text/turn.started), not a turn.done. */
+/** A late completion from an older connection cannot end the newest prompt/turn. */
 export function isTurnRunning(events: AgentEvent[]): boolean {
+  const done = new Set<string>()
   for (let i = events.length - 1; i >= 0; i--) {
-    const type = events[i]?.type
-    if (type === 'turn.done') return false
-    if (type === 'user.text' || type === 'turn.started') return true
+    const event = events[i]
+    if (event?.type === 'turn.done') done.add(event.turnId)
+    if (event?.type === 'user.text' || event?.type === 'turn.started') return !done.has(event.turnId)
   }
   return false
 }

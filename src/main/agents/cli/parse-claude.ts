@@ -235,6 +235,27 @@ function taskEvents(record: Rec, turnId: string, state: ClaudeParseState): Agent
 
 type StopReason = Extract<AgentEvent, { type: 'turn.done' }>['stopReason']
 
+export function claudeUsage(
+  usage: Rec,
+  turnId: string,
+  outputReported = true
+): Extract<AgentEvent, { type: 'usage' }> | undefined {
+  const input = num(usage, 'input_tokens')
+  const output = num(usage, 'output_tokens')
+  if (input === undefined || (outputReported && output === undefined)) return
+  const read = num(usage, 'cache_read_input_tokens')
+  const write = num(usage, 'cache_creation_input_tokens')
+  return {
+    type: 'usage',
+    turnId,
+    scope: 'turn',
+    inputTokens: input + (read ?? 0) + (write ?? 0),
+    ...(outputReported ? { outputTokens: output } : {}),
+    ...(read === undefined ? {} : { cacheReadInputTokens: read }),
+    ...(write === undefined ? {} : { cacheWriteInputTokens: write })
+  }
+}
+
 const RESULT_STOP: Record<string, StopReason> = {
   success: 'end',
   error_max_turns: 'limit',
@@ -258,12 +279,8 @@ function resultEvents(record: Rec, turnId: string): AgentEvent[] {
       retryable: false
     })
   }
-  events.push({
-    type: 'usage',
-    turnId,
-    inputTokens: num(usage, 'input_tokens') ?? 0,
-    outputTokens: num(usage, 'output_tokens') ?? 0
-  })
+  const measured = claudeUsage(usage, turnId)
+  if (measured !== undefined) events.push(measured)
   events.push({ type: 'turn.done', turnId, stopReason })
   return events
 }

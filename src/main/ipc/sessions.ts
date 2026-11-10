@@ -1,5 +1,6 @@
 import { handle, type IpcDeps } from './handle'
 import {
+  answerQuestion,
   cancelTurn,
   closedSessions,
   closeSessionRow,
@@ -10,6 +11,7 @@ import {
   reopenSession,
   sendNow,
   sendTurn,
+  steerTurn,
   sessionEvents,
   sessionQueue
 } from '../sessions/service'
@@ -20,6 +22,10 @@ export function registerSessionsIpc(deps: IpcDeps): void {
   handle('sessions:send', ({ sessionId, text, attachments }) =>
     sendTurn(deps.db, sessionId, text, attachments, [deps.dataRoot])
   )
+  handle('sessions:steer', ({ sessionId, text, attachments }) =>
+    steerTurn(deps.db, sessionId, text, attachments, [deps.dataRoot])
+  )
+  handle('sessions:answerQuestion', ({ sessionId, answer }) => answerQuestion(deps.db, sessionId, answer))
   handle('sessions:sendNow', ({ sessionId, text, attachments }) =>
     sendNow(deps.db, sessionId, text, attachments, [deps.dataRoot])
   )

@@ -39,6 +39,11 @@ export function tryParseRecord(line: string): Rec | undefined {
   }
 }
 
-export function errorEvent(turnId: string, code: string, message: string, retryable: boolean): AgentEvent {
-  return { type: 'error', turnId, code, message, retryable }
+export function errorEvent(
+  turnId: string | undefined,
+  code: string,
+  message: string,
+  retryable: boolean
+): AgentEvent {
+  return { type: 'error', ...(turnId === undefined ? {} : { turnId }), code, message, retryable }
 }

@@ -21,6 +21,11 @@ export interface ModalFlags {
 
 export { MAX_ATTACHMENTS }
 
+export interface QuestionDraft {
+  selected: Record<string, string[]>
+  text: Record<string, string>
+}
+
 const CLOSED: ModalFlags = { addWorkspaceFor: null, projectMenu: false }
 
 interface UiState {
@@ -36,6 +41,9 @@ interface UiState {
    */
   draftBySession: Record<string, string>
   saveComposeDraft(key: string, text: string): void
+  /** Unsubmitted choices survive tab switches; never written to disk. */
+  questionDrafts: Record<string, QuestionDraft>
+  saveQuestionDraft(key: string, draft: QuestionDraft | null): void
   /**
    * Files to inline with the next send, keyed by session id: workspace-relative or absolute
    * paths. Draft state like draftBySession: per session, never persisted.
@@ -85,6 +93,14 @@ export const useUi = create<UiState>((set, get) => ({
   draft: null,
   setDraft: (draft) => set({ draft }),
   draftBySession: {},
+  questionDrafts: {},
+  saveQuestionDraft: (key, draft) =>
+    set((state) => {
+      const questionDrafts = { ...state.questionDrafts }
+      if (draft === null) delete questionDrafts[key]
+      else questionDrafts[key] = draft
+      return { questionDrafts }
+    }),
   saveComposeDraft: (key, text) =>
     set((s) => {
       if ((s.draftBySession[key] ?? '') === text) return s

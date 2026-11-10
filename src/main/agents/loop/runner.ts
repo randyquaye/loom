@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { AuthStatus, ModelDescriptor, SessionOpts } from '../../../shared/models'
+import type { AuthStatus, ModelDescriptor, PromptImage, SessionOpts } from '../../../shared/models'
 import type { AgentBackend, NormalizedTool, RunningSession } from '../types'
 import {
   buildGeminiRequest,
@@ -18,6 +18,7 @@ import {
 import { cleanTitle, titleInstruction } from '../../sessions/title'
 import { toolRunners, type ToolCtx } from './tools'
 import { createEventQueue } from '../queue'
+import { addUsageCounts, type UsageCounts } from '../../../shared/usage'
 
 const MAX_TURNS = 25
 const TITLE_TIMEOUT_MS = 8000
@@ -96,9 +97,34 @@ async function loopTitle(
 
 type LoopBackendId = 'gemini' | 'qwen'
 
-function appendUser(history: unknown[], backend: LoopBackendId, text: string): void {
-  if (backend === 'qwen') history.push({ role: 'user', content: text })
-  else history.push({ role: 'user', parts: [{ text }] })
+function appendUser(
+  history: unknown[],
+  backend: LoopBackendId,
+  text: string,
+  images: PromptImage[] = []
+): void {
+  if (backend === 'qwen')
+    history.push({
+      role: 'user',
+      content:
+        images.length === 0
+          ? text
+          : [
+              { type: 'text', text },
+              ...images.map((image) => ({
+                type: 'image_url',
+                image_url: { url: `data:${image.mimeType};base64,${image.data}` }
+              }))
+            ]
+    })
+  else
+    history.push({
+      role: 'user',
+      parts: [
+        { text },
+        ...images.map((image) => ({ inlineData: { mimeType: image.mimeType, data: image.data } }))
+      ]
+    })
 }
 
 function appendAssistant(
@@ -157,7 +183,11 @@ export function createLoopBackend(backend: LoopBackendId, deps: LoopDeps): Agent
         : { state: 'ready' }
     },
     async listModels(): Promise<ModelDescriptor[]> {
-      return backend === 'qwen' ? QWEN_MODELS : GEMINI_MODELS
+      return (backend === 'qwen' ? QWEN_MODELS : GEMINI_MODELS).map((model) => ({
+        ...model,
+        supportsSteering: true,
+        supportsImages: backend === 'gemini'
+      }))
     },
     async title(prompt: string, model: string): Promise<string | null> {
       return loopTitle(backend, deps, fetchImpl, prompt, model)
@@ -170,9 +200,21 @@ export function createLoopBackend(backend: LoopBackendId, deps: LoopDeps): Agent
       if (backend === 'qwen') history.push({ role: 'system', content: opts.systemPromptAppend })
       let current: AbortController | null = null
       let cancelled = false
+      let closed = false
+      let running: Promise<void> | undefined
+      let currentTurnId: string | undefined
+      const guidance: { text: string; images: PromptImage[] }[] = []
 
-      async function runTurn(userText: string): Promise<void> {
+      function flushGuidance(): boolean {
+        const pending = guidance.splice(0)
+        for (const { text, images } of pending) appendUser(history, backend, text, images)
+        return pending.length > 0
+      }
+
+      async function runTurn(userText: string, images: PromptImage[]): Promise<void> {
         const turnId = randomUUID()
+        currentTurnId = turnId
+        let usage: UsageCounts = { inputTokens: 0, outputTokens: 0 }
         // Per-turn controller: cancelling one turn must not poison later turns.
         const controller = new AbortController()
         current = controller
@@ -190,9 +232,13 @@ export function createLoopBackend(backend: LoopBackendId, deps: LoopDeps): Agent
           return
         }
         queue.push({ type: 'turn.started', turnId, at: Date.now() })
-        appendUser(history, backend, userText)
+        appendUser(history, backend, userText, images)
 
         for (let step = 0; step < MAX_TURNS; step++) {
+          if (cancelled) {
+            queue.push({ type: 'turn.done', turnId, stopReason: 'cancelled' })
+            return
+          }
           const parser = backend === 'qwen' ? new OpenAiStreamParser(turnId) : new GeminiStreamParser(turnId)
           const request =
             backend === 'qwen'
@@ -228,8 +274,23 @@ export function createLoopBackend(backend: LoopBackendId, deps: LoopDeps): Agent
             backend === 'qwen'
               ? streamOpenAi(res, parser as OpenAiStreamParser)
               : streamGemini(res, parser as GeminiStreamParser)
+          let requestUsage: UsageCounts | undefined
           try {
-            for await (const event of stream) queue.push(event)
+            for await (const event of stream) {
+              if (event.type === 'usage') {
+                requestUsage = {
+                  ...event,
+                  cacheReadInputTokens: event.cacheReadInputTokens ?? requestUsage?.cacheReadInputTokens,
+                  cacheWriteInputTokens: event.cacheWriteInputTokens ?? requestUsage?.cacheWriteInputTokens
+                }
+                queue.push({
+                  ...event,
+                  ...addUsageCounts(usage, requestUsage),
+                  scope: 'turn',
+                  contextTokens: requestUsage.inputTokens
+                })
+              } else queue.push(event)
+            }
           } catch (error) {
             // A stream that throws mid-iteration must still close its turn, or
             // the renderer waits forever for a terminal event.
@@ -241,6 +302,7 @@ export function createLoopBackend(backend: LoopBackendId, deps: LoopDeps): Agent
             }
             return
           }
+          if (requestUsage !== undefined) usage = addUsageCounts(usage, requestUsage)
 
           const accumulated = parser.accumulatedText()
           if (accumulated !== '') queue.push({ type: 'text.done', turnId, text: accumulated })
@@ -251,13 +313,9 @@ export function createLoopBackend(backend: LoopBackendId, deps: LoopDeps): Agent
               : (parser as GeminiStreamParser).pendingTools()
 
           appendAssistant(history, backend, parser.accumulatedText(), tools)
-          if (tools.length === 0) {
-            queue.push({ type: 'turn.done', turnId, stopReason: 'end' })
-            return
-          }
-
           const ctx: ToolCtx = { worktreePath: opts.worktreePath, signal: controller.signal }
           for (const tc of tools) {
+            if (cancelled) break
             let result
             try {
               result = await toolRunners[tc.name](tc.args, ctx)
@@ -267,21 +325,47 @@ export function createLoopBackend(backend: LoopBackendId, deps: LoopDeps): Agent
             queue.push({ type: 'tool.result', turnId, callId: tc.id, ok: result.ok, output: result.output })
             appendToolResult(history, backend, tc, result.output)
           }
+          const guided = flushGuidance()
+          if (tools.length === 0 && !guided) {
+            queue.push({ type: 'turn.done', turnId, stopReason: cancelled ? 'cancelled' : 'end' })
+            return
+          }
         }
         queue.push({ type: 'turn.done', turnId, stopReason: 'limit' })
       }
 
       return {
-        async send(text: string): Promise<void> {
-          await runTurn(text)
+        async send(text: string, images: PromptImage[] = []): Promise<void> {
+          if (closed || running !== undefined)
+            throw new Error('Session is closed or a turn is already running')
+          const work = runTurn(text, images).finally(() => {
+            flushGuidance()
+            current = null
+            currentTurnId = undefined
+          })
+          running = work
+          try {
+            await work
+          } finally {
+            if (running === work) running = undefined
+          }
+        },
+        async steer(text: string, images: PromptImage[] = []): Promise<void> {
+          if (closed || currentTurnId === undefined || cancelled)
+            throw new Error('There is no active turn to steer')
+          guidance.push({ text, images })
+          queue.push({ type: 'user.steer', turnId: currentTurnId, text })
         },
         async cancel(): Promise<void> {
           cancelled = true
           current?.abort()
+          await running
         },
         async close(): Promise<void> {
+          closed = true
           cancelled = true
           current?.abort()
+          await running
           queue.end()
         },
         providerSessionId: () => undefined,

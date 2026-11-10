@@ -11,16 +11,16 @@ function isUsage(event: AgentEvent): event is UsageEvent {
 }
 
 /**
- * Per-turn context tokens for the meter. codex reports cumulative thread
- * totals in its usage events, so its per-turn context is the delta between
- * consecutive events; with a single event there is nothing to delta against
- * and the donut stays hidden rather than showing a meaningless total.
+ * Prefer the latest request's footprint. Legacy Codex events reported thread
+ * totals, so older transcripts still use their consecutive-event delta.
  */
 function contextTokens(events: AgentEvent[] | undefined, backend: SessionRow['backend']): number | null {
   if (events === undefined) return null
   const usages = events.filter(isUsage)
   const last = usages[usages.length - 1]
   if (last === undefined) return null
+  if (last.contextTokens !== undefined) return last.contextTokens
+  if (last.scope === 'turn') return null
   if (backend !== 'codex') return last.inputTokens
   const prev = usages[usages.length - 2]
   if (prev === undefined || last.inputTokens < prev.inputTokens) return null

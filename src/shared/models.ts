@@ -38,6 +38,8 @@ export interface ModelDescriptor {
   id: string
   label: string
   efforts: Effort[]
+  supportsSteering?: boolean
+  supportsImages?: boolean
 }
 
 export interface SessionOpts {
@@ -51,6 +53,13 @@ export interface SessionOpts {
   env?: Record<string, string> | undefined
   /** Local plugin dir (the bundled Loom skill) for CLIs that accept --plugin-dir. */
   pluginDir?: string | undefined
+}
+
+/** Image bytes captured when a prompt is accepted; queued turns do not reread the path. */
+export interface PromptImage {
+  label: string
+  mimeType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+  data: string
 }
 
 export type AuthStatus =

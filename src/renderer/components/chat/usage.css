@@ -1,0 +1,28 @@
+.chat-usage-popup {
+  display: none;
+  top: auto;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 180px;
+  color: var(--text);
+  pointer-events: none;
+}
+.chat-usage-trigger:hover .chat-usage-popup,
+.chat-usage-trigger:focus .chat-usage-popup {
+  display: block;
+}
+.chat-usage-popup dl {
+  margin: var(--s-2) 0 0;
+}
+.chat-usage-popup dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-4);
+}
+.chat-usage-popup dt {
+  color: var(--text-muted);
+}
+.chat-usage-popup dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}

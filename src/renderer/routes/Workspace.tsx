@@ -249,6 +249,7 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
           <>
             {!voiceStage && (
               <MessageList
+                sessionId={activeId || undefined}
                 events={events}
                 onFileOpen={(path, line) => void openAt(workspaceId, path, line)}
                 onPrompt={(text) => useUi.getState().setDraft(text)}

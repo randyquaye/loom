@@ -112,12 +112,20 @@ export class GeminiStreamParser {
         }
       }
       const usage = obj.usageMetadata as Record<string, unknown> | undefined
-      if (usage !== undefined) {
+      if (
+        usage !== undefined &&
+        typeof usage.promptTokenCount === 'number' &&
+        typeof usage.candidatesTokenCount === 'number'
+      ) {
         yield {
           type: 'usage',
           turnId: this.turnId,
-          inputTokens: (usage.promptTokenCount as number) ?? 0,
-          outputTokens: (usage.candidatesTokenCount as number) ?? 0
+          inputTokens: usage.promptTokenCount,
+          outputTokens:
+            usage.candidatesTokenCount +
+            (typeof usage.thoughtsTokenCount === 'number' ? usage.thoughtsTokenCount : 0),
+          cacheReadInputTokens:
+            typeof usage.cachedContentTokenCount === 'number' ? usage.cachedContentTokenCount : undefined
         }
       }
       const finish = candidate?.finishReason as string | undefined
@@ -153,6 +161,5 @@ export async function* streamGemini(res: Response, parser: GeminiStreamParser): 
   if (res.body === null) return
   for await (const payload of ssePayloads(bodyChunks(res.body))) {
     yield* parser.push(payload)
-    if (parser.done) return
   }
 }

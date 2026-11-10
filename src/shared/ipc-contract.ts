@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { AgentEvent } from './events'
+import { questionAnswer, type AgentEvent, type QuestionAnswer } from './events'
 import { MAX_ATTACHMENTS } from './limits'
 import { EFFORTS } from './models'
 import type { AuthStatus, BackendId, Effort, ModelDescriptor } from './models'
@@ -290,6 +290,8 @@ export interface IpcContract {
   'sessions:list': { in: { workspaceId: string }; out: SessionRow[] }
   'sessions:create': { in: SessionCreateInput; out: SessionRow }
   'sessions:send': { in: { sessionId: string; text: string; attachments: string[] }; out: void }
+  'sessions:steer': { in: { sessionId: string; text: string; attachments: string[] }; out: void }
+  'sessions:answerQuestion': { in: { sessionId: string; answer: QuestionAnswer }; out: void }
   'sessions:sendNow': { in: { sessionId: string; text: string; attachments: string[] }; out: void }
   'sessions:cancel': { in: { sessionId: string }; out: void }
   'sessions:events': { in: { sessionId: string }; out: AgentEvent[] }
@@ -329,6 +331,12 @@ export interface IpcContract {
 
 const id = z.string().min(1).max(64)
 const attachPaths = z.array(z.string().min(1).max(4096)).max(MAX_ATTACHMENTS).default([])
+const promptInput = z
+  .object({ sessionId: id, text: z.string().max(200000), attachments: attachPaths })
+  .refine(
+    (input) => input.text.trim().length > 0 || input.attachments.length > 0,
+    'Add a message or an attachment'
+  )
 
 const nullableId = z.string().min(1).max(64).nullable()
 const relPath = z
@@ -430,12 +438,10 @@ export const ipcSchemas = {
     effort,
     title: z.string().min(1).max(128)
   }),
-  'sessions:send': z.object({ sessionId: id, text: z.string().min(1).max(200000), attachments: attachPaths }),
-  'sessions:sendNow': z.object({
-    sessionId: id,
-    text: z.string().min(1).max(200000),
-    attachments: attachPaths
-  }),
+  'sessions:send': promptInput,
+  'sessions:steer': promptInput,
+  'sessions:answerQuestion': z.object({ sessionId: id, answer: questionAnswer }),
+  'sessions:sendNow': promptInput,
   'sessions:cancel': z.object({ sessionId: id }),
   'sessions:events': z.object({ sessionId: id }),
   'sessions:exportMarkdown': z.object({ sessionId: id }),
@@ -611,6 +617,8 @@ export interface LoomApi {
     list(workspaceId: string): Promise<SessionRow[]>
     create(input: SessionCreateInput): Promise<SessionRow>
     send(sessionId: string, text: string, attachments?: string[]): Promise<void>
+    steer(sessionId: string, text: string, attachments?: string[]): Promise<void>
+    answerQuestion(sessionId: string, answer: QuestionAnswer): Promise<void>
     sendNow(sessionId: string, text: string, attachments?: string[]): Promise<void>
     cancel(sessionId: string): Promise<void>
     events(sessionId: string): Promise<AgentEvent[]>
@@ -628,6 +636,8 @@ export interface LoomApi {
     remove(id: string): Promise<void>
   }
   files: {
+    /** Local preload operation; DOM File objects never cross main-process IPC. */
+    pathsForFiles(files: File[]): string[]
     tree(workspaceId: string): Promise<FileNode[]>
     listDir(workspaceId: string, path: string): Promise<FileNode[]>
     read(workspaceId: string, path: string): Promise<{ text: string; language: string }>

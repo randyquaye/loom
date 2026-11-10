@@ -2,7 +2,9 @@ import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'reac
 import type { AgentEvent, FilePatch } from '../../../shared/events'
 import { isTurnRunning } from '../../state/sessions'
 import { deriveBlocks, type Block } from '../../../shared/blocks'
+import { usageByTurn } from '../../../shared/usage'
 import { ChatEmptyState } from './ChatEmptyState'
+import { QuestionCard } from './QuestionCard'
 import {
   AssistantText,
   ErrorRow,
@@ -45,10 +47,12 @@ function sideData(events: AgentEvent[], blocks: Block[]) {
 }
 
 export function MessageList({
+  sessionId,
   events,
   onFileOpen,
   onPrompt
 }: {
+  sessionId?: string | undefined
   events: AgentEvent[]
   onFileOpen?: FileOpen
   onPrompt?: (text: string) => void
@@ -56,8 +60,15 @@ export function MessageList({
   observe(events)
   const blocks = useMemo(() => deriveBlocks(events), [events])
   const segments = useMemo(() => groupTurns(blocks), [blocks])
+  const lastSegmentByTurn = useMemo(() => {
+    const result = new Map<string, AssistantTurn>()
+    for (const segment of segments)
+      if (segment.kind === 'turn' && segment.turnId !== undefined) result.set(segment.turnId, segment)
+    return result
+  }, [segments])
   const side = useMemo(() => sideData(events, blocks), [events, blocks])
   const times = useMemo(() => timeline(events), [events])
+  const usage = useMemo(() => usageByTurn(events), [events])
   const running = isTurnRunning(events)
 
   // Per-turn open overrides, keyed with the running flag so a turn re-collapses on turn.done.
@@ -99,7 +110,19 @@ export function MessageList({
 
   const renderItem = (block: Block, live: boolean, streaming: boolean): ReactNode => {
     switch (block.kind) {
+      case 'question':
+        return (
+          <QuestionCard
+            key={block.id}
+            request={block.request}
+            sessionId={sessionId}
+            answers={block.answers}
+            followUp={times.done.has(block.turnId) && !block.request.blocking}
+            disabled={block.resolved || (times.done.has(block.turnId) && block.request.blocking)}
+          />
+        )
       case 'text':
+        if (block.text === '') return null
         return (
           <AssistantText key={block.id} text={block.text} streaming={streaming} onFileOpen={onFileOpen} />
         )
@@ -117,6 +140,8 @@ export function MessageList({
   }
 
   const renderTurn = (turn: AssistantTurn): ReactNode => {
+    const activity = turn.items.filter((block) => block.kind !== 'question')
+    const questions = turn.items.filter((block) => block.kind === 'question')
     const live = turn === liveTurn
     const grouped = turn.toolCount + turn.messageCount + turn.subagentCount > 0
     const overrideKey = `${turn.key}:${live ? 'live' : 'done'}`
@@ -136,16 +161,21 @@ export function MessageList({
             />
             {open && (
               <div className="chat-group-body chat-reveal">
-                {turn.items.map((block) => renderItem(block, live, block.id === streamingId))}
+                {activity.map((block) => renderItem(block, live, block.id === streamingId))}
               </div>
             )}
           </div>
         ) : (
-          turn.items.map((block) => renderItem(block, live, block.id === streamingId))
+          activity.map((block) => renderItem(block, live, block.id === streamingId))
         )}
+        {questions.map((block) => renderItem(block, live, false))}
         {turn.final !== undefined && renderItem(turn.final, live, turn.final.id === streamingId)}
-        {!live && turn.final !== undefined && (
-          <TurnMeta label={metaLabel(timing)} copyText={turn.final.text} />
+        {!live && (turn.turnId === undefined || lastSegmentByTurn.get(turn.turnId) === turn) && (
+          <TurnMeta
+            label={metaLabel(timing)}
+            copyText={turn.final?.text || undefined}
+            usage={usage.get(turn.turnId ?? '')}
+          />
         )}
       </section>
     )

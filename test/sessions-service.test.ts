@@ -3,14 +3,17 @@ import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
-import { afterAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { openDb } from '../src/main/db'
 import { getBackend, registerBackend } from '../src/main/agents/registry'
 import type { AgentBackend, RunningSession } from '../src/main/agents/types'
+import { createEventQueue } from '../src/main/agents/queue'
 import { setEnvSecretStore } from '../src/main/env/vars'
 import { writeInstructions } from '../src/main/instructions/files'
 import { aesGcmCipher, createSecretStore } from '../src/main/secrets'
 import {
+  answerQuestion,
+  steerTurn,
   cancelTurn,
   closedSessions,
   closeSessionRow,
@@ -64,10 +67,12 @@ function fakeBackend(
   sent: string[]
   cancelled: { value: boolean }
   opts: SessionOpts[]
+  sessions: RunningSession[]
 } {
   const sent: string[] = []
   const cancelled = { value: false }
   const opts: SessionOpts[] = []
+  const sessions: RunningSession[] = []
   const backend: AgentBackend = {
     id,
     kind: 'loop',
@@ -76,7 +81,7 @@ function fakeBackend(
     title: async () => title,
     startSession: async (options): Promise<RunningSession> => {
       opts.push(options)
-      return {
+      const session: RunningSession = {
         send: async (text) => {
           sent.push(text)
         },
@@ -89,10 +94,12 @@ function fakeBackend(
           if (hang) await new Promise(() => {})
         })()
       }
+      sessions.push(session)
+      return session
     }
   }
   registerBackend(backend)
-  return { sent, cancelled, opts }
+  return { sent, cancelled, opts, sessions }
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {
@@ -103,6 +110,257 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 describe('session service', () => {
+  it('submits late nonblocking answers as explicit follow-ups without storing secret values', async () => {
+    const db = seedWorkspace()
+    const script: AgentEvent[] = [
+      {
+        type: 'question.requested',
+        requestId: 'async',
+        turnId: 't',
+        blocking: false,
+        questions: [
+          { id: 'token', header: 'Credentials', question: 'Which token?', isSecret: true, isOther: false }
+        ]
+      },
+      { type: 'turn.done', turnId: 't', stopReason: 'end' }
+    ]
+    const h = fakeBackend(script)
+    const session = createSession(db, {
+      workspaceId: 'w1',
+      backend: 'qwen',
+      model: 'qwen3-max',
+      effort: 'medium',
+      title: 'answers'
+    })
+    try {
+      await sendTurn(db, session.id, 'first')
+      await new Promise((resolve) => setImmediate(resolve))
+      script.length = 0
+      await answerQuestion(db, session.id, {
+        requestId: 'async',
+        answers: { token: ['private-token-value'] }
+      })
+      await vi.waitFor(() => expect(h.sent).toHaveLength(2))
+      expect(h.sent[1]).toContain('Which token?\nAnswer: private-token-value')
+      expect(JSON.stringify(sessionEvents(db, session.id))).not.toContain('private-token-value')
+      expect(sessionEvents(db, session.id)).toContainEqual(
+        expect.objectContaining({
+          type: 'question.answered',
+          requestId: 'async',
+          answers: { token: ['[hidden]'] }
+        })
+      )
+    } finally {
+      closeSessionRow(db, session.id)
+    }
+  })
+  it.each(['close', 'cancel'])('does not revive a %s startup or replace its successor', async (action) => {
+    const db = seedWorkspace()
+    const h = fakeBackend([], true)
+    const backend = getBackend('qwen')!
+    const start = backend.startSession.bind(backend)
+    let release!: () => void
+    backend.startSession = async (opts) => {
+      const session = await start(opts)
+      if (h.sessions.length === 1)
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+      return session
+    }
+    const session = createSession(db, {
+      workspaceId: 'w1',
+      backend: 'qwen',
+      model: 'qwen3-max',
+      effort: 'medium',
+      title: 'startup'
+    })
+    const first = sendTurn(db, session.id, 'old')
+    try {
+      await vi.waitFor(() => expect(h.sessions).toHaveLength(1))
+      if (action === 'close') {
+        closeSessionRow(db, session.id)
+        reopenSession(db, session.id)
+      } else await cancelTurn(db, session.id)
+      await sendTurn(db, session.id, 'new')
+      release()
+      await first
+      expect(h.sent).toEqual(['new'])
+    } finally {
+      release?.()
+      await first
+      closeSessionRow(db, session.id)
+    }
+  })
+  it('steers the live turn without consuming queued messages or cancelling work', async () => {
+    const db = seedWorkspace()
+    const h = fakeBackend([], true)
+    const session = createSession(db, {
+      workspaceId: 'w1',
+      backend: 'qwen',
+      model: 'qwen3-max',
+      effort: 'medium',
+      title: 'steer'
+    })
+    try {
+      await sendTurn(db, session.id, 'first')
+      await sendTurn(db, session.id, 'queued')
+      const steer = vi.fn<NonNullable<RunningSession['steer']>>().mockResolvedValue(undefined)
+      h.sessions[0]!.steer = steer
+      await steerTurn(db, session.id, 'guidance')
+      expect(steer).toHaveBeenCalledExactlyOnceWith('guidance')
+      expect(h.sent).toEqual(['first'])
+      expect(h.cancelled.value).toBe(false)
+      expect(sessionQueue(session.id)).toEqual(['queued'])
+    } finally {
+      closeSessionRow(db, session.id)
+    }
+    await expect(steerTurn(db, session.id, 'late')).rejects.toThrow()
+  })
+  it('does not let a retired connection settle a reopened turn', async () => {
+    const db = seedWorkspace()
+    const h = fakeBackend([], true)
+    const backend = getBackend('qwen')!
+    const start = backend.startSession.bind(backend)
+    const streams = [createEventQueue(), createEventQueue()]
+    backend.startSession = async (opts) => {
+      const session = await start(opts)
+      session.events = streams[h.sessions.length - 1]!.iterable
+      return session
+    }
+    const row = createSession(db, {
+      workspaceId: 'w1',
+      backend: 'qwen',
+      model: 'qwen3-max',
+      effort: 'medium',
+      title: 'reopened'
+    })
+    try {
+      await sendTurn(db, row.id, 'old')
+      streams[0]!.push({ type: 'turn.started', turnId: 'old', at: 1 })
+      closeSessionRow(db, row.id)
+      reopenSession(db, row.id)
+      await sendTurn(db, row.id, 'new')
+      streams[1]!.push({ type: 'turn.started', turnId: 'new', at: 2 })
+      streams[0]!.push({ type: 'turn.done', turnId: 'old', stopReason: 'cancelled' })
+      streams[0]!.end()
+      await new Promise((resolve) => setImmediate(resolve))
+      await sendTurn(db, row.id, 'queued')
+      expect(h.sent).toEqual(['old', 'new'])
+      expect(sessionQueue(row.id)).toEqual(['queued'])
+    } finally {
+      streams.forEach((stream) => stream.end())
+      closeSessionRow(db, row.id)
+    }
+  })
+  it('keeps attachment preparation from letting a later plain prompt overtake the first', async () => {
+    const db = seedWorkspace()
+    const root = mkdtempSync(path.join(tmpdir(), 'loom-order-'))
+    writeFileSync(path.join(root, 'notes.txt'), 'attached')
+    db.prepare('UPDATE workspaces SET worktree_path = ? WHERE id = ?').run(root, 'w1')
+    const h = fakeBackend([], true)
+    const session = createSession(db, {
+      workspaceId: 'w1',
+      backend: 'qwen',
+      model: 'qwen3-max',
+      effort: 'medium',
+      title: 'ordered'
+    })
+    try {
+      await Promise.all([
+        sendTurn(db, session.id, 'first', ['notes.txt']),
+        sendTurn(db, session.id, 'second')
+      ])
+      expect(h.sent).toHaveLength(1)
+      expect(h.sent[0]).toMatch(/first$/)
+      expect(sessionQueue(session.id)).toEqual(['second'])
+    } finally {
+      closeSessionRow(db, session.id)
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+  it('replaces a failed connection without discarding messages queued behind it', async () => {
+    const db = seedWorkspace()
+    const h = fakeBackend([], true)
+    const events = createEventQueue()
+    const backend = getBackend('qwen')!
+    const start = backend.startSession.bind(backend)
+    backend.startSession = async (opts) => {
+      const session = await start(opts)
+      if (h.sessions.length === 1) session.events = events.iterable
+      return session
+    }
+    const session = createSession(db, {
+      workspaceId: 'w1',
+      backend: 'qwen',
+      model: 'qwen3-max',
+      effort: 'medium',
+      title: 'recovery'
+    })
+    try {
+      await sendTurn(db, session.id, 'first')
+      await sendTurn(db, session.id, 'queued')
+      events.push({ type: 'error', turnId: 't', code: 'connection', message: 'lost', retryable: false })
+      events.push({ type: 'turn.done', turnId: 't', stopReason: 'error' })
+      events.end()
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(sessionQueue(session.id)).toEqual(['queued'])
+      await sendTurn(db, session.id, 'retry')
+      expect(h.sessions).toHaveLength(2)
+      expect(h.sent).toEqual(['first', 'retry'])
+      expect(sessionQueue(session.id)).toEqual(['queued'])
+    } finally {
+      closeSessionRow(db, session.id)
+    }
+  })
+
+  it('answers only the selected live session without consuming its queue or recording answer text', async () => {
+    const db = seedWorkspace()
+    const h = fakeBackend([{ type: 'turn.started', turnId: 't', at: 1 }], true)
+    const create = () =>
+      createSession(db, {
+        workspaceId: 'w1',
+        backend: 'qwen',
+        model: 'qwen3-max',
+        effort: 'medium',
+        title: 'question'
+      })
+    const first = create()
+    const second = create()
+    const answer = { requestId: 'request', answers: { pick: ['selected answer'] } }
+    await expect(answerQuestion(db, first.id, answer)).rejects.toThrow()
+    await sendTurn(db, first.id, 'first')
+    await sendTurn(db, second.id, 'second')
+    await sendTurn(db, first.id, 'queued')
+    await expect(answerQuestion(db, first.id, answer)).rejects.toThrow()
+    const reply = vi
+      .fn<NonNullable<RunningSession['answerQuestion']>>()
+      .mockRejectedValueOnce(new Error('reply failed'))
+      .mockResolvedValue(undefined)
+    h.sessions[0]!.answerQuestion = reply
+    const otherReply = vi.fn<NonNullable<RunningSession['answerQuestion']>>().mockResolvedValue(undefined)
+    h.sessions[1]!.answerQuestion = otherReply
+    const before = sessionEvents(db, first.id)
+    try {
+      await answerQuestion(db, second.id, answer)
+      expect(otherReply).toHaveBeenCalledExactlyOnceWith(answer)
+      expect(reply).not.toHaveBeenCalled()
+      await expect(answerQuestion(db, first.id, answer)).rejects.toThrow('reply failed')
+      await answerQuestion(db, first.id, answer)
+      expect(reply).toHaveBeenCalledTimes(2)
+      expect(sessionQueue(first.id)).toEqual(['queued'])
+      expect(h.sent).toEqual(['first', 'second'])
+      expect(h.cancelled.value).toBe(false)
+      expect(sessionEvents(db, first.id)).toEqual(before)
+      closeSessionRow(db, first.id)
+      await expect(answerQuestion(db, first.id, answer)).rejects.toThrow()
+      expect(reply).toHaveBeenCalledTimes(2)
+    } finally {
+      closeSessionRow(db, first.id)
+      closeSessionRow(db, second.id)
+    }
+  })
+
   it('creates sessions and enforces the per-workspace cap', () => {
     const db = seedWorkspace()
     for (let i = 0; i < 5; i++) {
@@ -156,7 +414,7 @@ describe('session service', () => {
 
   it('cancels through the live session', async () => {
     const db = seedWorkspace()
-    const { cancelled } = fakeBackend([])
+    const { cancelled } = fakeBackend([], true)
     const session = createSession(db, {
       workspaceId: 'w1',
       backend: 'qwen',
@@ -168,6 +426,7 @@ describe('session service', () => {
     await cancelTurn(db, session.id)
     expect(cancelled.value).toBe(true)
     expect(getBackend('qwen')).toBeDefined()
+    closeSessionRow(db, session.id)
   })
 
   it('appends the project general prompt to the session system prompt', async () => {
@@ -319,6 +578,40 @@ function cancellableBackend(): { sent: string[]; cancelled: { value: boolean } }
 }
 
 describe('send now', () => {
+  it('preserves multiple urgent messages accepted before cancellation completes', async () => {
+    const db = seedWorkspace()
+    const h = fakeBackend([], true)
+    const backend = getBackend('qwen')!
+    const start = backend.startSession.bind(backend)
+    const stream = createEventQueue()
+    backend.startSession = async (opts) => {
+      const session = await start(opts)
+      session.events = stream.iterable
+      return session
+    }
+    const row = createSession(db, {
+      workspaceId: 'w1',
+      backend: 'qwen',
+      model: 'qwen3-max',
+      effort: 'medium',
+      title: 'urgent'
+    })
+    try {
+      await sendTurn(db, row.id, 'first')
+      await sendTurn(db, row.id, 'queued')
+      await Promise.all([sendNow(db, row.id, 'urgent one'), sendNow(db, row.id, 'urgent two')])
+      stream.push({ type: 'turn.done', turnId: 'first', stopReason: 'cancelled' })
+      await waitFor(() => h.sent.length === 2)
+      expect(h.sent).toEqual(['first', 'urgent one'])
+      stream.push({ type: 'turn.done', turnId: 'urgent one', stopReason: 'end' })
+      await waitFor(() => h.sent.length === 3)
+      expect(h.sent).toEqual(['first', 'urgent one', 'urgent two'])
+      expect(sessionQueue(row.id)).toEqual(['queued'])
+    } finally {
+      closeSessionRow(db, row.id)
+      stream.end()
+    }
+  })
   it('is a plain send when the session is idle', async () => {
     const db = seedWorkspace()
     const { sent, cancelled } = fakeBackend([

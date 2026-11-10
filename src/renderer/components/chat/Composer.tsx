@@ -7,6 +7,7 @@ import { initialChoice, useDefaults } from '../../state/defaults'
 import { useFiles } from '../../state/files'
 import { useProjects } from '../../state/projects'
 import { isTurnRunning, useSessions } from '../../state/sessions'
+import { useAttachmentDrop } from '../../hooks/useAttachmentDrop'
 import { useUi } from '../../state/ui'
 import { useTalk } from '../../audio/talk'
 import { useSpeech } from '../../audio/speechController'
@@ -129,7 +130,6 @@ function useComposeText(key: string) {
  */
 function StartComposer({ workspaceId, disabled }: { workspaceId: string; disabled: boolean }) {
   const create = useSessions((s) => s.create)
-  const send = useSessions((s) => s.send)
   const push = useToasts((s) => s.push)
   const loadout = useDefaults((s) => s.loadout)
   const modelsByBackend = useSessions((s) => s.modelsByBackend)
@@ -139,12 +139,20 @@ function StartComposer({ workspaceId, disabled }: { workspaceId: string; disable
   const [pending, setPending] = useState<Flow | 'message' | null>(null)
   const inFlight = useRef(false)
   const busy = pending !== null
+  const attachments = useUi((state) => state.attachmentsBySession[draftKey]) ?? []
+  const drop = useAttachmentDrop(draftKey, disabled || busy)
 
   const choice: Choice = picked ?? initialChoice(loadout, modelsByBackend)
   const { backend, model, effort } = choice
 
   async function submit(flow?: Flow) {
-    if (disabled || inFlight.current || model === '' || (flow === undefined && text.trim() === '')) return
+    if (
+      disabled ||
+      inFlight.current ||
+      model === '' ||
+      (flow === undefined && text.trim() === '' && attachments.length === 0)
+    )
+      return
     inFlight.current = true
     setPending(flow ?? 'message')
     let prompt = text
@@ -167,7 +175,8 @@ function StartComposer({ workspaceId, disabled }: { workspaceId: string; disable
       created = session.id
       // A flow spends its generated prompt; keep any separately typed draft for later.
       if (flow === undefined) useUi.getState().saveComposeDraft(draftKey, '')
-      await send(session.id, prompt)
+      useUi.getState().clearAttachments(draftKey)
+      await window.loom.sessions.send(session.id, prompt, attachments)
     } catch (err) {
       if (created === null) {
         push(`Could not start session: ${String(err)}`, 'err')
@@ -175,6 +184,7 @@ function StartComposer({ workspaceId, disabled }: { workspaceId: string; disable
         push(`Send failed: ${String(err)}`, 'err')
         // Hand the prompt to the session composer that replaced this one, so nothing is lost.
         useUi.getState().setDraft(prompt)
+        for (const path of attachments) useUi.getState().addAttachment(created, path)
       }
     } finally {
       inFlight.current = false
@@ -183,7 +193,7 @@ function StartComposer({ workspaceId, disabled }: { workspaceId: string; disable
   }
 
   return (
-    <div className="composer composer-start">
+    <div className="composer composer-start" {...drop.handlers} data-dropping={drop.dragging}>
       <div className="empty-state composer-start-empty">
         <WeaveMark />
         <div className="empty-title">What should we build?</div>
@@ -234,6 +244,12 @@ function StartComposer({ workspaceId, disabled }: { workspaceId: string; disable
         </div>
       </div>
       <div className="composer composer-start-input">
+        {drop.dragging && (
+          <div className="composer-drop-hint" role="status">
+            Drop text files or images
+          </div>
+        )}
+        <AttachChips sessionId={draftKey} disabled={disabled || busy} />
         <fieldset className="composer-box" disabled={disabled || busy} aria-label="Message composer">
           <textarea
             ref={ref}
@@ -258,10 +274,11 @@ function StartComposer({ workspaceId, disabled }: { workspaceId: string; disable
               }}
             />
             <span className="grow" />
+            <AttachPicker workspaceId={workspaceId} sessionId={draftKey} disabled={disabled || busy} />
             <button
               className="send-btn"
               onClick={() => void submit()}
-              disabled={disabled || busy || model === '' || text.trim() === ''}
+              disabled={disabled || busy || model === '' || (text.trim() === '' && attachments.length === 0)}
               title="Send"
               aria-label="Send"
             >
@@ -277,6 +294,8 @@ function StartComposer({ workspaceId, disabled }: { workspaceId: string; disable
 }
 
 function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled: boolean }) {
+  const drop = useAttachmentDrop(sessionId, disabled)
+  const attached = useUi((state) => state.attachmentsBySession[sessionId]) ?? []
   const cancel = useSessions((s) => s.cancel)
   const fork = useSessions((s) => s.fork)
   const session = useSessions(
@@ -428,15 +447,22 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
    * twice. A send may stay pending for the whole turn, so chips are not held until it resolves
    * (a follow-up queued meanwhile would re-send them); a failure restores both instead.
    */
-  async function deliver(interrupt: boolean) {
+  const canSteer = useSessions(
+    (s) =>
+      s.modelsByBackend[session?.backend ?? '']?.find((model) => model.id === session?.model)
+        ?.supportsSteering === true
+  )
+
+  async function deliver(mode: 'queue' | 'steer' | 'interrupt') {
     const prompt = useUi.getState().draftBySession[sessionId] ?? text
-    if (disabled || prompt.trim() === '') return
     const attachments = useUi.getState().attachmentsBySession[sessionId] ?? []
+    if (disabled || (prompt.trim() === '' && attachments.length === 0)) return
     setText('')
     useUi.getState().clearAttachments(sessionId)
     try {
       // The store's send/sendNow take no attachments; call the bridge directly.
-      if (interrupt) await window.loom.sessions.sendNow(sessionId, prompt, attachments)
+      if (mode === 'steer') await window.loom.sessions.steer(sessionId, prompt, attachments)
+      else if (mode === 'interrupt') await window.loom.sessions.sendNow(sessionId, prompt, attachments)
       else await window.loom.sessions.send(sessionId, prompt, attachments)
     } catch (err) {
       push(sendFailure(err), 'err')
@@ -450,7 +476,7 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
   }
 
   function submit() {
-    return deliver(false)
+    return deliver('queue')
   }
 
   async function sendSpoken(utterance: string, interrupt: boolean) {
@@ -465,11 +491,22 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
 
   /** Interrupts the turn in flight and sends the draft ahead of anything queued. */
   function submitNow() {
-    return deliver(true)
+    return deliver('interrupt')
   }
 
   return (
-    <div className="composer composer-session" data-voice={voiceMode} data-typing={typing}>
+    <div
+      className="composer composer-session"
+      data-voice={voiceMode}
+      data-typing={typing}
+      {...drop.handlers}
+      data-dropping={drop.dragging}
+    >
+      {drop.dragging && (
+        <div className="composer-drop-hint" role="status">
+          Drop text files or images
+        </div>
+      )}
       {voiceMode && <VoiceStage sessionId={sessionId} talk={talk} />}
       <div className="composer-queue-slot">
         <ol
@@ -526,7 +563,7 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
           onKeyDown={(e) => {
             if (e.key !== 'Enter' || e.shiftKey) return
             e.preventDefault()
-            if (e.metaKey || e.ctrlKey) void submitNow()
+            if ((e.metaKey || e.ctrlKey) && running && canSteer) void deliver('steer')
             else void submit()
           }}
         />
@@ -544,14 +581,25 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
             </>
           )}
           <span className="grow" />
+          {busy && canSteer && (
+            <button
+              type="button"
+              className="btn btn-ghost composer-tool"
+              disabled={disabled || (text.trim() === '' && attached.length === 0)}
+              title="Guide the running turn without stopping it (⌘Enter)"
+              onClick={() => void deliver('steer')}
+            >
+              Steer now
+            </button>
+          )}
           <button
             className="btn btn-ghost composer-tool composer-sendnow"
             data-visible={busy}
-            disabled={disabled || !busy || text.trim() === ''}
+            disabled={disabled || !busy || (text.trim() === '' && attached.length === 0)}
             title="Interrupt the running turn and send this message now"
             onClick={() => void submitNow()}
           >
-            Send now
+            Interrupt &amp; send
           </button>
           <button
             className="btn btn-ghost composer-tool composer-cancel"
@@ -561,7 +609,7 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
               void cancel(sessionId).catch((err: unknown) => push(`Cancel failed: ${String(err)}`, 'err'))
             }
           >
-            Cancel
+            Stop
           </button>
           <AttachPicker
             workspaceId={session?.workspaceId ?? ''}
@@ -618,9 +666,9 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
           <button
             className="send-btn"
             onClick={() => void submit()}
-            disabled={disabled || text.trim() === ''}
-            title={busy ? 'Queue message' : 'Send'}
-            aria-label={busy ? 'Queue message' : 'Send'}
+            disabled={disabled || (text.trim() === '' && attached.length === 0)}
+            title={busy ? 'Queue for the next turn (Enter)' : 'Send'}
+            aria-label={busy ? 'Queue next' : 'Send'}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true">
               <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />

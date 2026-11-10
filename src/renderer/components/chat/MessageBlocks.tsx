@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useId, useState, type ReactNode } from 'react'
+import { usageFields, type UsageEvent } from '../../../shared/usage'
 import type { FilePatch } from '../../../shared/events'
 import { renderWithFileLinks } from '../viewer/linkify'
 import { ChatMarkdown } from './ChatMarkdown'
@@ -13,6 +14,7 @@ import {
   type ToolKind
 } from './transcript'
 import './chat.css'
+import './usage.css'
 
 type FileOpen = (path: string, line?: number) => void
 
@@ -426,17 +428,55 @@ export function TurnGroupHeader({
   )
 }
 
-export function TurnMeta({ label, copyText }: { label: string | undefined; copyText: string | undefined }) {
+export function TurnMeta({
+  label,
+  copyText,
+  usage
+}: {
+  label: string | undefined
+  copyText: string | undefined
+  usage?: UsageEvent | undefined
+}) {
+  const tooltipId = useId()
   const [copied, setCopied] = useState(false)
   useEffect(() => {
     if (!copied) return
     const timer = window.setTimeout(() => setCopied(false), 1500)
     return () => window.clearTimeout(timer)
   }, [copied])
-  if (label === undefined && copyText === undefined) return null
+  if (label === undefined && copyText === undefined && usage === undefined) return null
+  const names = {
+    inputTokens: 'Input',
+    outputTokens: 'Output',
+    cacheReadInputTokens: 'Cache read',
+    cacheWriteInputTokens: 'Cache write'
+  }
   return (
     <div className="chat-meta">
-      {label !== undefined && <span>{label}</span>}
+      {(label !== undefined || usage !== undefined) && (
+        <span
+          className="popover-wrap chat-usage-trigger"
+          tabIndex={usage === undefined ? undefined : 0}
+          aria-describedby={usage === undefined ? undefined : tooltipId}
+        >
+          {label ?? 'Usage'}
+          {usage !== undefined && (
+            <span className="popover elevated chat-usage-popup" id={tooltipId} role="tooltip">
+              <strong>{usage.scope === 'thread' ? 'Thread totals' : 'Token usage'}</strong>
+              <dl>
+                {usageFields.map((field) =>
+                  usage[field] === undefined ? null : (
+                    <div key={field}>
+                      <dt>{names[field]}</dt>
+                      <dd>{usage[field].toLocaleString('en-US')}</dd>
+                    </div>
+                  )
+                )}
+              </dl>
+            </span>
+          )}
+        </span>
+      )}
       {copyText !== undefined && (
         <button
           type="button"

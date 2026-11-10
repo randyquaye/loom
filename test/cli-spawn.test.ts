@@ -172,6 +172,7 @@ describe('runCliSession terminal events', () => {
 
     const error = collector.events.find((e) => e.type === 'error')
     expect(error).toMatchObject({ type: 'error', retryable: false })
+    expect(error && 'message' in error ? error.message : '').toContain('nope-does-not-exist.jsonl')
     expect(error && 'code' in error ? error.code : '').toMatch(/^cli\.exit-\d+$/)
     expect(collector.events.at(-1)).toMatchObject({ type: 'turn.done', stopReason: 'error' })
   })

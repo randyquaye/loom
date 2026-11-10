@@ -1,7 +1,15 @@
-import type { AgentEvent } from './events'
+import type { AgentEvent, QuestionAnswer, QuestionRequest } from './events'
 
 /** turnId is the producing event's turn (additive; absent on turn-less errors), used to group a turn. */
 export type Block =
+  | {
+      kind: 'question'
+      id: string
+      turnId: string
+      request: QuestionRequest
+      resolved: boolean
+      answers?: QuestionAnswer['answers']
+    }
   | { kind: 'user'; id: string; text: string; turnId?: string }
   | { kind: 'text'; id: string; text: string; turnId?: string }
   | { kind: 'reasoning'; id: string; text: string; turnId?: string }
@@ -41,11 +49,59 @@ export function deriveBlocks(events: AgentEvent[]): Block[] {
   const reasonByTurn = new Map<string, Extract<Block, { kind: 'reasoning' }>>()
   const toolByCall = new Map<string, Extract<Block, { kind: 'tool' }>>()
   const subagentByCall = new Map<string, Extract<Block, { kind: 'subagent' }>>()
+  const questions = new Map<string, Extract<Block, { kind: 'question' }>>()
 
   for (const event of events) {
     switch (event.type) {
+      case 'turn.done': {
+        const last = blocks.at(-1)
+        // A silent/cancelled turn still owns metadata, even when guidance was its last row.
+        if (
+          last === undefined ||
+          last.kind === 'user' ||
+          (last.turnId !== undefined && last.turnId !== event.turnId)
+        ) {
+          blocks.push({
+            kind: 'text',
+            id: `text-${event.turnId}-${blocks.length}`,
+            text: '',
+            turnId: event.turnId
+          })
+        }
+        break
+      }
+      case 'question.requested': {
+        const block: Extract<Block, { kind: 'question' }> = {
+          kind: 'question',
+          id: event.requestId,
+          turnId: event.turnId,
+          request: event,
+          resolved: false
+        }
+        questions.set(event.requestId, block)
+        blocks.push(block)
+        textByTurn.delete(event.turnId)
+        break
+      }
+      case 'question.resolved': {
+        const block = questions.get(event.requestId)
+        if (block !== undefined) block.resolved = true
+        break
+      }
+      case 'question.answered': {
+        const block = questions.get(event.requestId)
+        if (block !== undefined) block.answers = event.answers
+        break
+      }
       case 'user.text':
-        blocks.push({ kind: 'user', id: `user-${event.turnId}`, text: event.text, turnId: event.turnId })
+      case 'user.steer':
+        blocks.push({
+          kind: 'user',
+          id: `user-${event.turnId}-${blocks.length}`,
+          text: event.text,
+          turnId: event.turnId
+        })
+        if (event.type === 'user.steer') textByTurn.delete(event.turnId)
         break
       case 'text.delta': {
         let block = textByTurn.get(event.turnId)

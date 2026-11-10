@@ -97,12 +97,14 @@ export class OpenAiStreamParser {
       this.toolBuf.clear()
     }
     const usage = json.usage as Record<string, unknown> | undefined
-    if (usage) {
+    if (usage && typeof usage.prompt_tokens === 'number' && typeof usage.completion_tokens === 'number') {
+      const details = usage.prompt_tokens_details as Record<string, unknown> | undefined
       yield {
         type: 'usage',
         turnId: this.turnId,
-        inputTokens: (usage.prompt_tokens as number) ?? 0,
-        outputTokens: (usage.completion_tokens as number) ?? 0
+        inputTokens: usage.prompt_tokens,
+        outputTokens: usage.completion_tokens,
+        cacheReadInputTokens: typeof details?.cached_tokens === 'number' ? details.cached_tokens : undefined
       }
     }
   }

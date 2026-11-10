@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { AgentEvent } from '../../../shared/events'
 import { createEventQueue } from '../queue'
 import type { RunningSession } from '../types'
@@ -10,6 +10,19 @@ const STDERR_LIMIT = 8192
 const UNKNOWN_TURN_ID = 'turn'
 
 const ignoreLines: LineParser = () => []
+
+/** Retains the same bounded diagnostic excerpt for every CLI transport. */
+export function captureStderr(child: Pick<ChildProcess, 'stderr'>): () => string {
+  let stderr = ''
+  const stream = child.stderr
+  if (stream) {
+    stream.setEncoding('utf8')
+    stream.on('data', (chunk: string) => {
+      if (stderr.length < STDERR_LIMIT) stderr += chunk.slice(0, STDERR_LIMIT - stderr.length)
+    })
+  }
+  return () => stderr.trim()
+}
 
 interface ChildOutcome {
   code: number | null
@@ -67,7 +80,7 @@ function finalizeOutcome(result: ChildOutcome, ctx: FinalizeCtx): void {
 }
 
 /** SIGTERM the whole process group first, SIGKILL once the grace period expires. */
-function terminateChild(child: ChildProcess): void {
+export function terminateChild(child: ChildProcess): void {
   if (child.exitCode !== null || child.signalCode !== null) return
   const pid = child.pid
   // Children are spawned detached (own process group), so cancel must signal the
@@ -102,7 +115,7 @@ function attachChild(
   push: (event: AgentEvent) => void
 ): Promise<ChildOutcome> {
   let pending = ''
-  let stderr = ''
+  const stderr = captureStderr(child)
   let spawnError: string | undefined
   let outcome: ChildOutcome | undefined
   let resolveOutcome: ((value: ChildOutcome) => void) | undefined
@@ -117,7 +130,7 @@ function attachChild(
       emitLine(pending)
       pending = ''
     }
-    outcome = { code, signal, stderr: stderr.trim(), spawnError }
+    outcome = { code, signal, stderr: stderr(), spawnError }
     resolveOutcome(outcome)
   }
 
@@ -141,14 +154,6 @@ function attachChild(
     })
   }
 
-  const stderrStream = child.stderr
-  if (stderrStream) {
-    stderrStream.setEncoding('utf8')
-    stderrStream.on('data', (chunk: string) => {
-      if (stderr.length < STDERR_LIMIT) stderr += chunk.slice(0, STDERR_LIMIT - stderr.length)
-    })
-  }
-
   child.once('error', (err: Error) => {
     spawnError = err.message
     // A failed execve may never emit 'close'; resolve anyway so callers are not stranded.
@@ -163,12 +168,12 @@ function attachChild(
   return promise
 }
 
-function spawnChild(
+export function spawnChild(
   bin: string,
   args: string[],
   cwd: string,
   extraEnv?: Record<string, string>
-): ChildProcess {
+): ChildProcessWithoutNullStreams {
   return spawn(bin, args, {
     cwd,
     // argv goes straight to execve: no shell, so no value can be re-read as shell

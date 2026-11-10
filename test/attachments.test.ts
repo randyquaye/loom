@@ -7,6 +7,7 @@ import {
   AttachmentError,
   formatAttachment,
   readAttachment,
+  readPromptAttachment,
   resolveAttachment
 } from '../src/main/sessions/attachments'
 
@@ -41,6 +42,18 @@ afterAll(async () => {
 })
 
 describe('resolveAttachment', () => {
+  it('reads supported images as captured bytes while retaining binary refusal for other files', async () => {
+    const data =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN5kAAAAASUVORK5CYII='
+    const imagePath = path.join(worktree, 'pixel.png')
+    await writeFile(imagePath, Buffer.from(data, 'base64'))
+    const captured = await readPromptAttachment(imagePath, 'pixel.png')
+    await writeFile(imagePath, Buffer.from('replacement'))
+    expect(captured).toEqual({ kind: 'image', image: { label: 'pixel.png', mimeType: 'image/png', data } })
+    await expect(readPromptAttachment(path.join(outside, 'blob.bin'), 'blob.bin')).rejects.toBeInstanceOf(
+      AttachmentError
+    )
+  })
   it('jails relative paths to the worktree', async () => {
     const resolved = await resolveAttachment(worktree, 'notes.txt')
     expect(resolved.label).toBe('notes.txt')

@@ -1,5 +1,5 @@
-import type { AgentEvent, ToolName } from '../../shared/events'
-import type { AuthStatus, BackendId, ModelDescriptor, SessionOpts } from '../../shared/models'
+import type { AgentEvent, QuestionAnswer, ToolName } from '../../shared/events'
+import type { AuthStatus, BackendId, ModelDescriptor, PromptImage, SessionOpts } from '../../shared/models'
 
 /** A tool call normalized once, identically for events and for execution. */
 export interface NormalizedTool {
@@ -10,7 +10,11 @@ export interface NormalizedTool {
 
 /** A live session: push user turns in, consume normalized events out. */
 export interface RunningSession {
-  send(text: string): Promise<void>
+  send(text: string, images?: PromptImage[]): Promise<void>
+  /** Adds guidance to the active turn; resolves when the backend accepts it. */
+  steer?(text: string, images?: PromptImage[]): Promise<void>
+  /** Answers a pending blocking question without starting another turn. */
+  answerQuestion?(answer: QuestionAnswer): Promise<void>
   cancel(): Promise<void>
   close(): Promise<void>
   events: AsyncIterable<AgentEvent>
