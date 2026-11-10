@@ -1,0 +1,9 @@
+Chime sound by jgreer
+Source: https://freesound.org/people/jgreer/sounds/333629/
+License: CC0 1.0 Universal (public domain dedication)
+License URL: https://creativecommons.org/publicdomain/zero/1.0/
+Retrieved: 2026-11-10
+
+Derived from the publicly available high-quality MP3 preview.
+Trimmed to 0.700 seconds with a fade-out over the final 0.200 seconds.
+Decoded to 16-bit PCM WAV; no pitch or playback-speed changes.

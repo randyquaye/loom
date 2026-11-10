@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { SessionActivity, SessionForkInput, SessionRow } from '../../shared/ipc-contract'
 import type { AgentEvent } from '../../shared/events'
 import type { BackendId, Effort, ModelDescriptor } from '../../shared/models'
+import { createCompletionChime } from '../audio/completion'
 
 interface SessionsState {
   activity: SessionActivity
@@ -172,6 +173,7 @@ let subscribed = false
 export function subscribeSessionEvents(): void {
   if (subscribed) return
   subscribed = true
+  const completionChime = createCompletionChime()
   const applyActivity = (activity: SessionActivity) => {
     useSessions.setState((s) => (activity.revision > s.activity.revision ? { activity } : s))
   }
@@ -182,13 +184,15 @@ export function subscribeSessionEvents(): void {
     .catch((error: unknown) => {
       console.error('Could not load session activity', error)
     })
-  window.loom.onSessionEvent(({ sessionId, event }) => {
+  window.loom.onSessionEvent((push) => {
+    const { sessionId, event } = push
     useSessions.setState((s) => ({
       eventsBySession: {
         ...s.eventsBySession,
         [sessionId]: [...(s.eventsBySession[sessionId] ?? []), event]
       }
     }))
+    completionChime(push)
   })
   // Titles arrive after the first prompt: an excerpt first, then the model's own name.
   window.loom.onSessionTitle(({ sessionId, title }) => {
