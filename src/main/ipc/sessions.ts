@@ -12,6 +12,7 @@ import {
   sendNow,
   sendTurn,
   steerTurn,
+  steerQueued,
   sessionEvents,
   sessionActivity,
   sessionQueue
@@ -27,6 +28,7 @@ export function registerSessionsIpc(deps: IpcDeps): void {
   handle('sessions:steer', ({ sessionId, text, attachments }) =>
     steerTurn(deps.db, sessionId, text, attachments, [deps.dataRoot])
   )
+  handle('sessions:steerQueued', ({ sessionId, messageId }) => steerQueued(deps.db, sessionId, messageId))
   handle('sessions:answerQuestion', ({ sessionId, answer }) => answerQuestion(deps.db, sessionId, answer))
   handle('sessions:sendNow', ({ sessionId, text, attachments }) =>
     sendNow(deps.db, sessionId, text, attachments, [deps.dataRoot])

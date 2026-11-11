@@ -13,6 +13,7 @@ import { writeInstructions } from '../src/main/instructions/files'
 import { aesGcmCipher, createSecretStore } from '../src/main/secrets'
 import {
   answerQuestion,
+  steerQueued,
   steerTurn,
   cancelTurn,
   closedSessions,
@@ -26,7 +27,7 @@ import {
   SessionLimitError,
   sessionEvents,
   sessionActivity,
-  sessionQueue,
+  sessionQueue as queuedMessages,
   setLoomDataRoot,
   setSessionSink,
   setTitleSink
@@ -34,6 +35,8 @@ import {
 import type { AgentEvent } from '../src/shared/events'
 import type { SessionEventPush } from '../src/shared/ipc-contract'
 import type { BackendId, SessionOpts } from '../src/shared/models'
+
+const sessionQueue = (sessionId: string) => queuedMessages(sessionId).map((item) => item.text)
 
 // workspaceEnv reads the env-var overlay from the secret store; tests wire a throwaway one.
 beforeEach(() => {
@@ -579,8 +582,8 @@ describe('turn queue', () => {
     await sendTurn(db, session.id, 'second')
     await sendTurn(db, session.id, 'third')
 
-    expect(dequeue(session.id, 0)).toEqual(['third'])
-    expect(dequeue(session.id, 5)).toEqual(['third'])
+    expect(dequeue(session.id, 0).map((item) => item.text)).toEqual(['third'])
+    expect(dequeue(session.id, 5).map((item) => item.text)).toEqual(['third'])
     expect(sessionQueue(session.id)).toEqual(['third'])
   })
 })
@@ -791,6 +794,75 @@ describe('attachments in turns', () => {
       title: 'New conversation'
     })
   }
+
+  it.each(['accept', 'reject'] as const)(
+    'preserves queued input when steering %s races turn completion',
+    async (outcome) => {
+      const db = seedWorkspace()
+      const dir = worktreeWith({ 'notes.txt': 'captured content' })
+      const data =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII='
+      writeFileSync(path.join(dir, 'pixel.png'), Buffer.from(data, 'base64'))
+      db.prepare('UPDATE workspaces SET worktree_path = ? WHERE id = ?').run(dir, 'w1')
+      const h = fakeBackend([], true)
+      const backend = getBackend('qwen')!
+      backend.listModels = async () => [
+        { id: 'qwen3-max', label: 'Qwen', efforts: ['medium'], supportsImages: true }
+      ]
+      const start = backend.startSession.bind(backend)
+      const stream = createEventQueue()
+      backend.startSession = async (opts) => {
+        const session = await start(opts)
+        session.events = stream.iterable
+        return session
+      }
+      const session = newSession(db)
+      let finish!: () => void
+      try {
+        await sendTurn(db, session.id, 'first')
+        await sendTurn(db, session.id, 'promote', ['notes.txt', 'pixel.png'])
+        await sendTurn(db, session.id, 'later')
+        const selected = queuedMessages(session.id)[0]!
+        rmSync(path.join(dir, 'notes.txt'))
+        rmSync(path.join(dir, 'pixel.png'))
+        const steer = vi.fn<NonNullable<RunningSession['steer']>>(
+          () =>
+            new Promise((resolve, reject) => {
+              finish = () => (outcome === 'accept' ? resolve() : reject(new Error('delivery failed')))
+            })
+        )
+        h.sessions[0]!.steer = steer
+        const result = steerQueued(db, session.id, selected.id).then(
+          () => undefined,
+          (error: unknown) => error
+        )
+        await expect(steerQueued(db, session.id, selected.id)).rejects.toThrow()
+        expect(sessionQueue(session.id)).toEqual([selected.text, 'later'])
+        expect(steer).toHaveBeenCalledExactlyOnceWith(selected.text, [
+          { label: 'pixel.png', mimeType: 'image/png', data }
+        ])
+        stream.push({ type: 'turn.done', turnId: 'first', stopReason: 'end' })
+        await vi.waitFor(() => expect(sessionActivity().bySession[session.id]).toBeUndefined())
+        expect(h.sent).toEqual(['first'])
+        finish()
+        const error = await result
+        if (outcome === 'accept') {
+          expect(error).toBeUndefined()
+          await vi.waitFor(() => expect(h.sent).toEqual(['first', 'later']))
+          expect(sessionQueue(session.id)).toEqual([])
+          await expect(steerQueued(db, session.id, selected.id)).rejects.toThrow()
+        } else {
+          expect(error).toBeInstanceOf(Error)
+          expect(sessionQueue(session.id)).toEqual([selected.text, 'later'])
+        }
+        expect(h.cancelled.value).toBe(false)
+      } finally {
+        finish?.()
+        closeSessionRow(db, session.id)
+        stream.end()
+      }
+    }
+  )
 
   it('inlines a workspace file above the message and sends the combined turn', async () => {
     const db = seedWorkspace()

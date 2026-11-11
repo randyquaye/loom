@@ -26,3 +26,10 @@
   margin: 0;
   font-variant-numeric: tabular-nums;
 }
+.chat-usage-note {
+  display: block;
+  max-width: 260px;
+  margin-top: var(--s-2);
+  color: var(--text-muted);
+  white-space: normal;
+}

@@ -64,7 +64,8 @@ export function parseCodexNotification(call: RpcCall, threadId: string): AgentEv
       return text === undefined ? [] : [{ type: 'text.done', turnId, text }]
     }
     case 'thread/tokenUsage/updated': {
-      const total = sub(sub(params, 'tokenUsage') ?? {}, 'total') ?? {}
+      const tokenUsage = sub(params, 'tokenUsage') ?? {}
+      const total = sub(tokenUsage, 'total') ?? {}
       const inputTokens = num(total, 'inputTokens')
       const outputTokens = num(total, 'outputTokens')
       if (inputTokens === undefined || outputTokens === undefined) return []
@@ -75,6 +76,7 @@ export function parseCodexNotification(call: RpcCall, threadId: string): AgentEv
           inputTokens,
           outputTokens,
           scope: 'thread',
+          contextWindowTokens: num(tokenUsage, 'modelContextWindow'),
           cacheReadInputTokens: num(total, 'cachedInputTokens'),
           cacheWriteInputTokens: num(total, 'cacheWriteInputTokens')
         }

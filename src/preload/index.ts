@@ -108,6 +108,7 @@ const api: LoomApi = {
       invoke('sessions:send', { sessionId, text, attachments: attachments ?? [] }),
     steer: (sessionId, text, attachments) =>
       invoke('sessions:steer', { sessionId, text, attachments: attachments ?? [] }),
+    steerQueued: (sessionId, messageId) => invoke('sessions:steerQueued', { sessionId, messageId }),
     answerQuestion: (sessionId, answer) => invoke('sessions:answerQuestion', { sessionId, answer }),
     sendNow: (sessionId, text, attachments) =>
       invoke('sessions:sendNow', { sessionId, text, attachments: attachments ?? [] }),

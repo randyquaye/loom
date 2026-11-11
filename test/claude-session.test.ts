@@ -103,45 +103,67 @@ describe('Claude streaming session', () => {
       await cancelling
     }
   })
-  it('retains measured request usage when the connection fails before a final result', async () => {
-    const f = await fixture()
-    try {
-      const { sending } = await f.begin()
-      const message = {
-        type: 'assistant',
-        message: {
-          id: 'request-1',
-          content: [],
-          usage: {
-            input_tokens: 10,
-            output_tokens: 2,
-            cache_read_input_tokens: 4,
-            cache_creation_input_tokens: 3
+  it.each(['connection', 'crash', 'budget'])(
+    'retains measured request usage after a %s failure',
+    async (failure) => {
+      const f = await fixture()
+      try {
+        const { sending } = await f.begin()
+        const message = {
+          type: 'assistant',
+          message: {
+            id: 'request-1',
+            content: [],
+            usage: {
+              input_tokens: 10,
+              output_tokens: 2,
+              cache_read_input_tokens: 4,
+              cache_creation_input_tokens: 3
+            }
           }
         }
+        f.emit(message)
+        f.emit(message)
+        f.emit({
+          ...message,
+          parent_tool_use_id: 'subagent',
+          message: { ...message.message, id: 'nested', usage: { input_tokens: 999, output_tokens: 999 } }
+        })
+        if (failure === 'connection') {
+          f.child.stderr.write('connection lost')
+          f.child.emit('error', new Error('connection lost'))
+        } else {
+          f.emit({
+            type: 'result',
+            subtype: failure === 'crash' ? 'error_during_execution' : 'error_max_budget_usd',
+            usage: {
+              input_tokens: failure === 'crash' ? 0 : 1,
+              output_tokens: failure === 'crash' ? 0 : 1,
+              cache_read_input_tokens: 0,
+              cache_creation_input_tokens: 0
+            }
+          })
+          f.idle()
+        }
+        await sending
+        await vi.waitFor(() => expect(f.events.some((event) => event.type === 'turn.done')).toBe(true))
+        expect(f.events.filter((event) => event.type === 'usage').at(-1)).toMatchObject({
+          inputTokens: 17,
+          cacheReadInputTokens: 4,
+          cacheWriteInputTokens: 3
+        })
+        expect(f.events.filter((event) => event.type === 'usage').at(-1)?.outputTokens).toBe(
+          failure === 'budget' ? 1 : undefined
+        )
+        expect(f.events.at(-1)).toMatchObject({
+          type: 'turn.done',
+          stopReason: failure === 'budget' ? 'limit' : 'error'
+        })
+      } finally {
+        await f.close()
       }
-      f.emit(message)
-      f.emit(message)
-      f.emit({
-        ...message,
-        parent_tool_use_id: 'subagent',
-        message: { ...message.message, id: 'nested', usage: { input_tokens: 999, output_tokens: 999 } }
-      })
-      f.child.stderr.write('connection lost')
-      f.child.emit('error', new Error('connection lost'))
-      await sending
-      await vi.waitFor(() => expect(f.events.some((event) => event.type === 'turn.done')).toBe(true))
-      expect(f.events.filter((event) => event.type === 'usage').at(-1)).toMatchObject({
-        inputTokens: 17,
-        cacheReadInputTokens: 4,
-        cacheWriteInputTokens: 3
-      })
-      expect(f.events.filter((event) => event.type === 'usage').at(-1)?.outputTokens).toBeUndefined()
-      expect(f.events.at(-1)).toMatchObject({ type: 'turn.done', stopReason: 'error' })
-    } finally {
-      await f.close()
     }
-  })
+  )
   it('preserves launch settings and delivers first-prompt images over stdin', async () => {
     const f = await fixture()
     try {

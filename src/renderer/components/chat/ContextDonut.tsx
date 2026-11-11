@@ -37,10 +37,15 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS
  */
 export function ContextDonut({ session }: { session: SessionRow }) {
   const inputTokens = useSessions((s) => contextTokens(s.eventsBySession[session.id], session.backend))
+  const reportedWindow = useSessions(
+    (s) =>
+      s.eventsBySession[session.id]?.filter(isUsage).findLast((e) => (e.contextWindowTokens ?? 0) > 0)
+        ?.contextWindowTokens
+  )
   const percent =
     inputTokens === null || inputTokens === 0
       ? null
-      : Math.round((inputTokens / contextWindowFor(session.model)) * 100)
+      : Math.round((inputTokens / (reportedWindow ?? contextWindowFor(session.model))) * 100)
   const tone = percent === null ? 'ok' : percent > 85 ? 'danger' : percent >= 60 ? 'warn' : 'ok'
   const filled = percent === null ? 0 : Math.min(100, Math.max(0, percent)) / 100
 

@@ -93,6 +93,7 @@ export function QuestionCard({
     }
   }
 
+  if (status === 'submitted' || savedAnswers !== undefined) return null
   return (
     <form className="chat-question" onSubmit={(event) => void submit(event)}>
       {request.questions.map((question) => (

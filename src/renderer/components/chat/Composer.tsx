@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import type { SessionRow } from '../../../shared/ipc-contract'
+import type { QueuedMessage, SessionRow } from '../../../shared/ipc-contract'
 import { EFFORTS, type BackendId, type Effort } from '../../../shared/models'
 import { FIX_ERRORS_PROMPT, REVIEW_DIFF_PROMPT } from '../../../shared/prompts/flows'
 import { initialChoice, useDefaults } from '../../state/defaults'
@@ -384,7 +384,7 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
     }
   }, [voiceMode, press, release, ref])
   useSpeech(sessionId)
-  const [queue, setQueue] = useState<string[]>([])
+  const [queue, setQueue] = useState<QueuedMessage[]>([])
   const [removing, setRemoving] = useState(false)
   const queueRequest = useRef({ revision: 0, removing: false, active: false })
   const busy = running
@@ -416,17 +416,20 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
     }
   }, [sessionId, push])
 
-  async function removeQueued(index: number) {
+  async function updateQueued(index: number, promote = false) {
     const request = queueRequest.current
     if (request.removing) return
     request.removing = true
     setRemoving(true)
     const revision = request.revision
     try {
-      const items = await window.loom.sessions.dequeue(sessionId, index)
+      const items = promote
+        ? await window.loom.sessions.steerQueued(sessionId, queue[index]!.id)
+        : await window.loom.sessions.dequeue(sessionId, index)
       if (request.active && request.revision === revision) setQueue(items)
     } catch (err) {
-      if (request.active) push(`Could not remove queued message: ${String(err)}`, 'err')
+      if (request.active)
+        push(`Could not ${promote ? 'steer' : 'remove'} queued message: ${String(err)}`, 'err')
     } finally {
       request.removing = false
       if (request.active) setRemoving(false)
@@ -516,18 +519,29 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
           aria-relevant="additions removals"
         >
           {queue.map((message, index) => (
-            <li className="composer-queue-chip" key={`${index}:${message}`}>
+            <li className="composer-queue-chip" key={message.id}>
               <span className="composer-queue-index">{index + 1}</span>
-              <span className="composer-queue-text" title={message}>
-                {message.replace(/\s+/g, ' ')}
+              <span className="composer-queue-text" title={message.text}>
+                {message.text.replace(/\s+/g, ' ')}
               </span>
               <span className="composer-queue-tag">queued</span>
+              {busy && canSteer && (
+                <button
+                  type="button"
+                  className="btn btn-ghost composer-queue-steer"
+                  aria-label={`Steer queued message ${index + 1} now`}
+                  disabled={disabled || removing}
+                  onClick={() => void updateQueued(index, true)}
+                >
+                  Steer now
+                </button>
+              )}
               <button
                 type="button"
                 className="composer-queue-remove"
                 aria-label={`Remove queued message ${index + 1}`}
                 disabled={disabled || removing}
-                onClick={() => void removeQueued(index)}
+                onClick={() => void updateQueued(index)}
               >
                 ×
               </button>
@@ -601,16 +615,6 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
           >
             Interrupt &amp; send
           </button>
-          <button
-            className="btn btn-ghost composer-tool composer-cancel"
-            data-visible={busy}
-            disabled={disabled || !busy}
-            onClick={() =>
-              void cancel(sessionId).catch((err: unknown) => push(`Cancel failed: ${String(err)}`, 'err'))
-            }
-          >
-            Stop
-          </button>
           <AttachPicker
             workspaceId={session?.workspaceId ?? ''}
             sessionId={sessionId}
@@ -665,13 +669,21 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
           </button>
           <button
             className="send-btn"
-            onClick={() => void submit()}
-            disabled={disabled || (text.trim() === '' && attached.length === 0)}
-            title={busy ? 'Queue for the next turn (Enter)' : 'Send'}
-            aria-label={busy ? 'Queue next' : 'Send'}
+            onClick={() =>
+              busy
+                ? void cancel(sessionId).catch((err: unknown) => push(`Cancel failed: ${String(err)}`, 'err'))
+                : void submit()
+            }
+            disabled={disabled || (!busy && text.trim() === '' && attached.length === 0)}
+            title={busy ? 'Stop turn' : 'Send'}
+            aria-label={busy ? 'Stop turn' : 'Send'}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
+              {busy ? (
+                <rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor" stroke="none" />
+              ) : (
+                <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
+              )}
             </svg>
           </button>
         </div>

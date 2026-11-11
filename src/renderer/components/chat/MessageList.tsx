@@ -111,6 +111,7 @@ export function MessageList({
   const renderItem = (block: Block, live: boolean, streaming: boolean): ReactNode => {
     switch (block.kind) {
       case 'question':
+        if (block.resolved || block.answers !== undefined) return null
         return (
           <QuestionCard
             key={block.id}

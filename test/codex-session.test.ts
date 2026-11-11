@@ -109,6 +109,7 @@ describe('Persistent Codex session', () => {
         threadId: 'thread',
         turnId: 'turn',
         tokenUsage: {
+          modelContextWindow: 475000,
           total: { inputTokens: 100, outputTokens: 20, cachedInputTokens: 30 },
           last: { inputTokens: 100, outputTokens: 20, cachedInputTokens: 30 }
         }
@@ -129,14 +130,32 @@ describe('Persistent Codex session', () => {
         }
       }
     })
+    h.receiveCall({
+      method: 'thread/tokenUsage/updated',
+      params: {
+        threadId: 'thread',
+        turnId: 'second',
+        tokenUsage: {
+          total: { inputTokens: 160, outputTokens: 25, cachedInputTokens: 40 },
+          last: { inputTokens: 0, outputTokens: 0, totalTokens: 12 }
+        }
+      }
+    })
     h.emit('turn/completed', { id: 'second', status: 'interrupted' })
     await second
     await h.session.close()
     const events: AgentEvent[] = []
     for await (const event of h.session.events) if (event.type === 'usage') events.push(event)
     expect(events).toMatchObject([
-      { scope: 'turn', inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 30 },
-      { scope: 'turn', inputTokens: 60, outputTokens: 5, cacheReadInputTokens: 10, contextTokens: 40 }
+      {
+        scope: 'turn',
+        inputTokens: 100,
+        outputTokens: 20,
+        cacheReadInputTokens: 30,
+        contextWindowTokens: 475000
+      },
+      { scope: 'turn', inputTokens: 60, outputTokens: 5, cacheReadInputTokens: 10, contextTokens: 40 },
+      { scope: 'turn', inputTokens: 60, outputTokens: 5, cacheReadInputTokens: 10, contextTokens: 12 }
     ])
   })
   it('serializes guidance in the active turn without interrupting or starting another turn', async () => {

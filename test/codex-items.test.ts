@@ -77,6 +77,7 @@ describe('Codex app-server work and usage', () => {
   it('persists cumulative token/cache totals separately from the last request', () => {
     const [event] = parse('thread/tokenUsage/updated', {
       tokenUsage: {
+        modelContextWindow: 475000,
         total: { inputTokens: 1000, outputTokens: 100, cachedInputTokens: 800, cacheWriteInputTokens: 20 },
         last: { inputTokens: 50, outputTokens: 10, cachedInputTokens: 40 }
       }
@@ -87,6 +88,7 @@ describe('Codex app-server work and usage', () => {
       inputTokens: 1000,
       outputTokens: 100,
       scope: 'thread',
+      contextWindowTokens: 475000,
       cacheReadInputTokens: 800,
       cacheWriteInputTokens: 20
     })
