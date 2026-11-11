@@ -14,8 +14,6 @@ async function excludeFilePath(repoPath: string): Promise<string> {
   return path.resolve(repoPath, commonDir, 'info', 'exclude')
 }
 
-const AGENTS_ENTRY = '/AGENTS.md'
-
 function hasLine(contents: string, entry: string): boolean {
   return contents.split('\n').some((line) => line.trim() === entry)
 }
@@ -59,21 +57,4 @@ export function ensureContextIgnored(repoPath: string): Promise<void> {
   return editExclude(repoPath, (current) =>
     hasLine(current, EXCLUDE_ENTRY) ? null : withLine(current, EXCLUDE_ENTRY)
   )
-}
-
-/**
- * The root AGENTS.md Loom writes for codex is untracked litter unless excluded, but an
- * exclude line would also hide a user's own untracked AGENTS.md — so the line rides only
- * while Loom owns the file, and is withdrawn the moment a repo or user file takes the path.
- */
-export function setAgentsExclude(repoPath: string, owned: boolean): Promise<void> {
-  return editExclude(repoPath, (current) => {
-    if (owned === hasLine(current, AGENTS_ENTRY)) return null
-    return owned
-      ? withLine(current, AGENTS_ENTRY)
-      : current
-          .split('\n')
-          .filter((line) => line.trim() !== AGENTS_ENTRY)
-          .join('\n')
-  })
 }

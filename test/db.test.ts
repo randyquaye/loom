@@ -36,7 +36,8 @@ describe('db', () => {
       '003_workspace_runtime',
       '004_project_prompts',
       '005_diff_comments',
-      '006_workspace_auto_named'
+      '006_workspace_auto_named',
+      '007_session_instructions'
     ])
     second.close()
   })

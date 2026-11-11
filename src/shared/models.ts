@@ -42,6 +42,12 @@ export interface ModelDescriptor {
   supportsImages?: boolean
 }
 
+/** Reserved configuration for the future shared handbook and skill repository. */
+export interface KnowledgeSource {
+  kind: 'github'
+  repositoryUrl: string
+}
+
 export interface SessionOpts {
   workspaceId: string
   worktreePath: string
@@ -51,8 +57,10 @@ export interface SessionOpts {
   resumeId?: string | undefined
   /** LOOM_* workspace env merged into spawned agent processes. */
   env?: Record<string, string> | undefined
-  /** Local plugin dir (the bundled Loom skill) for CLIs that accept --plugin-dir. */
+  /** Optional local plugin directory for CLIs that accept --plugin-dir. */
   pluginDir?: string | undefined
+  /** Reserved input; providers do not retrieve or load this source yet. */
+  knowledgeSource?: KnowledgeSource | undefined
 }
 
 /** Image bytes captured when a prompt is accepted; queued turns do not reread the path. */

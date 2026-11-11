@@ -1,6 +1,8 @@
 import path from 'node:path'
 import { app, BrowserWindow, dialog, safeStorage } from 'electron'
 import { openDb } from './db'
+import { listProjects } from './db/repos/projects'
+import { migrateProjectInstructions } from './instructions/migrate-general'
 import { missingChannelHandlers, registerIpc, setTrustedOrigin } from './ipc'
 import { registerBackends } from './agents/wiring'
 import { destroyAllTerminals, setTerminalSink } from './pty'
@@ -11,11 +13,9 @@ import {
   setActivitySink,
   closeAllSessions,
   setLoomDataRoot,
-  setLoomSkillDir,
   setQueueSink,
   setTitleSink
 } from './sessions/service'
-import { materializeLoomSkill } from './agents/skill'
 import { openExternalSafe } from './shell/open'
 import { setWorkspaceStateSink } from './workspace/bootstrap'
 import {
@@ -105,7 +105,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app
     .whenReady()
-    .then(() => {
+    .then(async () => {
       // LOOM_DATA_DIR lets e2e/screenshot runs target a known profile instead of
       // the unpackaged Electron default userData directory.
       const dataDir = process.env.LOOM_DATA_DIR ?? app.getPath('userData')
@@ -114,13 +114,13 @@ if (!app.requestSingleInstanceLock()) {
       const secrets = createSecretStore(path.join(dataDir, 'secrets.enc'), safeStorageCipher(safeStorage))
       setEnvSecretStore(secrets)
       setLoomDataRoot(dataDir)
+      for (const project of listProjects(db)) {
+        await migrateProjectInstructions(db, dataDir, project.id).catch((error: unknown) =>
+          console.warn(`[loom] General instructions need recovery for ${project.name}:`, error)
+        )
+      }
       registerIpc({ db, secrets, dataRoot: dataDir })
       registerBackends(secrets)
-      // The bundled skill plugin is written under the data root before any
-      // claude session spawns; a failure must not block startup.
-      void materializeLoomSkill(dataDir)
-        .then(setLoomSkillDir)
-        .catch((err: unknown) => console.warn('[loom] skill materialize failed:', err))
       if (!app.isPackaged) {
         const missing = missingChannelHandlers()
         if (missing.length > 0) console.warn('[loom] ipc channels without handlers:', missing)

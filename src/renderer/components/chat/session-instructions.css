@@ -1,0 +1,31 @@
+.session-instructions {
+  max-width: 100%;
+}
+
+.session-instructions .modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.session-instructions-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.session-instructions-text {
+  margin: 0;
+  padding: var(--s-3);
+  max-height: 48vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}

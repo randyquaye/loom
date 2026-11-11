@@ -1,11 +1,5 @@
-import { mkdir, writeFile } from 'node:fs/promises'
-import path from 'node:path'
-
-/**
- * Operator facts shared by the bundled Claude skill and the codex AGENTS.md
- * seed. Keep short: both land inside every session's context.
- */
-export const SKILL_FACTS = [
+/** Essential operating rules supplied directly to every Loom agent session. */
+export const LOOM_WORKSPACE_RULES = [
   '## Loom workspace facts',
   '',
   '- This checkout is one Loom workspace: a git worktree on branch `loom/<slug>`;',
@@ -28,29 +22,3 @@ export const SKILL_FACTS = [
   '  do not post to external services or open network mutations unless the user',
   '  explicitly asks; do not commit unless asked.'
 ].join('\n')
-
-export const LOOM_SKILL_MD = `---
-name: loom
-description: Operate inside a Loom workspace — worktrees, .context scratch, checkpoints, ports, repo settings and review etiquette. Always relevant in Loom sessions.
----
-
-# Loom
-
-Loom coordinates parallel coding agents, each in an isolated git worktree.
-This skill carries the facts that are easy to get wrong from inside a session.
-
-${SKILL_FACTS}
-`
-
-/**
- * Writes the bundled skill as a Claude-plugin-shaped directory under the data
- * root so claude sessions can load it with --plugin-dir. Returns the dir.
- */
-export async function materializeLoomSkill(dataRoot: string): Promise<string> {
-  const dir = path.join(dataRoot, 'loom-skill')
-  await mkdir(path.join(dir, '.claude-plugin'), { recursive: true })
-  await mkdir(path.join(dir, 'skills', 'loom'), { recursive: true })
-  await writeFile(path.join(dir, '.claude-plugin', 'plugin.json'), '{ "name": "loom" }\n', 'utf8')
-  await writeFile(path.join(dir, 'skills', 'loom', 'SKILL.md'), LOOM_SKILL_MD, 'utf8')
-  return dir
-}

@@ -35,9 +35,9 @@ const FLOWS: { key: keyof Prompts; title: string; description: string; placehold
     },
     {
       key: 'general',
-      title: 'General',
-      description: 'Appended to the system prompt of every session in this project.',
-      placeholder: 'Empty keeps the built-in system prompt.',
+      title: 'General (recovery)',
+      description: 'Not yet merged. Shorten this text or Project instructions, then save to retry.',
+      placeholder: '',
       rows: 3
     }
   ]
@@ -63,11 +63,11 @@ export function ProjectPage({ projectId }: { projectId: string }) {
         intro={`Injected into every agent session, terminal and run action in ${project.name}. Values here override instance-wide variables of the same name; agents see names, never values.`}
       />
       <InstructionsEditor
-        key={`instructions-${project.id}`}
+        key={`instructions-${project.id}-${project.customPromptGeneral === null ? 'merged' : 'recovery'}`}
         scope="project"
         projectId={project.id}
         label="Project instructions"
-        hint="Markdown appended to every agent session in this project, after the instance instructions."
+        hint="Project guidance for new sessions. Existing sessions keep their saved instructions."
       />
     </>
   )
@@ -98,7 +98,7 @@ function ProjectPrompts({ project }: { project: ProjectRow }) {
     try {
       await window.loom.projects.setPrompts({
         projectId: project.id,
-        general: values.general.trim() || null,
+        general: values.general.trim() === '' ? null : values.general,
         codeReview: values.codeReview.trim() || null,
         fixErrors: values.fixErrors.trim() || null
       })
@@ -118,41 +118,43 @@ function ProjectPrompts({ project }: { project: ProjectRow }) {
     <section className="settings-section" aria-label={`Prompts for ${project.name}`}>
       <p className="settings-note">Leave a prompt empty to use its built-in default.</p>
       <div className="settings-list prompt-panels">
-        {FLOWS.map((flow) => {
-          const expanded = open.has(flow.key)
-          const bodyId = `prompt-${project.id}-${flow.key}`
-          return (
-            <div key={flow.key} className="prompt-panel">
-              <button
-                type="button"
-                className="settings-row prompt-panel-head"
-                aria-expanded={expanded}
-                aria-controls={bodyId}
-                onClick={() => toggle(flow.key)}
-              >
-                <span className="settings-provider">
-                  <span className="prompt-panel-title">{flow.title}</span>
-                  <span className="settings-state">{flow.description}</span>
-                </span>
-                <span className="dropdown-caret prompt-panel-caret" aria-hidden="true" />
-              </button>
-              {expanded && (
-                <div id={bodyId} className="prompt-panel-body">
-                  <textarea
-                    className="input"
-                    rows={flow.rows}
-                    maxLength={8000}
-                    aria-label={`${flow.title} instructions`}
-                    placeholder={flow.placeholder}
-                    value={values[flow.key]}
-                    disabled={saving}
-                    onChange={(e) => setDraft({ ...values, [flow.key]: e.target.value })}
-                  />
-                </div>
-              )}
-            </div>
-          )
-        })}
+        {FLOWS.filter((flow) => flow.key !== 'general' || project.customPromptGeneral !== null).map(
+          (flow) => {
+            const expanded = open.has(flow.key)
+            const bodyId = `prompt-${project.id}-${flow.key}`
+            return (
+              <div key={flow.key} className="prompt-panel">
+                <button
+                  type="button"
+                  className="settings-row prompt-panel-head"
+                  aria-expanded={expanded}
+                  aria-controls={bodyId}
+                  onClick={() => toggle(flow.key)}
+                >
+                  <span className="settings-provider">
+                    <span className="prompt-panel-title">{flow.title}</span>
+                    <span className="settings-state">{flow.description}</span>
+                  </span>
+                  <span className="dropdown-caret prompt-panel-caret" aria-hidden="true" />
+                </button>
+                {expanded && (
+                  <div id={bodyId} className="prompt-panel-body">
+                    <textarea
+                      className="input"
+                      rows={flow.rows}
+                      maxLength={8000}
+                      aria-label={`${flow.title} instructions`}
+                      placeholder={flow.placeholder}
+                      value={values[flow.key]}
+                      disabled={saving}
+                      onChange={(e) => setDraft({ ...values, [flow.key]: e.target.value })}
+                    />
+                  </div>
+                )}
+              </div>
+            )
+          }
+        )}
       </div>
       <div className="project-prompts-footer">
         <button

@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
+import { MAX_INSTANCE_INSTRUCTION_CHARS, MAX_PROJECT_INSTRUCTION_CHARS } from '../../../shared/limits'
 import { useToasts } from '../../components/ui/Toast'
-
-// Main refuses anything longer; matches the IPC contract cap.
-const MAX_INSTRUCTIONS = 16000
+import { useProjects } from '../../state/projects'
 
 /** Settings section editing one scope's markdown instructions; the loaded text is the dirty baseline. */
 export function InstructionsEditor({
@@ -22,6 +21,7 @@ export function InstructionsEditor({
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const dirty = saved !== null && text !== saved
+  const limit = scope === 'instance' ? MAX_INSTANCE_INSTRUCTION_CHARS : MAX_PROJECT_INSTRUCTION_CHARS
 
   useEffect(() => {
     let live = true
@@ -47,7 +47,10 @@ export function InstructionsEditor({
     setSaving(true)
     try {
       await window.loom.instructions.set(scope, projectId, text)
-      setSaved(text)
+      const stored = await window.loom.instructions.get(scope, projectId)
+      setSaved(stored)
+      setText(stored)
+      if (scope === 'project') await useProjects.getState().load()
       push('Saved instructions')
     } catch (err) {
       push(`Could not save instructions: ${String(err)}`, 'err')
@@ -60,7 +63,12 @@ export function InstructionsEditor({
     <section className="settings-section">
       <div className="settings-label-row">
         <div className="settings-label">{label}</div>
-        <button type="button" className="btn" disabled={!dirty || saving} onClick={() => void save()}>
+        <button
+          type="button"
+          className="btn"
+          disabled={!dirty || saving || text.length > limit}
+          onClick={() => void save()}
+        >
           {saving ? 'Saving…' : 'Save'}
         </button>
       </div>
@@ -76,7 +84,7 @@ export function InstructionsEditor({
           <textarea
             className="input mono"
             rows={12}
-            maxLength={MAX_INSTRUCTIONS}
+            maxLength={limit}
             spellCheck={false}
             aria-label={label}
             placeholder="Empty adds nothing to the system prompt."
@@ -85,6 +93,11 @@ export function InstructionsEditor({
             onChange={(e) => setText(e.target.value)}
           />
         )
+      )}
+      {text.length > limit && (
+        <p className="settings-note" role="alert">
+          Instructions exceed {limit.toLocaleString()} characters. Shorten this text before saving.
+        </p>
       )}
       {error !== null && (
         <p className="settings-note" role="alert">

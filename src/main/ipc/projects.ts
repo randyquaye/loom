@@ -7,8 +7,7 @@ import {
   deleteProject,
   insertProject,
   listProjects,
-  repoPathTaken,
-  setProjectPrompts
+  repoPathTaken
 } from '../db/repos/projects'
 import { listWorkspaces } from '../db/repos/workspaces'
 import {
@@ -20,11 +19,19 @@ import {
   isAppOwnedRepo
 } from '../git/projects'
 import { slugify } from '../git/slug'
+import { migrateProjectInstructions, saveProjectPrompts } from '../instructions/migrate-general'
 import { removeWorkspace } from '../workspace/bootstrap'
 import { handle, type IpcDeps } from './handle'
 
 export function registerProjectsIpc(deps: IpcDeps): void {
-  handle('projects:list', () => listProjects(deps.db))
+  handle('projects:list', async () => {
+    for (const project of listProjects(deps.db)) {
+      await migrateProjectInstructions(deps.db, deps.dataRoot, project.id).catch((error: unknown) =>
+        console.warn(`[loom] General instructions need recovery for ${project.name}:`, error)
+      )
+    }
+    return listProjects(deps.db)
+  })
 
   handle('projects:pickFolder', async () => {
     const result = await dialog.showOpenDialog({
@@ -66,7 +73,7 @@ export function registerProjectsIpc(deps: IpcDeps): void {
 
   handle('projects:setPrompts', ({ projectId, general, codeReview, fixErrors }) => {
     getProjectOrThrow(deps.db, projectId)
-    setProjectPrompts(deps.db, { projectId, general, codeReview, fixErrors })
+    return saveProjectPrompts(deps.db, deps.dataRoot, { projectId, general, codeReview, fixErrors })
   })
 
   handle('projects:remove', async ({ id, deleteRepo }) => {

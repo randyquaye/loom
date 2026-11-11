@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -39,6 +39,37 @@ describe('instruction files', () => {
     await expect(writeInstructions(root, 'instance', null, huge)).rejects.toBeInstanceOf(
       InstructionTooLongError
     )
+  })
+
+  it('preserves externally edited oversized project instructions for recovery', async () => {
+    const root = await dataRoot()
+    await mkdir(path.join(root, 'instructions'))
+    const text = 'project guidance\n'.repeat(1800)
+    await writeFile(path.join(root, 'instructions', 'p1.md'), text)
+
+    expect(await readInstructions(root, 'project', 'p1')).toBe(text)
+    await expect(writeInstructions(root, 'project', 'p1', text)).rejects.toBeInstanceOf(
+      InstructionTooLongError
+    )
+    expect(await readInstructions(root, 'project', 'p1')).toBe(text)
+  })
+
+  it('allows consolidated project instructions without enlarging the instance cap', async () => {
+    const root = await dataRoot()
+    const text = 'x'.repeat(24_000)
+    await writeInstructions(root, 'project', 'p1', text)
+
+    expect(await readInstructions(root, 'project', 'p1')).toBe(text)
+    await expect(writeInstructions(root, 'instance', null, text)).rejects.toBeInstanceOf(
+      InstructionTooLongError
+    )
+  })
+
+  it('reports unreadable instruction paths instead of pretending they are empty', async () => {
+    const root = await dataRoot()
+    await mkdir(path.join(root, 'instructions', 'p1.md'), { recursive: true })
+
+    await expect(readInstructions(root, 'project', 'p1')).rejects.toMatchObject({ code: 'EISDIR' })
   })
 
   it('overlays instance first, then project, dropping blanks', async () => {

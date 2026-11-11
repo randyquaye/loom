@@ -1,4 +1,5 @@
 import { handle, type IpcDeps } from './handle'
+import { sessionInstructions } from '../sessions/instructions'
 import {
   answerQuestion,
   cancelTurn,
@@ -33,6 +34,7 @@ export function registerSessionsIpc(deps: IpcDeps): void {
   )
   handle('sessions:cancel', ({ sessionId }) => cancelTurn(deps.db, sessionId))
   handle('sessions:events', ({ sessionId }) => sessionEvents(deps.db, sessionId))
+  handle('sessions:instructions', ({ sessionId }) => sessionInstructions(deps.db, sessionId))
   handle('sessions:fork', (input) => forkSession(deps.db, input))
   handle('sessions:close', ({ sessionId }) => closeSessionRow(deps.db, sessionId))
   handle('sessions:closed', ({ workspaceId }) => closedSessions(deps.db, workspaceId))

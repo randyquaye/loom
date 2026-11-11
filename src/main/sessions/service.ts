@@ -11,27 +11,26 @@ import {
   type SessionRow,
   type SessionTitlePush
 } from '../../shared/ipc-contract'
-import { MAX_SESSIONS_PER_WORKSPACE } from '../../shared/limits'
+import { MAX_SESSIONS_PER_WORKSPACE, MAX_SESSION_INSTRUCTION_CHARS } from '../../shared/limits'
 import type { BackendId, Effort, PromptImage } from '../../shared/models'
 import { cleanTitle, excerptTitle } from './title'
 import { envNames } from '../env/vars'
 import { AttachmentError, formatAttachment, readPromptAttachment, resolveAttachment } from './attachments'
 import { getBackend } from '../agents/registry'
 import type { RunningSession } from '../agents/types'
-import { AUTOLINK_SYSTEM_PROMPT } from '../agents/prompts/autolink'
-import { SKILL_FACTS } from '../agents/skill'
 import {
   attachmentFileName,
   MANAGED_AGENTS_MARKER,
-  refreshWorkspaceAgentsDoc,
   writeAttachment,
   writeLoomContext
 } from '../context/materialize'
 import { CheckpointBusyError, CheckpointRootError, saveCheckpoint } from '../git/checkpoint'
-import { setAgentsExclude } from '../git/exclude'
 import { GitError } from '../git/run'
 import { getWorkspaceOrThrow, renameWorkspaceIfAuto } from '../db/repos/workspaces'
 import { readInstructionOverlay } from '../instructions/files'
+import { composeInstructions, composeLegacyInstructions } from '../instructions/compose'
+import { migrateProjectInstructions } from '../instructions/migrate-general'
+import { retireWorkspaceAgentsDoc } from '../instructions/legacy-agents'
 import {
   announceWorkspace,
   waitForWorkspaceSettled,
@@ -84,6 +83,8 @@ interface SessionBackendRow {
   model: string
   effort: string
   provider_session_id: string | null
+  /** NULL preserves legacy behavior; an empty string captures instructions on first send. */
+  instruction_snapshot: string | null
 }
 
 const SESSION_COLUMNS = `id, workspace_id AS workspaceId, backend, model, effort, title,
@@ -145,8 +146,8 @@ export function createSession(db: Database.Database, input: SessionCreateInput):
     providerSessionId: null
   }
   db.prepare(
-    `INSERT INTO sessions (id, workspace_id, backend, model, effort, title, created_at, closed_at, forked_from)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO sessions (id, workspace_id, backend, model, effort, title, created_at, closed_at, forked_from, instruction_snapshot)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '')`
   ).run(
     row.id,
     row.workspaceId,
@@ -480,7 +481,7 @@ async function sendPreparedTurn(
 ): Promise<void> {
   const row = db
     .prepare(
-      'SELECT workspace_id, backend, model, effort, provider_session_id FROM sessions WHERE id = ? AND closed_at IS NULL'
+      'SELECT workspace_id, backend, model, effort, provider_session_id, instruction_snapshot FROM sessions WHERE id = ? AND closed_at IS NULL'
     )
     .get(sessionId) as SessionBackendRow | undefined
   if (row === undefined) throw new Error(`unknown session ${sessionId}`)
@@ -552,13 +553,6 @@ async function sendPreparedTurn(
         at: Date.now(),
         envNames: await envNames(wsRow.project_id)
       }).catch(() => {})
-      // codex reads instructions only from a root AGENTS.md; keep a managed companion fresh
-      // while the path is free, and keep git blind to it only while Loom owns it.
-      void (async () => {
-        const doc = await instructionPrompt(db, row.workspace_id, true)
-        const owned = await refreshWorkspaceAgentsDoc(wsRow.worktree_path, doc)
-        await setAgentsExclude(wsRow.repo_path, owned)
-      })().catch(() => {})
       void autoCheckpoint(wsRow.worktree_path, turnId, input.promptText ?? input.displayText ?? body).catch(
         (error: unknown) => appendError(db, sessionId, 'checkpoint.save', error)
       )
@@ -573,19 +567,41 @@ async function sendPreparedTurn(
         .prepare('SELECT worktree_path FROM workspaces WHERE id = ?')
         .get(row.workspace_id) as { worktree_path: string } | undefined
       if (worktree === undefined) throw new Error(`unknown workspace ${row.workspace_id}`)
+      if (row.instruction_snapshot !== null) {
+        const retirement = await retireWorkspaceAgentsDoc(worktree.worktree_path, () =>
+          instructionPrompt(db, row.workspace_id, true, true)
+        )
+        if (retirement === 'needs-review') {
+          throw new Error(
+            'AGENTS.md contains changed or unverified Loom-generated instructions and was preserved. ' +
+              'Keep the repository-owned instructions and remove the loom:managed marker before starting a new session. ' +
+              'Existing sessions can continue.'
+          )
+        }
+      }
+      const systemPromptAppend =
+        row.instruction_snapshot ||
+        (await instructionPrompt(db, row.workspace_id, row.backend === 'gemini' || row.backend === 'qwen'))
+      if (systemPromptAppend.length > MAX_SESSION_INSTRUCTION_CHARS) {
+        throw new Error(
+          `Combined session instructions exceed ${MAX_SESSION_INSTRUCTION_CHARS} characters. ` +
+            'Shorten the instance or project instructions before retrying.'
+        )
+      }
+      if (row.instruction_snapshot === '') {
+        db.prepare('UPDATE sessions SET instruction_snapshot = ? WHERE id = ?').run(
+          systemPromptAppend,
+          sessionId
+        )
+      }
       session = await backend.startSession({
         workspaceId: row.workspace_id,
         worktreePath: worktree.worktree_path,
         model: row.model,
         effort: row.effort as Effort,
-        systemPromptAppend: await instructionPrompt(
-          db,
-          row.workspace_id,
-          row.backend === 'gemini' || row.backend === 'qwen'
-        ),
+        systemPromptAppend,
         resumeId: row.provider_session_id ?? undefined,
-        env: await workspaceEnv(db, row.workspace_id),
-        pluginDir: loomSkillDir ?? undefined
+        env: await workspaceEnv(db, row.workspace_id)
       })
       if (busyTurns.get(sessionId) !== turnId) {
         await session.close()
@@ -627,7 +643,6 @@ async function autoCheckpoint(worktreePath: string, turnId: string, text: string
   }
 }
 
-let loomSkillDir: string | null = null
 let loomDataRoot: string | null = null
 
 /** Wired at startup so instruction overlays can be read without threading the path everywhere. */
@@ -635,36 +650,39 @@ export function setLoomDataRoot(dir: string): void {
   loomDataRoot = dir
 }
 
-/** Wired at boot once the bundled skill plugin is materialized under the data root. */
-export function setLoomSkillDir(dir: string): void {
-  loomSkillDir = dir
-}
-
 /**
- * Loom's instruction text for a workspace. With inlineRepoFacts the bundled skill facts and
- * the repository's own CLAUDE.md/AGENTS.md are included too: the loop backends have no
- * instruction-file discovery or skill plugin, and codex reads only the managed AGENTS.md.
+ * All providers receive Loom's operating rules. Only loop backends need root repository
+ * instructions inlined; CLI providers retain their native discovery.
  */
 async function instructionPrompt(
   db: Database.Database,
   workspaceId: string,
-  inlineRepoFacts: boolean
+  inlineRepositoryInstructions: boolean,
+  legacyFormat = false
 ): Promise<string> {
+  if (!legacyFormat && loomDataRoot !== null) {
+    const workspace = db.prepare('SELECT project_id FROM workspaces WHERE id = ?').get(workspaceId) as
+      { project_id: string } | undefined
+    if (workspace !== undefined) await migrateProjectInstructions(db, loomDataRoot, workspace.project_id)
+  }
   const row = db
     .prepare(
       `SELECT w.worktree_path, p.id AS project_id, p.custom_prompt_general AS general
        FROM workspaces w JOIN projects p ON p.id = w.project_id WHERE w.id = ?`
     )
     .get(workspaceId) as { worktree_path: string; project_id: string; general: string | null } | undefined
-  const parts = [AUTOLINK_SYSTEM_PROMPT]
-  if (inlineRepoFacts) parts.push(SKILL_FACTS, ...(await repoInstructionFiles(row?.worktree_path)))
-  if (row !== undefined) {
-    parts.push(...(await instructionOverlayParts(row.project_id)))
-    if ((row.general ?? '').trim() !== '') parts.push(row.general as string)
-    const names = await envNames(row.project_id)
-    if (names.length > 0) parts.push(envNamesLine(names))
-  }
-  return parts.join('\n\n')
+  const repositoryInstructions = inlineRepositoryInstructions
+    ? await repoInstructionFiles(row?.worktree_path)
+    : []
+  const overlay = row === undefined ? [] : await instructionOverlay(row.project_id)
+  const names = row === undefined ? [] : await envNames(row.project_id)
+  const compose = legacyFormat ? composeLegacyInstructions : composeInstructions
+  return compose({
+    repositoryInstructions,
+    overlay,
+    general: row?.general ?? null,
+    envNames: names
+  })
 }
 
 const REPO_INSTRUCTION_FILES = ['CLAUDE.md', 'AGENTS.md'] as const
@@ -683,21 +701,9 @@ async function repoInstructionFiles(worktreePath: string | undefined): Promise<s
   return out
 }
 
-async function instructionOverlayParts(projectId: string): Promise<string[]> {
+async function instructionOverlay(projectId: string) {
   if (loomDataRoot === null) return []
-  const overlay = await readInstructionOverlay(loomDataRoot, projectId)
-  return overlay.map((entry) =>
-    entry.scope === 'instance'
-      ? `# Instance instructions\n\n${entry.text}`
-      : `# Project instructions\n\n${entry.text}`
-  )
-}
-
-function envNamesLine(names: string[]): string {
-  return (
-    `Environment variables available in your shell and process environment: ${names.join(', ')}. ` +
-    'Their values are secret: reference them as $NAME and never echo, print, log or commit them.'
-  )
+  return await readInstructionOverlay(loomDataRoot, projectId)
 }
 
 export async function cancelTurn(db: Database.Database, sessionId: string): Promise<void> {

@@ -1,5 +1,6 @@
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
@@ -10,6 +11,9 @@ import type { AgentBackend, RunningSession } from '../src/main/agents/types'
 import { createEventQueue } from '../src/main/agents/queue'
 import { setEnvSecretStore } from '../src/main/env/vars'
 import { writeInstructions } from '../src/main/instructions/files'
+import { GIT_HARDENING_ARGS } from '../src/main/git/run'
+import { AUTOLINK_SYSTEM_PROMPT } from '../src/main/agents/prompts/autolink'
+import { LOOM_WORKSPACE_RULES } from '../src/main/instructions/rules'
 import { aesGcmCipher, createSecretStore } from '../src/main/secrets'
 import {
   answerQuestion,
@@ -18,6 +22,7 @@ import {
   closedSessions,
   closeSessionRow,
   createSession,
+  forkSession,
   dequeue,
   listSessions,
   reopenSession,
@@ -45,17 +50,25 @@ beforeEach(() => {
   )
 })
 
-function seedWorkspace() {
-  const db = openDb(':memory:')
+const workspaceDirs: string[] = []
+
+afterAll(() => {
+  for (const dir of workspaceDirs) rmSync(dir, { recursive: true, force: true })
+})
+
+function seedWorkspace(file = ':memory:') {
+  const db = openDb(file)
+  const worktree = mkdtempSync(path.join(tmpdir(), 'loom-session-workspace-'))
+  workspaceDirs.push(worktree)
   db.prepare('INSERT INTO projects (id, name, repo_path, created_at) VALUES (?, ?, ?, ?)').run(
     'p1',
     'demo',
-    '/tmp/demo',
+    worktree,
     1
   )
   db.prepare(
     'INSERT INTO workspaces (id, project_id, name, branch, worktree_path, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run('w1', 'p1', 'ws', 'loom/ws', '/tmp/wt', 1)
+  ).run('w1', 'p1', 'ws', 'loom/ws', worktree, 1)
   return db
 }
 
@@ -900,6 +913,143 @@ describe('instruction merge into the system prompt', () => {
     return dir
   }
 
+  it.each(['codex', 'claude', 'gemini', 'qwen'] as const)(
+    'lets oversized %s instructions be corrected before saving or starting the session',
+    async (backend) => {
+      const db = seedWorkspace()
+      const root = tempDir('loom-budget-instr-')
+      setLoomDataRoot(root)
+      await writeInstructions(root, 'instance', null, 'a'.repeat(16000))
+      await writeInstructions(root, 'project', 'p1', 'b'.repeat(16000))
+      const { opts } = fakeBackend(SCRIPT, false, null, backend)
+      const session = createSession(db, {
+        workspaceId: 'w1',
+        backend,
+        model: 'test-model',
+        effort: 'medium',
+        title: 'budget'
+      })
+      await sendTurn(db, session.id, 'first')
+      expect(opts).toHaveLength(0)
+      expect(sessionEvents(db, session.id)).toContainEqual(
+        expect.objectContaining({
+          type: 'error',
+          message: expect.stringContaining('32000')
+        })
+      )
+      await writeInstructions(root, 'instance', null, 'Corrected instance rules.')
+      await writeInstructions(root, 'project', 'p1', 'Corrected project rules.')
+      await sendTurn(db, session.id, 'retry')
+      await vi.waitFor(() => expect(sessionActivity().bySession[session.id]).toBeUndefined())
+      expect(opts).toHaveLength(1)
+      expect(opts[0]?.systemPromptAppend).toContain('Corrected instance rules.')
+      expect(opts[0]?.systemPromptAppend).toContain('Corrected project rules.')
+      closeSessionRow(db, session.id)
+    }
+  )
+
+  it.each(['codex', 'claude', 'gemini', 'qwen'] as const)(
+    'restores saved %s instructions after reopening the database despite changed settings',
+    async (backend) => {
+      const root = tempDir('loom-saved-instr-')
+      const file = path.join(root, 'loom.db')
+      let db = seedWorkspace(file)
+      const wt = tempDir('loom-saved-wt-')
+      db.prepare('UPDATE workspaces SET worktree_path = ? WHERE id = ?').run(wt, 'w1')
+      setLoomDataRoot(root)
+      await writeInstructions(root, 'instance', null, 'Original instance rules.')
+      await writeInstructions(root, 'project', 'p1', 'Original project rules.')
+      db.prepare('UPDATE projects SET custom_prompt_general = ? WHERE id = ?').run('Original General.', 'p1')
+      const { opts } = fakeBackend(SCRIPT, false, null, backend)
+      const session = createSession(db, {
+        workspaceId: 'w1',
+        backend,
+        model: 'test-model',
+        effort: 'medium',
+        title: 'saved'
+      })
+      try {
+        await sendTurn(db, session.id, 'first')
+        await vi.waitFor(() => expect(sessionActivity().bySession[session.id]).toBeUndefined())
+        const original = opts[0]!.systemPromptAppend
+        expect(original).toContain('Original instance rules.')
+        expect(original).toContain('Original project rules.')
+        expect(original).toContain('Original General.')
+        closeSessionRow(db, session.id)
+        db.prepare('UPDATE sessions SET provider_session_id = ? WHERE id = ?').run('saved-thread', session.id)
+        db.close()
+        db = openDb(file)
+        await writeInstructions(root, 'instance', null, 'Changed instance rules.')
+        await writeInstructions(root, 'project', 'p1', 'Changed project rules.')
+        db.prepare('UPDATE projects SET custom_prompt_general = ? WHERE id = ?').run('Changed General.', 'p1')
+        reopenSession(db, session.id)
+        await sendTurn(db, session.id, 'second')
+        await vi.waitFor(() => expect(sessionActivity().bySession[session.id]).toBeUndefined())
+        expect(opts[1]?.resumeId).toBe('saved-thread')
+        expect(opts[1]?.systemPromptAppend).toBe(original)
+      } finally {
+        closeSessionRow(db, session.id)
+        db.close()
+      }
+    }
+  )
+
+  it('forks with current instructions while leaving its source instructions unchanged', async () => {
+    const db = seedWorkspace()
+    const wt = tempDir('loom-fork-instr-wt-')
+    db.prepare('UPDATE workspaces SET worktree_path = ? WHERE id = ?').run(wt, 'w1')
+    const root = tempDir('loom-fork-instr-root-')
+    setLoomDataRoot(root)
+    await writeInstructions(root, 'instance', null, 'Source instructions.')
+    const { opts } = fakeBackend(SCRIPT)
+    const source = createSession(db, {
+      workspaceId: 'w1',
+      backend: 'qwen',
+      model: 'qwen3-max',
+      effort: 'medium',
+      title: 'source'
+    })
+    await sendTurn(db, source.id, 'first')
+    await vi.waitFor(() => expect(sessionActivity().bySession[source.id]).toBeUndefined())
+    const original = opts[0]!.systemPromptAppend
+    await writeInstructions(root, 'instance', null, 'Current instructions.')
+    const fork = await forkSession(db, {
+      workspaceId: 'w1',
+      backend: 'qwen',
+      model: 'qwen3-max',
+      effort: 'medium',
+      sourceSessionId: source.id
+    })
+    await vi.waitFor(() => expect(opts).toHaveLength(2))
+    expect(opts[1]?.systemPromptAppend).toContain('Current instructions.')
+    await sendTurn(db, source.id, 'continue source')
+    await vi.waitFor(() => expect(opts).toHaveLength(3))
+    await vi.waitFor(() => expect(sessionActivity().bySession[source.id]).toBeUndefined())
+    expect(opts[2]?.systemPromptAppend).toBe(original)
+    closeSessionRow(db, source.id)
+    closeSessionRow(db, fork.id)
+  })
+
+  it('keeps using current settings for legacy sessions without saved instructions', async () => {
+    const db = seedWorkspace()
+    const root = tempDir('loom-legacy-instr-')
+    db.prepare('UPDATE workspaces SET worktree_path = ? WHERE id = ?').run(root, 'w1')
+    setLoomDataRoot(root)
+    await writeInstructions(root, 'instance', null, 'Before update.')
+    const { opts } = fakeBackend(SCRIPT)
+    // A session inserted without the new-session initializer represents a pre-update row.
+    db.prepare(
+      'INSERT INTO sessions (id, workspace_id, backend, model, effort, title, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run('legacy', 'w1', 'qwen', 'qwen3-max', 'medium', 'legacy', 1)
+    await sendTurn(db, 'legacy', 'first')
+    await vi.waitFor(() => expect(sessionActivity().bySession.legacy).toBeUndefined())
+    await writeInstructions(root, 'instance', null, 'After update.')
+    await sendTurn(db, 'legacy', 'second')
+    expect(opts[0]?.systemPromptAppend).toContain('Before update.')
+    expect(opts[1]?.systemPromptAppend).toContain('After update.')
+    closeSessionRow(db, 'legacy')
+  })
+
   it('gives loop backends the bundled facts, repo instruction files and the overlay', async () => {
     const db = seedWorkspace()
     const wt = tempDir('loom-instr-wt-')
@@ -928,57 +1078,130 @@ describe('instruction merge into the system prompt', () => {
     expect(append).toContain('Instance rules.')
   })
 
-  it('keeps claude on the append channel without duplicating the bundled facts', async () => {
-    const db = seedWorkspace()
-    const root = tempDir('loom-instr-root-')
-    setLoomDataRoot(root)
-    await writeInstructions(root, 'instance', null, 'Instance rules.')
-    const { opts } = fakeBackend(SCRIPT, false, null, 'claude')
-    const session = createSession(db, {
-      workspaceId: 'w1',
-      backend: 'claude',
-      model: 'claude-opus-4-7',
-      effort: 'medium',
-      title: 'cli'
-    })
+  it.each(['codex', 'claude', 'gemini', 'qwen'] as const)(
+    'supplies %s operating rules once without replacing repository instructions or loading a Loom plugin',
+    async (backend) => {
+      const db = seedWorkspace()
+      const wt = tempDir('loom-direct-instr-wt-')
+      const repositoryRules = '# Repository instructions\nKeep this repository policy intact.\n'
+      writeFileSync(path.join(wt, 'AGENTS.md'), repositoryRules)
+      db.prepare('UPDATE workspaces SET worktree_path = ? WHERE id = ?').run(wt, 'w1')
+      const root = tempDir('loom-instr-root-')
+      setLoomDataRoot(root)
+      await writeInstructions(root, 'instance', null, 'Instance rules.')
+      const { opts } = fakeBackend(SCRIPT, false, null, backend)
+      const session = createSession(db, {
+        workspaceId: 'w1',
+        backend,
+        model: 'test-model',
+        effort: 'medium',
+        title: 'cli'
+      })
 
-    await sendTurn(db, session.id, 'hi')
-    await waitFor(() => opts.length > 0)
+      await sendTurn(db, session.id, 'hi')
+      await vi.waitFor(() => expect(sessionActivity().bySession[session.id]).toBeUndefined())
 
-    const append = opts[0]?.systemPromptAppend ?? ''
-    expect(append).toContain('# Instance instructions')
-    expect(append).not.toContain('## Loom workspace facts')
-  })
-
-  it('keeps a managed root AGENTS.md companion fresh on every send', async () => {
-    const db = seedWorkspace()
-    const wt = tempDir('loom-agents-wt-')
-    db.prepare('UPDATE workspaces SET worktree_path = ? WHERE id = ?').run(wt, 'w1')
-    const root = tempDir('loom-instr-root-')
-    setLoomDataRoot(root)
-    await writeInstructions(root, 'instance', null, 'Instance rules.')
-    fakeBackend(SCRIPT, false, null, 'codex')
-    const session = createSession(db, {
-      workspaceId: 'w1',
-      backend: 'codex',
-      model: 'gpt-6.1-sol',
-      effort: 'medium',
-      title: 'codex'
-    })
-
-    await sendTurn(db, session.id, 'hi')
-
-    const deadline = Date.now() + 2000
-    let body = ''
-    while (Date.now() < deadline) {
-      body = await readFile(path.join(wt, 'AGENTS.md'), 'utf8').catch(() => '')
-      if (body !== '') break
-      await new Promise((resolve) => setTimeout(resolve, 20))
+      const append = opts[0]?.systemPromptAppend ?? ''
+      expect(append).toContain('# Instance instructions')
+      expect(append.split('## Loom workspace facts')).toHaveLength(2)
+      expect(append).toContain('refs/loom/checkpoints/')
+      expect(opts[0]?.pluginDir).toBeUndefined()
+      expect(await readFile(path.join(wt, 'AGENTS.md'), 'utf8')).toBe(repositoryRules)
+      closeSessionRow(db, session.id)
     }
-    expect(body.startsWith('<!-- loom:managed -->')).toBe(true)
-    expect(body).toContain('## Loom workspace facts')
-    expect(body).toContain('Instance rules.')
+  )
+
+  it('retires a proven generated companion before starting another session and preserves its backup', async () => {
+    const db = seedWorkspace()
+    const wt = tempDir('loom-retire-instr-')
+    execFileSync('git', [...GIT_HARDENING_ARGS, 'init', '-q', wt])
+    db.prepare('UPDATE workspaces SET worktree_path = ? WHERE id = ?').run(wt, 'w1')
+    setLoomDataRoot(tempDir('loom-retire-root-'))
+    const { opts } = fakeBackend(SCRIPT)
+    const input = {
+      workspaceId: 'w1',
+      backend: 'qwen',
+      model: 'qwen3-max',
+      effort: 'medium',
+      title: 'retire'
+    } as const
+    const first = createSession(db, input)
+    await sendTurn(db, first.id, 'first')
+    await vi.waitFor(() => expect(sessionActivity().bySession[first.id]).toBeUndefined())
+    const oldBody = `<!-- loom:managed -->\n${AUTOLINK_SYSTEM_PROMPT}\n\n${LOOM_WORKSPACE_RULES}\n`
+    writeFileSync(path.join(wt, 'AGENTS.md'), oldBody)
+    const second = createSession(db, input)
+    await sendTurn(db, second.id, 'second')
+    await vi.waitFor(() => expect(sessionActivity().bySession[second.id]).toBeUndefined())
+    expect(opts).toHaveLength(2)
+    await expect(readFile(path.join(wt, 'AGENTS.md'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    const backupDir = path.join(wt, '.context', 'legacy-instructions')
+    const backups = await readdir(backupDir)
+    expect(backups).toHaveLength(1)
+    expect(await readFile(path.join(backupDir, backups[0]!), 'utf8')).toBe(oldBody)
+    closeSessionRow(db, first.id)
+    closeSessionRow(db, second.id)
   })
+
+  it('preserves changed managed files, requests review for new sessions, and lets legacy sessions continue', async () => {
+    const db = seedWorkspace()
+    const wt = tempDir('loom-edited-instr-')
+    execFileSync('git', [...GIT_HARDENING_ARGS, 'init', '-q', wt])
+    db.prepare('UPDATE workspaces SET worktree_path = ? WHERE id = ?').run(wt, 'w1')
+    setLoomDataRoot(tempDir('loom-edited-root-'))
+    const body = '<!-- loom:managed -->\nUser changes that must survive.\n'
+    writeFileSync(path.join(wt, 'AGENTS.md'), body)
+    const { opts } = fakeBackend(SCRIPT)
+    const session = createSession(db, {
+      workspaceId: 'w1',
+      backend: 'qwen',
+      model: 'qwen3-max',
+      effort: 'medium',
+      title: 'new'
+    })
+    await sendTurn(db, session.id, 'new')
+    expect(opts).toHaveLength(0)
+    expect(sessionEvents(db, session.id)).toContainEqual(
+      expect.objectContaining({
+        type: 'error',
+        message: expect.stringContaining('AGENTS.md')
+      })
+    )
+    expect(await readFile(path.join(wt, 'AGENTS.md'), 'utf8')).toBe(body)
+    db.prepare(
+      'INSERT INTO sessions (id, workspace_id, backend, model, effort, title, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run('legacy-edited', 'w1', 'qwen', 'qwen3-max', 'medium', 'legacy', 1)
+    await sendTurn(db, 'legacy-edited', 'continue')
+    expect(opts).toHaveLength(1)
+    expect(await readFile(path.join(wt, 'AGENTS.md'), 'utf8')).toBe(body)
+    closeSessionRow(db, session.id)
+    closeSessionRow(db, 'legacy-edited')
+  })
+
+  it.each(['codex', 'claude', 'gemini', 'qwen'] as const)(
+    'does not generate AGENTS.md for %s sessions',
+    async (backend) => {
+      const db = seedWorkspace()
+      const wt = tempDir('loom-agents-wt-')
+      db.prepare('UPDATE workspaces SET worktree_path = ? WHERE id = ?').run(wt, 'w1')
+      const root = tempDir('loom-instr-root-')
+      setLoomDataRoot(root)
+      await writeInstructions(root, 'instance', null, 'Instance rules.')
+      fakeBackend(SCRIPT, false, null, backend)
+      const session = createSession(db, {
+        workspaceId: 'w1',
+        backend,
+        model: 'test-model',
+        effort: 'medium',
+        title: 'codex'
+      })
+
+      await sendTurn(db, session.id, 'hi')
+      await vi.waitFor(() => expect(sessionActivity().bySession[session.id]).toBeUndefined())
+      await expect(readFile(path.join(wt, 'AGENTS.md'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+      closeSessionRow(db, session.id)
+    }
+  )
 })
 
 describe('model naming reaches the workspace', () => {

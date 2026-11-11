@@ -113,6 +113,7 @@ const api: LoomApi = {
       invoke('sessions:sendNow', { sessionId, text, attachments: attachments ?? [] }),
     cancel: (sessionId) => invoke('sessions:cancel', { sessionId }),
     events: (sessionId) => invoke('sessions:events', { sessionId }),
+    instructions: (sessionId) => invoke('sessions:instructions', { sessionId }),
     exportMarkdown: (sessionId) => invoke('sessions:exportMarkdown', { sessionId }),
     fork: (input) => invoke('sessions:fork', input),
     close: (sessionId) => invoke('sessions:close', { sessionId }),

@@ -1,5 +1,6 @@
 import path from 'node:path'
 import type { Effort, SessionOpts } from '../../../shared/models'
+import { MAX_SESSION_INSTRUCTION_CHARS } from '../../../shared/limits'
 import { findModel } from './catalog'
 
 /**
@@ -19,7 +20,6 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** codex and claude also accept a session *name*; the charset stays narrow so a
  * name can never be re-read as a flag by the CLI's own argument parser. */
 const SESSION_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
-const MAX_SYSTEM_PROMPT_CHARS = 32_000
 
 export function isValidSessionId(id: string): boolean {
   return UUID_RE.test(id) || SESSION_NAME_RE.test(id)
@@ -63,7 +63,7 @@ export function assertSessionOpts(backend: 'codex' | 'claude', opts: SessionOpts
   }
   if (
     typeof opts.systemPromptAppend !== 'string' ||
-    opts.systemPromptAppend.length > MAX_SYSTEM_PROMPT_CHARS
+    opts.systemPromptAppend.length > MAX_SESSION_INSTRUCTION_CHARS
   ) {
     throw new CliArgsError(
       'bad-system-prompt',

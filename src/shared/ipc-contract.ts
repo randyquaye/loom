@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { questionAnswer, type AgentEvent, type QuestionAnswer } from './events'
-import { MAX_ATTACHMENTS } from './limits'
+import { MAX_ATTACHMENTS, MAX_INSTANCE_INSTRUCTION_CHARS, MAX_PROJECT_INSTRUCTION_CHARS } from './limits'
 import { EFFORTS } from './models'
 import type { AuthStatus, BackendId, Effort, ModelDescriptor } from './models'
 
@@ -59,6 +59,13 @@ export interface SessionRow {
 export interface SessionActivity {
   revision: number
   bySession: Record<string, string>
+}
+
+/** Loom's saved instruction text; provider-managed discovery is not inspected. */
+export interface SessionInstructionsInfo {
+  status: 'pending' | 'saved' | 'legacy'
+  text: string | null
+  repositoryMode: 'native' | 'root-files'
 }
 
 export interface FileNode {
@@ -304,6 +311,7 @@ export interface IpcContract {
   'sessions:sendNow': { in: { sessionId: string; text: string; attachments: string[] }; out: void }
   'sessions:cancel': { in: { sessionId: string }; out: void }
   'sessions:events': { in: { sessionId: string }; out: AgentEvent[] }
+  'sessions:instructions': { in: { sessionId: string }; out: SessionInstructionsInfo }
   'sessions:exportMarkdown': { in: { sessionId: string }; out: string | null }
   'sessions:fork': { in: SessionForkInput; out: SessionRow }
   'sessions:close': { in: { sessionId: string }; out: void }
@@ -418,11 +426,16 @@ export const ipcSchemas = {
     scope: z.enum(['instance', 'project']),
     projectId: z.string().max(64).nullable()
   }),
-  'instructions:set': z.object({
-    scope: z.enum(['instance', 'project']),
-    projectId: z.string().max(64).nullable(),
-    text: z.string().max(16_000)
-  }),
+  'instructions:set': z
+    .object({
+      scope: z.enum(['instance', 'project']),
+      projectId: z.string().max(64).nullable(),
+      text: z.string().max(MAX_PROJECT_INSTRUCTION_CHARS)
+    })
+    .refine(({ scope, text }) => scope === 'project' || text.length <= MAX_INSTANCE_INSTRUCTION_CHARS, {
+      message: `Instance instructions must be at most ${MAX_INSTANCE_INSTRUCTION_CHARS} characters`,
+      path: ['text']
+    }),
   'workspaces:list': z.object({ projectId: id }),
   'workspaces:add': z.object({
     projectId: id,
@@ -455,6 +468,7 @@ export const ipcSchemas = {
   'sessions:sendNow': promptInput,
   'sessions:cancel': z.object({ sessionId: id }),
   'sessions:events': z.object({ sessionId: id }),
+  'sessions:instructions': z.object({ sessionId: id }),
   'sessions:exportMarkdown': z.object({ sessionId: id }),
   'sessions:fork': z.object({
     workspaceId: id,
@@ -638,6 +652,7 @@ export interface LoomApi {
     sendNow(sessionId: string, text: string, attachments?: string[]): Promise<void>
     cancel(sessionId: string): Promise<void>
     events(sessionId: string): Promise<AgentEvent[]>
+    instructions(sessionId: string): Promise<SessionInstructionsInfo>
     exportMarkdown(sessionId: string): Promise<string | null>
     fork(input: SessionForkInput): Promise<SessionRow>
     close(sessionId: string): Promise<void>

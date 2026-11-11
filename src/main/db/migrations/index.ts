@@ -5,13 +5,14 @@ import { m003 } from './003_workspace_runtime'
 import { m004 } from './004_project_prompts'
 import { m005 } from './005_diff_comments'
 import { m006 } from './006_workspace_auto_named'
+import { m007 } from './007_session_instructions'
 
 export interface Migration {
   name: string
   up(db: Database.Database): void
 }
 
-const migrations: Migration[] = [m001, m002, m003, m004, m005, m006]
+const migrations: Migration[] = [m001, m002, m003, m004, m005, m006, m007]
 
 export function migrate(db: Database.Database): void {
   db.exec('CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)')

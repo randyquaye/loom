@@ -1,16 +1,29 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  readlink,
+  realpath,
+  rm,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterAll, describe, expect, it } from 'vitest'
-import { refreshWorkspaceAgentsDoc } from '../src/main/context/materialize'
-import { setAgentsExclude } from '../src/main/git/exclude'
+import { MANAGED_AGENTS_MARKER } from '../src/main/context/materialize'
+import { retireWorkspaceAgentsDoc } from '../src/main/instructions/legacy-agents'
 import { GIT_HARDENING_ARGS } from '../src/main/git/run'
 
 const execFileAsync = promisify(execFile)
 
 const roots: string[] = []
+const CONTENT = 'Loom facts.\r\nInstance instructions: café.\n'
+const GENERATED = Buffer.from(`${MANAGED_AGENTS_MARKER}\n${CONTENT}\n`)
+const expectedContent = async (): Promise<string> => CONTENT
 
 afterAll(async () => {
   await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })))
@@ -25,41 +38,102 @@ async function gitRepo(): Promise<string> {
   return repo
 }
 
-const MANAGED = '<!-- loom:managed -->'
-
-describe('managed AGENTS.md companion', () => {
-  it('writes a marker-first companion and excludes it while owned', async () => {
+describe('legacy AGENTS.md retirement', () => {
+  it('leaves an absent file absent without reconstructing old instructions', async () => {
     const repo = await gitRepo()
+    const result = await retireWorkspaceAgentsDoc(repo, async () => {
+      throw new Error('Missing files need no reconstruction')
+    })
 
-    expect(await refreshWorkspaceAgentsDoc(repo, 'facts here')).toBe(true)
-    const body = await readFile(path.join(repo, 'AGENTS.md'), 'utf8')
-    expect(body.startsWith(MANAGED)).toBe(true)
-    expect(body).toContain('facts here')
-
-    await setAgentsExclude(repo, true)
-    const exclude = await readFile(path.join(repo, '.git', 'info', 'exclude'), 'utf8')
-    expect(exclude.split('\n')).toContain('/AGENTS.md')
+    expect(result).toBe('absent')
+    await expect(readFile(path.join(repo, 'AGENTS.md'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('never overwrites a repo or user AGENTS.md and withdraws the exclude line', async () => {
+  it('preserves a user-authored instruction file without consulting current settings', async () => {
     const repo = await gitRepo()
-    await writeFile(path.join(repo, 'AGENTS.md'), '# mine\n', 'utf8')
-    await setAgentsExclude(repo, true)
+    const userText = '# Repository rules\nDo not change these.\n'
+    await writeFile(path.join(repo, 'AGENTS.md'), userText)
 
-    expect(await refreshWorkspaceAgentsDoc(repo, 'facts here')).toBe(false)
-    await setAgentsExclude(repo, false)
-    const exclude = await readFile(path.join(repo, '.git', 'info', 'exclude'), 'utf8')
-    expect(exclude.split('\n')).not.toContain('/AGENTS.md')
-    expect(await readFile(path.join(repo, 'AGENTS.md'), 'utf8')).toBe('# mine\n')
+    expect(
+      await retireWorkspaceAgentsDoc(repo, async () => {
+        throw new Error('User files must not depend on settings')
+      })
+    ).toBe('preserved')
+    expect(await readFile(path.join(repo, 'AGENTS.md'), 'utf8')).toBe(userText)
   })
 
-  it('refreshes a managed companion in place', async () => {
+  it('preserves a tracked file even when it exactly resembles generated content', async () => {
     const repo = await gitRepo()
-    await refreshWorkspaceAgentsDoc(repo, 'v1')
-    await refreshWorkspaceAgentsDoc(repo, 'v2')
+    await writeFile(path.join(repo, 'AGENTS.md'), GENERATED)
+    await execFileAsync('git', [...GIT_HARDENING_ARGS, '-C', repo, 'add', '--', 'AGENTS.md'], {
+      shell: false
+    })
 
-    const body = await readFile(path.join(repo, 'AGENTS.md'), 'utf8')
-    expect(body).toContain('v2')
-    expect(body).not.toContain('v1')
+    expect(await retireWorkspaceAgentsDoc(repo, expectedContent)).toBe('preserved')
+    expect(await readFile(path.join(repo, 'AGENTS.md'))).toEqual(GENERATED)
+  })
+
+  it.each([false, true])('preserves instruction symlinks (dangling: %s)', async (dangling) => {
+    const repo = await gitRepo()
+    const target = path.join(path.dirname(repo), 'original.md')
+    if (!dangling) await writeFile(target, GENERATED)
+    await symlink(target, path.join(repo, 'AGENTS.md'))
+
+    expect(await retireWorkspaceAgentsDoc(repo, expectedContent)).toBe('preserved')
+    expect(await readlink(path.join(repo, 'AGENTS.md'))).toBe(target)
+    if (!dangling) expect(await readFile(target)).toEqual(GENERATED)
+  })
+
+  it('requires review for edited generated content without changing any bytes', async () => {
+    const repo = await gitRepo()
+    const edited = Buffer.concat([GENERATED, Buffer.from('User addition.\n')])
+    await writeFile(path.join(repo, 'AGENTS.md'), edited)
+
+    expect(await retireWorkspaceAgentsDoc(repo, expectedContent)).toBe('needs-review')
+    expect(await readFile(path.join(repo, 'AGENTS.md'))).toEqual(edited)
+  })
+
+  it('preserves edits made while the expected legacy instructions are reconstructed', async () => {
+    const repo = await gitRepo()
+    const file = path.join(repo, 'AGENTS.md')
+    const edited = Buffer.concat([GENERATED, Buffer.from('Concurrent user addition.\n')])
+    await writeFile(file, GENERATED)
+
+    expect(
+      await retireWorkspaceAgentsDoc(repo, async () => {
+        await writeFile(file, edited)
+        return CONTENT
+      })
+    ).toBe('needs-review')
+    expect(await readFile(file)).toEqual(edited)
+  })
+
+  it('archives proven generated bytes without overwriting backups or changing shared excludes', async () => {
+    const repo = await gitRepo()
+    const file = path.join(repo, 'AGENTS.md')
+    const excludeFile = path.join(repo, '.git', 'info', 'exclude')
+    const exclude = '.context/\n/AGENTS.md\nkeep-this-entry\n'
+    await writeFile(excludeFile, exclude)
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await writeFile(file, GENERATED)
+      expect(await retireWorkspaceAgentsDoc(repo, expectedContent)).toBe('retired')
+      await expect(readFile(file)).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+
+    const backupDir = path.join(repo, '.context', 'legacy-instructions')
+    const backups = await readdir(backupDir)
+    expect(backups).toHaveLength(2)
+    for (const name of backups) expect(await readFile(path.join(backupDir, name))).toEqual(GENERATED)
+    expect(await readFile(excludeFile, 'utf8')).toBe(exclude)
+  })
+
+  it('surfaces archive failures while preserving the original instruction file', async () => {
+    const repo = await gitRepo()
+    await writeFile(path.join(repo, 'AGENTS.md'), GENERATED)
+    await writeFile(path.join(repo, '.context'), 'This path is not a directory.')
+
+    await expect(retireWorkspaceAgentsDoc(repo, expectedContent)).rejects.toMatchObject({ code: 'ENOTDIR' })
+    expect(await readFile(path.join(repo, 'AGENTS.md'))).toEqual(GENERATED)
   })
 })

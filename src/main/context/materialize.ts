@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { CONTEXT_DIR } from '../../shared/brand'
 import { COMMENTS_FILE } from '../db/repos/comments'
@@ -95,16 +95,3 @@ async function evictOldest(dir: string): Promise<void> {
 const MANAGED_AGENTS_MARKER = '<!-- loom:managed -->'
 
 export { MANAGED_AGENTS_MARKER }
-
-/**
- * codex has no system-prompt flag and reads AGENTS.md only from the worktree root, so Loom
- * keeps a managed companion there while the path is free. The marker comes first so a repo
- * or user file that takes the path is never overwritten; returns whether Loom owns the file.
- */
-export async function refreshWorkspaceAgentsDoc(worktreePath: string, content: string): Promise<boolean> {
-  const file = path.join(worktreePath, 'AGENTS.md')
-  const existing = await readFile(file, 'utf8').catch(() => null)
-  if (existing !== null && !existing.startsWith(MANAGED_AGENTS_MARKER)) return false
-  await writeFile(file, `${MANAGED_AGENTS_MARKER}\n${content}\n`, 'utf8')
-  return true
-}

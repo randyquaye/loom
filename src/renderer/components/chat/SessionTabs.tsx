@@ -9,6 +9,7 @@ import { useUi } from '../../state/ui'
 import { Popover } from '../ui/Popover'
 import { useToasts } from '../ui/Toast'
 import { RecentChats } from './RecentChats'
+import { SessionInstructions } from './SessionInstructions'
 import { clampInWindow } from '../ui/anchor'
 import './flow.css'
 
@@ -19,7 +20,7 @@ import './flow.css'
  * the compose sentinel and renders as a draft "New session" tab. Each session
  * tab carries a close button (hover or keyboard focus), which closes the session
  * without confirmation; the worktree is untouched. Right-click, Shift+F10 or the
- * menu key on a session tab opens its Export / Fork / Close menu.
+ * menu key on a session tab opens its Instructions / Export / Fork / Close menu.
  */
 export function SessionTabs({
   workspaceId,
@@ -40,7 +41,9 @@ export function SessionTabs({
   const atCap = sessions.length >= MAX_SESSIONS_PER_WORKSPACE
   const drafting = activeId === '' || (activeId === null && sessions.length === 0)
   const [menu, setMenu] = useState<{ session: SessionRow; x: number; y: number } | null>(null)
+  const [instructionsSession, setInstructionsSession] = useState<SessionRow | null>(null)
   const closeMenu = useCallback(() => setMenu(null), [])
+  const closeInstructions = useCallback(() => setInstructionsSession(null), [])
 
   function closeTab(session: SessionRow) {
     closeSession(workspaceId, session.id)
@@ -153,6 +156,7 @@ export function SessionTabs({
         <TabMenu key={`${menu.session.id}:${menu.x}:${menu.y}`} x={menu.x} y={menu.y} onClose={closeMenu}>
           {(
             [
+              ['View instructions', setInstructionsSession],
               ['Export as Markdown', exportTab],
               ['Fork session', forkTab],
               ['Close session', closeTab]
@@ -172,6 +176,13 @@ export function SessionTabs({
             </button>
           ))}
         </TabMenu>
+      )}
+      {instructionsSession !== null && (
+        <SessionInstructions
+          key={instructionsSession.id}
+          sessionId={instructionsSession.id}
+          onClose={closeInstructions}
+        />
       )}
     </div>
   )
