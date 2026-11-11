@@ -127,28 +127,16 @@ function appendUser(
     })
 }
 
-function appendAssistant(
-  history: unknown[],
-  backend: LoopBackendId,
-  text: string,
-  tools: NormalizedTool[]
-): void {
-  if (backend === 'qwen') {
-    history.push({
-      role: 'assistant',
-      content: text,
-      tool_calls: tools.map((tc) => ({
-        id: tc.id,
-        type: 'function',
-        function: { name: tc.name, arguments: JSON.stringify(tc.args) }
-      }))
-    })
-  } else {
-    const parts: Array<Record<string, unknown>> = []
-    if (text !== '') parts.push({ text })
-    for (const tc of tools) parts.push({ functionCall: { name: tc.name, args: tc.args } })
-    history.push({ role: 'model', parts })
-  }
+function appendQwenAssistant(history: unknown[], text: string, tools: NormalizedTool[]): void {
+  history.push({
+    role: 'assistant',
+    content: text,
+    tool_calls: tools.map((tc) => ({
+      id: tc.id,
+      type: 'function',
+      function: { name: tc.name, arguments: JSON.stringify(tc.args) }
+    }))
+  })
 }
 
 function appendToolResult(
@@ -161,7 +149,15 @@ function appendToolResult(
   else
     history.push({
       role: 'user',
-      parts: [{ functionResponse: { name: tc.name, response: { output } } }]
+      parts: [
+        {
+          functionResponse: {
+            ...(tc.providerCallId === undefined ? {} : { id: tc.providerCallId }),
+            name: tc.name,
+            response: { output }
+          }
+        }
+      ]
     })
 }
 
@@ -312,7 +308,8 @@ export function createLoopBackend(backend: LoopBackendId, deps: LoopDeps): Agent
               ? (parser as OpenAiStreamParser).pendingTools()
               : (parser as GeminiStreamParser).pendingTools()
 
-          appendAssistant(history, backend, parser.accumulatedText(), tools)
+          if (parser instanceof GeminiStreamParser) history.push(parser.assistantContent())
+          else appendQwenAssistant(history, parser.accumulatedText(), tools)
           const ctx: ToolCtx = { worktreePath: opts.worktreePath, signal: controller.signal }
           for (const tc of tools) {
             if (cancelled) break

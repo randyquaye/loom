@@ -8,6 +8,14 @@ import { isToolName, TOOL_PARAMETER_SCHEMAS, toolRunners } from './tools'
 export const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'
 
 export const GEMINI_MODELS: ModelDescriptor[] = [
+  { id: 'gemini-4-carbon', label: 'Gemini 4 Carbon', efforts: ['low', 'medium', 'high'] },
+  { id: 'gemini-4-argon', label: 'Gemini 4 Argon', efforts: ['low', 'medium', 'high'] },
+  { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', efforts: ['low', 'medium', 'high'] },
+  {
+    id: 'gemini-3.5-flash-lite',
+    label: 'Gemini 3.5 Flash-Lite',
+    efforts: ['minimal', 'low', 'medium', 'high']
+  },
   {
     id: 'gemini-2.5-pro',
     label: 'Gemini 2.5 Pro',
@@ -64,6 +72,7 @@ export class GeminiStreamParser {
   done = false
   private text = ''
   private toolCalls: NormalizedTool[] = []
+  private parts: Array<Record<string, unknown>> = []
 
   constructor(private readonly turnId: string) {}
 
@@ -73,6 +82,11 @@ export class GeminiStreamParser {
 
   pendingTools(): NormalizedTool[] {
     return this.toolCalls
+  }
+
+  /** Replay original parts: Gemini 3+ validates signatures on tool calls. */
+  assistantContent(): { role: 'model'; parts: Array<Record<string, unknown>> } {
+    return { role: 'model', parts: [...this.parts] }
   }
 
   *push(payload: string): Generator<AgentEvent> {
@@ -91,6 +105,7 @@ export class GeminiStreamParser {
       const candidate = candidates?.[0]
       const content = candidate?.content as Record<string, unknown> | undefined
       const parts = (content?.parts ?? []) as Array<Record<string, unknown>>
+      this.parts.push(...parts)
       for (const part of parts) {
         if (typeof part.text === 'string' && part.text !== '') {
           if (part.thought === true) {
@@ -102,8 +117,10 @@ export class GeminiStreamParser {
         }
         const fc = part.functionCall as Record<string, unknown> | undefined
         if (fc !== undefined && isToolName(fc.name)) {
+          const providerCallId = typeof fc.id === 'string' ? fc.id : undefined
           const call: NormalizedTool = {
-            id: `${fc.name}-${randomUUID()}`,
+            id: providerCallId ?? `${fc.name}-${randomUUID()}`,
+            ...(providerCallId === undefined ? {} : { providerCallId }),
             name: fc.name,
             args: fc.args ?? {}
           }
@@ -140,6 +157,7 @@ export function buildGeminiRequest(
   contents: unknown[],
   systemInstruction: string
 ) {
+  const legacy = opts.model.startsWith('gemini-2.5-')
   return {
     url: `${GEMINI_BASE_URL}/models/${encodeURIComponent(opts.model)}:streamGenerateContent?alt=sse`,
     init: {
@@ -151,7 +169,10 @@ export function buildGeminiRequest(
         // Function declarations plus Google Search grounding: the loop vocabulary had no
         // web tool at all, so gemini sessions could not search even when asked.
         tools: [GEMINI_TOOL_DECLS, { google_search: {} }],
-        generationConfig: { thinkingConfig: { thinkingBudget: budgetFor(opts.effort) } }
+        ...(legacy ? {} : { toolConfig: { includeServerSideToolInvocations: true } }),
+        generationConfig: {
+          thinkingConfig: legacy ? { thinkingBudget: budgetFor(opts.effort) } : { thinkingLevel: opts.effort }
+        }
       })
     }
   }
