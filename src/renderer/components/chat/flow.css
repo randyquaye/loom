@@ -201,6 +201,11 @@ body[data-modality='keyboard'] .tab-pin:focus-within .tab-close {
   font-style: italic;
 }
 
+.session-tab[data-unread='true'] .tab-label {
+  font-weight: 700;
+  color: var(--text);
+}
+
 /* Minimal provider mark: the same identity dot Settings and the model picker use. */
 .tab-backend-dot {
   flex: none;
@@ -397,6 +402,25 @@ body:not([data-modality='keyboard']) .tab-history:focus-visible,
 
 .composer-start-input {
   flex: none;
+}
+
+.composer-prompt {
+  position: relative;
+  flex: none;
+  width: 100%;
+  max-width: 920px;
+  margin-inline: auto;
+}
+
+.next-unread {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--s-2));
+  z-index: 2;
+  border: 1px solid var(--border-strong);
+  background: var(--panel-solid);
+  box-shadow: var(--shadow-1);
+  font-size: var(--fs-sm);
 }
 
 /* The input sits on the conversation's own surface: no separate fill, no edge highlight. */

@@ -133,6 +133,40 @@ describe('claude fixture replay', () => {
     for (const line of fixtureLines()) parser.parse(line)
     expect(parser.sessionId()).toBe(SESSION)
   })
+
+  it('includes subagent usage from the captured per-result model totals', () => {
+    const capture = readFileSync(new URL('./fixtures/claude-subagent-capture.jsonl', import.meta.url), 'utf8')
+    const events = replay(capture.trim().split('\n'))
+    expect(events.find((event) => event.type === 'usage')).toMatchObject({
+      scope: 'turn',
+      inputTokens: 74250,
+      outputTokens: 174,
+      cacheReadInputTokens: 35428,
+      cacheWriteInputTokens: 38816
+    })
+  })
+
+  it('sums per-result models without counting cumulative model totals again', () => {
+    const counts = { inputTokens: 2, outputTokens: 3, cacheReadInputTokens: 5, cacheCreationInputTokens: 7 }
+    const events = parseClaudeStreamLine(
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        usage: { input_tokens: 1, output_tokens: 1 },
+        modelUsage: { earlier: { ...counts, inputTokens: 99999 } },
+        model_usage_since_last_result: {
+          main: counts,
+          subagent: { ...counts, inputTokens: 11 }
+        }
+      })
+    )
+    expect(events.find((event) => event.type === 'usage')).toMatchObject({
+      inputTokens: 37,
+      outputTokens: 6,
+      cacheReadInputTokens: 10,
+      cacheWriteInputTokens: 14
+    })
+  })
 })
 
 describe('parseClaudeStreamLine tolerance', () => {

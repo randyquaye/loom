@@ -187,18 +187,24 @@ function appendEvent(db: Database.Database, sessionId: string, event: AgentEvent
   const seqRow = db
     .prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE session_id = ?')
     .get(sessionId) as { next: number }
-  db.prepare('INSERT INTO events (session_id, seq, ts, type, payload) VALUES (?, ?, ?, ?, ?)').run(
-    sessionId,
-    seqRow.next,
-    Date.now(),
-    stamped.type,
-    JSON.stringify(stamped)
-  )
+  const inserted = db
+    .prepare('INSERT INTO events (session_id, seq, ts, type, payload) VALUES (?, ?, ?, ?, ?)')
+    .run(sessionId, seqRow.next, Date.now(), stamped.type, JSON.stringify(stamped))
   const text = renderEventForSearch(stamped)
   if (text !== '') {
     db.prepare('INSERT INTO events_rendered (session_id, text) VALUES (?, ?)').run(sessionId, text)
   }
-  sink?.({ sessionId, event: stamped })
+  const row = db.prepare('SELECT workspace_id, closed_at FROM sessions WHERE id = ?').get(sessionId) as {
+    workspace_id: string
+    closed_at: number | null
+  }
+  const unread =
+    row.closed_at === null &&
+    (stamped.type === 'text.delta' || stamped.type === 'text.done') &&
+    stamped.text !== ''
+      ? { workspaceId: row.workspace_id, seq: seqRow.next, eventId: Number(inserted.lastInsertRowid) }
+      : undefined
+  sink?.({ sessionId, event: stamped, ...(unread === undefined ? {} : { unread }) })
 }
 
 /** A non-retryable failure, recorded in the transcript where the user will see it. */

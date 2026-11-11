@@ -1,5 +1,6 @@
 import { handle, type IpcDeps } from './handle'
 import { sessionInstructions } from '../sessions/instructions'
+import { markSessionRead, unreadSessions } from '../sessions/unread'
 import {
   answerQuestion,
   cancelTurn,
@@ -21,6 +22,8 @@ import {
 
 export function registerSessionsIpc(deps: IpcDeps): void {
   handle('sessions:activity', () => sessionActivity())
+  handle('sessions:unread', () => unreadSessions(deps.db))
+  handle('sessions:markRead', ({ sessionId, seq }) => markSessionRead(deps.db, sessionId, seq))
   handle('sessions:list', ({ workspaceId }) => listSessions(deps.db, workspaceId))
   handle('sessions:create', (input) => createSession(deps.db, input))
   handle('sessions:send', ({ sessionId, text, attachments }) =>

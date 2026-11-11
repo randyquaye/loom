@@ -77,6 +77,9 @@ export function WorkspaceItem({
 }) {
   const navigate = useUi((s) => s.navigate)
   const running = useSessions((s) => Object.values(s.activity.bySession).includes(workspace.id))
+  const unread = useSessions((s) =>
+    Object.values(s.unreadBySession).some((row) => row.workspaceId === workspace.id && row.seq > 0)
+  )
   const GitIcon = pr === 'merged' ? MergedIcon : pr === 'open' ? PullRequestIcon : BranchIcon
   const setArchived = useProjects((s) => s.setArchived)
   const push = useToasts((s) => s.push)
@@ -114,6 +117,7 @@ export function WorkspaceItem({
         type="button"
         className="ws-row"
         data-active={active}
+        data-unread={unread}
         aria-current={active ? 'page' : undefined}
         onClick={open}
       >
@@ -125,6 +129,9 @@ export function WorkspaceItem({
           {running ? <SessionActivityIndicator /> : <GitIcon />}
         </span>
         <span className="ws-name">{workspace.name}</span>
+        {unread && (
+          <span className="ws-unread-dot" role="img" aria-label="Unread messages" title="Unread messages" />
+        )}
         <span className="ws-state-slot">
           {statusTitle !== null && (
             <span

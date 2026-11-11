@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { AgentEvent, ToolName } from '../../../shared/events'
+import { addUsageCounts, type UsageCounts } from '../../../shared/usage'
 import { errorEvent, isRec, list, num, str, sub, tryParseRecord, type Rec } from './record'
 
 /** Used when a record carries no `session_id` of its own. */
@@ -279,7 +280,29 @@ function resultEvents(record: Rec, turnId: string): AgentEvent[] {
       retryable: false
     })
   }
-  const measured = claudeUsage(usage, turnId)
+  // Per-result model totals include subagents; modelUsage can include earlier results.
+  const models = Object.values(sub(record, 'model_usage_since_last_result') ?? {}).map((model) =>
+    isRec(model)
+      ? claudeUsage(
+          {
+            input_tokens: num(model, 'inputTokens'),
+            output_tokens: num(model, 'outputTokens'),
+            cache_read_input_tokens: num(model, 'cacheReadInputTokens'),
+            cache_creation_input_tokens: num(model, 'cacheCreationInputTokens')
+          },
+          turnId
+        )
+      : undefined
+  )
+  let measured = claudeUsage(usage, turnId)
+  if (models.length > 0 && models.every((model) => model !== undefined)) {
+    measured = {
+      type: 'usage',
+      turnId,
+      scope: 'turn',
+      ...models.reduce<UsageCounts>(addUsageCounts, { inputTokens: 0 })
+    }
+  }
   if (measured !== undefined) events.push(measured)
   events.push({ type: 'turn.done', turnId, stopReason })
   return events

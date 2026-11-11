@@ -1,9 +1,14 @@
-.chat-usage-popup {
+.popover.chat-usage-popup {
   display: none;
   top: auto;
-  bottom: calc(100% + 6px);
+  bottom: calc(100% + var(--s-2));
   left: 0;
-  min-width: 180px;
+  width: 280px;
+  min-width: 0;
+  max-width: calc(100vw - var(--s-6));
+  padding: var(--s-4);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
   color: var(--text);
   pointer-events: none;
 }
@@ -11,25 +16,52 @@
 .chat-usage-trigger:focus .chat-usage-popup {
   display: block;
 }
+.chat-usage-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-4);
+}
+.chat-usage-heading strong {
+  font-weight: 600;
+}
+.chat-usage-heading > span {
+  color: var(--text-faint);
+  font-size: 12px;
+}
 .chat-usage-popup dl {
-  margin: var(--s-2) 0 0;
+  display: grid;
+  gap: var(--s-2);
+  margin: var(--s-3) 0 0;
 }
 .chat-usage-popup dl div {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: baseline;
   gap: var(--s-4);
 }
 .chat-usage-popup dt {
   color: var(--text-muted);
+  white-space: nowrap;
 }
 .chat-usage-popup dd {
   margin: 0;
   font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
 }
 .chat-usage-note {
   display: block;
-  max-width: 260px;
-  margin-top: var(--s-2);
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--border);
   color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
   white-space: normal;
+}
+.chat-usage-note + .chat-usage-note {
+  margin-top: var(--s-1);
+  padding-top: 0;
+  border-top: none;
 }

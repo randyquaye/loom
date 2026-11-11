@@ -102,6 +102,8 @@ const api: LoomApi = {
   },
   sessions: {
     activity: () => invoke('sessions:activity', undefined),
+    unread: () => invoke('sessions:unread', undefined),
+    markRead: (sessionId, seq) => invoke('sessions:markRead', { sessionId, seq }),
     list: (workspaceId) => invoke('sessions:list', { workspaceId }),
     create: (input) => invoke('sessions:create', input),
     send: (sessionId, text, attachments) =>

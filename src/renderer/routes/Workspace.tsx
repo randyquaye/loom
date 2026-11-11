@@ -42,6 +42,9 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
   )
   const loadWorkspaces = useProjects((s) => s.loadWorkspaces)
   const activeId = useSessions((s) => s.activeSessionByWorkspace[workspaceId] ?? null)
+  const unreadSeq = useSessions((s) => (activeId ? (s.unreadBySession[activeId]?.seq ?? 0) : 0))
+  const transcriptLoaded = useSessions((s) => !!activeId && s.eventsBySession[activeId] !== undefined)
+  const markRead = useSessions((s) => s.markRead)
   const events = useSessions((s) => (activeId ? s.eventsBySession[activeId] : undefined)) ?? []
   // Voice mode replaces the transcript only once there is a session to talk to.
   const voiceStage = useUi((s) => s.voiceMode) && !!activeId
@@ -75,6 +78,30 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
   useEffect(() => {
     void load(workspaceId)
   }, [workspaceId, load])
+
+  useEffect(() => {
+    const read = () => {
+      if (
+        activeId &&
+        transcriptLoaded &&
+        pane === 'chat' &&
+        !voiceStage &&
+        document.hasFocus() &&
+        document.visibilityState === 'visible'
+      ) {
+        void markRead(activeId).catch((err: unknown) =>
+          push(`Could not mark session read: ${String(err)}`, 'err')
+        )
+      }
+    }
+    read()
+    window.addEventListener('focus', read)
+    document.addEventListener('visibilitychange', read)
+    return () => {
+      window.removeEventListener('focus', read)
+      document.removeEventListener('visibilitychange', read)
+    }
+  }, [activeId, transcriptLoaded, pane, voiceStage, unreadSeq, markRead, push])
 
   useEffect(() => {
     if (ready) void loadTree(workspaceId)

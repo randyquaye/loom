@@ -462,32 +462,31 @@ export function TurnMeta({
           {label ?? 'Usage'}
           {usage !== undefined && (
             <span className="popover elevated chat-usage-popup" id={tooltipId} role="tooltip">
-              <strong>
-                {usage.scope === 'thread'
-                  ? 'Thread totals'
-                  : usage.scope === undefined
-                    ? 'Recorded usage'
-                    : 'Turn usage'}
-              </strong>
+              <span className="chat-usage-heading">
+                <strong>
+                  {usage.scope === 'thread'
+                    ? 'Thread totals'
+                    : usage.scope === undefined
+                      ? 'Recorded usage'
+                      : 'Turn usage'}
+                </strong>
+                <span>Tokens</span>
+              </span>
               <dl>
                 {usageFields.map((field) => (
                   <div key={field}>
                     <dt>{names[field]}</dt>
-                    <dd>
-                      {usage[field]?.toLocaleString('en-US') ?? 'Not reported'}
-                      {field === 'cacheWriteInputTokens' && usage[field] === 0 ? ' (reported)' : ''}
+                    <dd aria-label={usage[field] === undefined ? 'Not reported' : undefined}>
+                      {usage[field]?.toLocaleString('en-US') ?? '—'}
                     </dd>
                   </div>
                 ))}
               </dl>
-              <span className="chat-usage-note">
-                {usage.scope === undefined
-                  ? 'Older input counts may exclude cached tokens.'
-                  : 'Cache reads and writes are included in total input.'}
-              </span>
-              <span className="chat-usage-note">Conversation only; excludes subagents and naming calls.</span>
+              {usage.scope !== undefined && (
+                <span className="chat-usage-note">Cache tokens are included in total input.</span>
+              )}
               {usage.partial && (
-                <span className="chat-usage-note">Partial counts after an interrupted response.</span>
+                <span className="chat-usage-note">Partial usage · Response interrupted.</span>
               )}
             </span>
           )}

@@ -292,6 +292,26 @@ body[data-modality='keyboard'] .tree-panel button:focus-visible {
   margin-inline: auto;
 }
 
+.md-view table {
+  margin: var(--s-3) 0;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.md-view th,
+.md-view td {
+  padding: 6px var(--s-3);
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.md-view th {
+  background: var(--surface-1);
+  font-weight: 600;
+}
+
 .viewer-host[data-mode='diff'] .viewer-body {
   display: flex;
   flex-direction: column;

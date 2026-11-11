@@ -232,6 +232,19 @@ body[data-modality='keyboard'] .side-foot-btn:focus-visible {
   white-space: nowrap;
 }
 
+.ws-row[data-unread='true'] .ws-name {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.ws-unread-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--info);
+}
+
 /* Workspace row + "⋯" menu: reserve both the menu and state slot in every bootstrap state. */
 .sidebar .ws-item {
   position: relative;

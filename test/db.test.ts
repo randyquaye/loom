@@ -37,7 +37,8 @@ describe('db', () => {
       '004_project_prompts',
       '005_diff_comments',
       '006_workspace_auto_named',
-      '007_session_instructions'
+      '007_session_instructions',
+      '008_session_read'
     ])
     second.close()
   })

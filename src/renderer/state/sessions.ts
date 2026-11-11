@@ -1,11 +1,14 @@
 import { create } from 'zustand'
-import type { SessionActivity, SessionForkInput, SessionRow } from '../../shared/ipc-contract'
+import type { SessionActivity, SessionForkInput, SessionRow, SessionUnread } from '../../shared/ipc-contract'
 import type { AgentEvent } from '../../shared/events'
 import type { BackendId, Effort, ModelDescriptor } from '../../shared/models'
 import { createCompletionChime } from '../audio/completion'
 
 interface SessionsState {
   activity: SessionActivity
+  unreadBySession: Record<string, SessionUnread>
+  loadUnread(): Promise<void>
+  markRead(sessionId: string): Promise<void>
   sessionsByWorkspace: Record<string, SessionRow[]>
   eventsBySession: Record<string, AgentEvent[]>
   activeSessionByWorkspace: Record<string, string | null>
@@ -34,6 +37,22 @@ interface SessionsState {
 
 export const useSessions = create<SessionsState>((set, get) => ({
   activity: { revision: -1, bySession: {} },
+  unreadBySession: {},
+  async loadUnread() {
+    const unread = await window.loom.sessions.unread()
+    // Live replies and read/close tombstones win over an older startup snapshot.
+    set((s) => ({ unreadBySession: { ...unread, ...s.unreadBySession } }))
+  },
+  async markRead(sessionId) {
+    const unread = get().unreadBySession[sessionId]
+    if (!unread?.seq) return
+    await window.loom.sessions.markRead(sessionId, unread.seq)
+    set((s) =>
+      s.unreadBySession[sessionId]?.seq === unread.seq
+        ? { unreadBySession: { ...s.unreadBySession, [sessionId]: { ...unread, seq: 0 } } }
+        : s
+    )
+  },
   sessionsByWorkspace: {},
   eventsBySession: {},
   activeSessionByWorkspace: {},
@@ -116,6 +135,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
     delete eventsBySession[sessionId]
     set({
       sessionsByWorkspace: { ...get().sessionsByWorkspace, [workspaceId]: remaining },
+      unreadBySession: { ...get().unreadBySession, [sessionId]: { workspaceId, seq: 0, eventId: 0 } },
       eventsBySession,
       activeSessionByWorkspace: wasActive
         ? { ...get().activeSessionByWorkspace, [workspaceId]: nextActive }
@@ -149,6 +169,10 @@ export const useSessions = create<SessionsState>((set, get) => ({
 
   async reopen(workspaceId, sessionId) {
     await window.loom.sessions.reopen(sessionId)
+    const unreadBySession = { ...get().unreadBySession }
+    delete unreadBySession[sessionId]
+    set({ unreadBySession })
+    await get().loadUnread()
     await get().load(workspaceId)
     get().setActive(workspaceId, sessionId)
   },
@@ -185,8 +209,9 @@ export function subscribeSessionEvents(shouldPlayCompletionSound?: (sessionId: s
       console.error('Could not load session activity', error)
     })
   window.loom.onSessionEvent((push) => {
-    const { sessionId, event } = push
+    const { sessionId, event, unread } = push
     useSessions.setState((s) => ({
+      ...(unread === undefined ? {} : { unreadBySession: { ...s.unreadBySession, [sessionId]: unread } }),
       eventsBySession: {
         ...s.eventsBySession,
         [sessionId]: [...(s.eventsBySession[sessionId] ?? []), event]

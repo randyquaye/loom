@@ -61,6 +61,14 @@ export interface SessionActivity {
   bySession: Record<string, string>
 }
 
+export interface SessionUnread {
+  workspaceId: string
+  /** Globally increasing event id, used to order unread replies across sessions. */
+  eventId: number
+  /** Latest unread assistant text event; zero is a renderer acknowledgment tombstone. */
+  seq: number
+}
+
 /** Loom's saved instruction text; provider-managed discovery is not inspected. */
 export interface SessionInstructionsInfo {
   status: 'pending' | 'saved' | 'legacy'
@@ -304,6 +312,8 @@ export interface IpcContract {
 
   'sessions:list': { in: { workspaceId: string }; out: SessionRow[] }
   'sessions:activity': { in: void; out: SessionActivity }
+  'sessions:unread': { in: void; out: Record<string, SessionUnread> }
+  'sessions:markRead': { in: { sessionId: string; seq: number }; out: void }
   'sessions:create': { in: SessionCreateInput; out: SessionRow }
   'sessions:send': { in: { sessionId: string; text: string; attachments: string[] }; out: void }
   'sessions:steer': { in: { sessionId: string; text: string; attachments: string[] }; out: void }
@@ -484,6 +494,8 @@ export const ipcSchemas = {
   'sessions:reopen': z.object({ sessionId: id }),
   'sessions:queue': z.object({ sessionId: id }),
   'sessions:activity': z.undefined(),
+  'sessions:unread': z.undefined(),
+  'sessions:markRead': z.object({ sessionId: id, seq: z.number().int().min(0) }),
   'sessions:dequeue': z.object({ sessionId: id, index: z.number().int().min(0).max(99) }),
   'comments:list': z.object({ workspaceId: id }),
   'comments:add': z.object({
@@ -518,6 +530,7 @@ export const SESSION_ACTIVITY_CHANNEL = 'session:activity'
 export interface SessionEventPush {
   sessionId: string
   event: AgentEvent
+  unread?: SessionUnread
 }
 
 export const TERMINAL_DATA_CHANNEL = 'terminal:data'
@@ -650,6 +663,8 @@ export interface LoomApi {
   }
   sessions: {
     activity(): Promise<SessionActivity>
+    unread(): Promise<Record<string, SessionUnread>>
+    markRead(sessionId: string, seq: number): Promise<void>
     list(workspaceId: string): Promise<SessionRow[]>
     create(input: SessionCreateInput): Promise<SessionRow>
     send(sessionId: string, text: string, attachments?: string[]): Promise<void>

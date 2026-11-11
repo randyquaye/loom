@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import type { QueuedMessage, SessionRow } from '../../../shared/ipc-contract'
 import { EFFORTS, type BackendId, type Effort } from '../../../shared/models'
@@ -17,6 +17,7 @@ import { WeaveMark } from '../ui/WeaveMark'
 import { AttachChips, AttachPicker } from './Attachments'
 import { ContextDonut } from './ContextDonut'
 import { ModelPicker } from './ModelPicker'
+import { NextUnread } from './NextUnread'
 import { HeadphonesIcon, MicIcon, SpeakerIcon } from '../ui/icons'
 import { VoiceStage } from './VoiceStage'
 import './flow.css'
@@ -39,6 +40,17 @@ interface Choice {
   backend: BackendId
   model: string
   effort: Effort
+}
+
+function ComposerBox({ disabled, children }: { disabled: boolean; children: ReactNode }) {
+  return (
+    <div className="composer-prompt">
+      <NextUnread />
+      <fieldset className="composer-box" disabled={disabled} aria-label="Message composer">
+        {children}
+      </fieldset>
+    </div>
+  )
 }
 
 type Flow = 'review' | 'fix'
@@ -250,7 +262,7 @@ function StartComposer({ workspaceId, disabled }: { workspaceId: string; disable
           </div>
         )}
         <AttachChips sessionId={draftKey} disabled={disabled || busy} />
-        <fieldset className="composer-box" disabled={disabled || busy} aria-label="Message composer">
+        <ComposerBox disabled={disabled || busy}>
           <textarea
             ref={ref}
             value={text}
@@ -287,7 +299,7 @@ function StartComposer({ workspaceId, disabled }: { workspaceId: string; disable
               </svg>
             </button>
           </div>
-        </fieldset>
+        </ComposerBox>
       </div>
     </div>
   )
@@ -564,7 +576,7 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
           )}
         </div>
       )}
-      <fieldset className="composer-box" disabled={disabled} aria-label="Message composer">
+      <ComposerBox disabled={disabled}>
         <textarea
           ref={ref}
           value={text}
@@ -687,7 +699,7 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
             </svg>
           </button>
         </div>
-      </fieldset>
+      </ComposerBox>
     </div>
   )
 }

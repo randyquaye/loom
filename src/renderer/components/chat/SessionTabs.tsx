@@ -33,6 +33,7 @@ export function SessionTabs({
 }) {
   const sessions = useSessions((s) => s.sessionsByWorkspace[workspaceId]) ?? []
   const running = useSessions((s) => s.activity.bySession)
+  const unread = useSessions((s) => s.unreadBySession)
   const activeId = useSessions((s) => s.activeSessionByWorkspace[workspaceId] ?? null)
   const setActive = useSessions((s) => s.setActive)
   const closeSession = useSessions((s) => s.close)
@@ -42,6 +43,13 @@ export function SessionTabs({
   const drafting = activeId === '' || (activeId === null && sessions.length === 0)
   const [menu, setMenu] = useState<{ session: SessionRow; x: number; y: number } | null>(null)
   const [instructionsSession, setInstructionsSession] = useState<SessionRow | null>(null)
+  const tabsRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    tabsRef.current?.querySelector('[role="tab"][aria-selected="true"]')?.scrollIntoView({
+      block: 'nearest',
+      inline: 'nearest'
+    })
+  }, [activeId, chatShown, sessions])
   const closeMenu = useCallback(() => setMenu(null), [])
   const closeInstructions = useCallback(() => setInstructionsSession(null), [])
 
@@ -78,7 +86,7 @@ export function SessionTabs({
   }
 
   return (
-    <div className="tabs session-tabs" role="tablist" aria-label="Sessions">
+    <div ref={tabsRef} className="tabs session-tabs" role="tablist" aria-label="Sessions">
       {sessions.map((session) => {
         const on = chatShown && session.id === activeId
         return (
@@ -86,6 +94,7 @@ export function SessionTabs({
           <div
             key={session.id}
             className={`tab session-tab${on ? ' tab-on' : ''}`}
+            data-unread={(unread[session.id]?.seq ?? 0) > 0}
             role="presentation"
             onContextMenu={(e) => {
               e.preventDefault()
@@ -95,6 +104,7 @@ export function SessionTabs({
             <button
               role="tab"
               aria-selected={on}
+              aria-label={`${session.title}${unread[session.id]?.seq ? ' (unread messages)' : ''}`}
               aria-haspopup="menu"
               className="tab-main"
               title={`${session.backend} · ${session.model} · ${session.effort}`}
