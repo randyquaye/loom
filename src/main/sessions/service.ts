@@ -5,6 +5,7 @@ import type Database from 'better-sqlite3'
 import { renderEventForSearch, type AgentEvent, type QuestionAnswer } from '../../shared/events'
 import { questionAnswerText, validateQuestionAnswers, visibleQuestionAnswers } from '../../shared/questions'
 import {
+  type QueuedMessage,
   type SessionActivity,
   type SessionCreateInput,
   type SessionEventPush,
@@ -262,7 +263,8 @@ async function pump(db: Database.Database, sessionId: string, session: RunningSe
 
 /** Turns in flight and messages waiting for them, per session (process-local). */
 const busyTurns = new Map<string, string>()
-const queues = new Map<string, PreparedTurn[]>()
+const queues = new Map<string, (PreparedTurn & { id: string })[]>()
+const promotions = new Map<string, { drain: boolean }>()
 const preparing = new Map<string, { work: Promise<PreparedTurn>; controller: AbortController }>()
 /** A message the user forced over a running turn; sent the moment that turn ends. */
 const immediate = new Map<string, PreparedTurn[]>()
@@ -308,7 +310,7 @@ export async function sendNow(
   if (pending.length === 1) await cancelTurn(db, sessionId)
 }
 
-type QueueSink = (push: { sessionId: string; items: string[] }) => void
+type QueueSink = (push: { sessionId: string; items: QueuedMessage[] }) => void
 
 let queueSink: QueueSink | null = null
 
@@ -435,11 +437,15 @@ function prepareInput(
   return work
 }
 
-export function sessionQueue(sessionId: string): string[] {
-  return (queues.get(sessionId) ?? []).map((input) => input.displayText ?? input.text)
+export function sessionQueue(sessionId: string): QueuedMessage[] {
+  return (queues.get(sessionId) ?? []).map((input) => ({
+    id: input.id,
+    text: input.displayText ?? input.text
+  }))
 }
 
-export function dequeue(sessionId: string, index: number): string[] {
+export function dequeue(sessionId: string, index: number): QueuedMessage[] {
+  if (promotions.has(sessionId)) throw new Error('A queued message is being delivered')
   const queue = queues.get(sessionId)
   if (queue === undefined) return []
   queue.splice(index, 1)
@@ -449,12 +455,45 @@ export function dequeue(sessionId: string, index: number): string[] {
 }
 
 function drainQueue(db: Database.Database, sessionId: string): void {
+  // Wait for steering acknowledgement before a queued message can start another turn.
+  const promotion = promotions.get(sessionId)
+  if (promotion !== undefined) {
+    promotion.drain = true
+    return
+  }
   const queue = queues.get(sessionId)
   const next = queue?.shift()
   if (queue !== undefined && queue.length === 0) queues.delete(sessionId)
   if (next === undefined) return
   pushQueue(sessionId)
   sendDetached(db, sessionId, next, 'queue.drain')
+}
+
+export async function steerQueued(
+  db: Database.Database,
+  sessionId: string,
+  messageId: string
+): Promise<QueuedMessage[]> {
+  const queue = queues.get(sessionId) ?? []
+  const input = queue.find((item) => item.id === messageId)
+  const session = live.get(sessionId)
+  if (input === undefined || !busyTurns.has(sessionId) || session?.steer === undefined)
+    throw new Error('The message or running turn is no longer available for steering')
+  if (promotions.has(sessionId)) throw new Error('A queued message is being delivered')
+  const promotion = { drain: false }
+  promotions.set(sessionId, promotion)
+  try {
+    if (input.images.length === 0) await session.steer(input.text)
+    else await session.steer(input.text, input.images)
+    if (queues.get(sessionId) !== queue) return sessionQueue(sessionId)
+    queue.splice(queue.indexOf(input), 1)
+    if (queue.length === 0) queues.delete(sessionId)
+    pushQueue(sessionId)
+  } finally {
+    if (promotions.get(sessionId) === promotion) promotions.delete(sessionId)
+  }
+  if (promotion.drain && !busyTurns.has(sessionId)) drainQueue(db, sessionId)
+  return sessionQueue(sessionId)
 }
 
 export function sendTurn(
@@ -505,7 +544,7 @@ async function sendPreparedTurn(
   // process against the same provider session.
   if (busyTurns.has(sessionId)) {
     const queue = queues.get(sessionId) ?? []
-    queue.push(input)
+    queue.push({ ...input, id: randomUUID() })
     queues.set(sessionId, queue)
     pushQueue(sessionId)
     return
@@ -779,6 +818,7 @@ export async function answerQuestion(
 }
 
 export function closeSession(sessionId: string): void {
+  promotions.delete(sessionId)
   preparing.get(sessionId)?.controller.abort()
   preparing.delete(sessionId)
   const session = live.get(sessionId)

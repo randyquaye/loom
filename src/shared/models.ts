@@ -23,8 +23,7 @@ export const EFFORT_LABELS: Record<Effort, string> = {
 }
 
 /**
- * Estimated context windows per model family, for the badge's usage meter.
- * Estimates only: providers do not expose the live window through the CLIs.
+ * Fallback context windows when the provider does not report its live window.
  */
 export function contextWindowFor(model: string): number {
   if (/gemini/.test(model)) return 1_000_000

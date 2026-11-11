@@ -71,11 +71,10 @@ export function startCodexSession(opts: SessionOpts, onRequest?: RequestHandler)
     }
     const inputTokens = delta('inputTokens')
     const outputTokens = delta('outputTokens')
-    const contextTokens = num(last, 'inputTokens')
+    const contextTokens = num(last, 'inputTokens') || num(last, 'totalTokens')
     if (inputTokens === undefined || outputTokens === undefined) return { ...event, contextTokens }
     return {
-      type: 'usage',
-      turnId: event.turnId,
+      ...event,
       scope: 'turn',
       inputTokens,
       outputTokens,

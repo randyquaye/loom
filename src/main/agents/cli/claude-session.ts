@@ -26,6 +26,7 @@ interface Turn {
   cancelled: boolean
   result?: Done
   usage?: UsageCounts
+  partial?: boolean
   messages: Map<string, UsageCounts>
   contextTokens?: number
 }
@@ -213,6 +214,7 @@ export function startClaudeSession(opts: SessionOpts): RunningSession {
           turnId: turn.id,
           scope: 'turn',
           contextTokens: turn.contextTokens,
+          partial: turn.partial,
           ...total
         })
       }
@@ -233,13 +235,24 @@ export function startClaudeSession(opts: SessionOpts): RunningSession {
         continue
       }
       if (event.type === 'usage') {
-        turn.usage = turn.usage === undefined ? event : addUsageCounts(turn.usage, event)
+        let counts: UsageCounts = event
+        if (str(frame, 'subtype') !== 'success') {
+          let measured: UsageCounts = { inputTokens: 0 }
+          for (const message of turn.messages.values()) measured = addUsageCounts(measured, message)
+          // Crash and budget-limit results can omit requests already measured above.
+          if (measured.inputTokens > event.inputTokens) {
+            counts = { ...measured, outputTokens: event.outputTokens || undefined }
+            turn.partial = true
+          }
+        }
+        turn.usage = turn.usage === undefined ? counts : addUsageCounts(turn.usage, counts)
         turn.messages.clear()
         queue.push({
           type: 'usage',
           turnId: turn.id,
           scope: 'turn',
           contextTokens: turn.contextTokens,
+          partial: turn.partial,
           ...turn.usage
         })
       } else queue.push(event)

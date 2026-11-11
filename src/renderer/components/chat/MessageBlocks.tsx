@@ -446,7 +446,7 @@ export function TurnMeta({
   }, [copied])
   if (label === undefined && copyText === undefined && usage === undefined) return null
   const names = {
-    inputTokens: 'Input',
+    inputTokens: usage?.scope === undefined ? 'Recorded input' : 'Total input',
     outputTokens: 'Output',
     cacheReadInputTokens: 'Cache read',
     cacheWriteInputTokens: 'Cache write'
@@ -462,17 +462,33 @@ export function TurnMeta({
           {label ?? 'Usage'}
           {usage !== undefined && (
             <span className="popover elevated chat-usage-popup" id={tooltipId} role="tooltip">
-              <strong>{usage.scope === 'thread' ? 'Thread totals' : 'Token usage'}</strong>
+              <strong>
+                {usage.scope === 'thread'
+                  ? 'Thread totals'
+                  : usage.scope === undefined
+                    ? 'Recorded usage'
+                    : 'Turn usage'}
+              </strong>
               <dl>
-                {usageFields.map((field) =>
-                  usage[field] === undefined ? null : (
-                    <div key={field}>
-                      <dt>{names[field]}</dt>
-                      <dd>{usage[field].toLocaleString('en-US')}</dd>
-                    </div>
-                  )
-                )}
+                {usageFields.map((field) => (
+                  <div key={field}>
+                    <dt>{names[field]}</dt>
+                    <dd>
+                      {usage[field]?.toLocaleString('en-US') ?? 'Not reported'}
+                      {field === 'cacheWriteInputTokens' && usage[field] === 0 ? ' (reported)' : ''}
+                    </dd>
+                  </div>
+                ))}
               </dl>
+              <span className="chat-usage-note">
+                {usage.scope === undefined
+                  ? 'Older input counts may exclude cached tokens.'
+                  : 'Cache reads and writes are included in total input.'}
+              </span>
+              <span className="chat-usage-note">Conversation only; excludes subagents and naming calls.</span>
+              {usage.partial && (
+                <span className="chat-usage-note">Partial counts after an interrupted response.</span>
+              )}
             </span>
           )}
         </span>

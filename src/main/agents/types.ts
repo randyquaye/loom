@@ -6,6 +6,8 @@ export interface NormalizedTool {
   id: string
   name: ToolName
   args: unknown
+  /** Native ID when supplied; legacy Gemini calls have only a generated UI ID. */
+  providerCallId?: string
 }
 
 /** A live session: push user turns in, consume normalized events out. */

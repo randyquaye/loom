@@ -482,6 +482,12 @@ body:not([data-modality='keyboard']) .tab-history:focus-visible,
   white-space: nowrap;
 }
 
+.composer-queue-steer {
+  flex: none;
+  height: var(--s-5);
+  font-size: var(--fs-xs);
+}
+
 .composer-queue-remove {
   display: inline-flex;
   flex: none;
@@ -784,7 +790,6 @@ body:not([data-modality='keyboard']) .tab-history:focus-visible,
 }
 
 /* Removed, not hidden: they sit after the spacer, so appearing only shrinks the gap. */
-.composer-cancel[data-visible='false'],
 .composer-sendnow[data-visible='false'] {
   display: none;
 }

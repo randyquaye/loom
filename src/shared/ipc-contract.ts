@@ -307,6 +307,7 @@ export interface IpcContract {
   'sessions:create': { in: SessionCreateInput; out: SessionRow }
   'sessions:send': { in: { sessionId: string; text: string; attachments: string[] }; out: void }
   'sessions:steer': { in: { sessionId: string; text: string; attachments: string[] }; out: void }
+  'sessions:steerQueued': { in: { sessionId: string; messageId: string }; out: QueuedMessage[] }
   'sessions:answerQuestion': { in: { sessionId: string; answer: QuestionAnswer }; out: void }
   'sessions:sendNow': { in: { sessionId: string; text: string; attachments: string[] }; out: void }
   'sessions:cancel': { in: { sessionId: string }; out: void }
@@ -317,8 +318,8 @@ export interface IpcContract {
   'sessions:close': { in: { sessionId: string }; out: void }
   'sessions:closed': { in: { workspaceId: string }; out: SessionRow[] }
   'sessions:reopen': { in: { sessionId: string }; out: SessionRow }
-  'sessions:queue': { in: { sessionId: string }; out: string[] }
-  'sessions:dequeue': { in: { sessionId: string; index: number }; out: string[] }
+  'sessions:queue': { in: { sessionId: string }; out: QueuedMessage[] }
+  'sessions:dequeue': { in: { sessionId: string; index: number }; out: QueuedMessage[] }
   'comments:list': { in: { workspaceId: string }; out: CommentRow[] }
   'comments:add': {
     in: { workspaceId: string; path: string; line: number; body: string }
@@ -464,6 +465,7 @@ export const ipcSchemas = {
   }),
   'sessions:send': promptInput,
   'sessions:steer': promptInput,
+  'sessions:steerQueued': z.object({ sessionId: id, messageId: id }),
   'sessions:answerQuestion': z.object({ sessionId: id, answer: questionAnswer }),
   'sessions:sendNow': promptInput,
   'sessions:cancel': z.object({ sessionId: id }),
@@ -539,9 +541,13 @@ export interface WorkspaceStatePush {
 }
 
 export const SESSION_QUEUE_CHANNEL = 'session:queue'
+export interface QueuedMessage {
+  id: string
+  text: string
+}
 export interface SessionQueuePush {
   sessionId: string
-  items: string[]
+  items: QueuedMessage[]
 }
 
 export const SESSION_TITLE_CHANNEL = 'session:title'
@@ -648,6 +654,7 @@ export interface LoomApi {
     create(input: SessionCreateInput): Promise<SessionRow>
     send(sessionId: string, text: string, attachments?: string[]): Promise<void>
     steer(sessionId: string, text: string, attachments?: string[]): Promise<void>
+    steerQueued(sessionId: string, messageId: string): Promise<QueuedMessage[]>
     answerQuestion(sessionId: string, answer: QuestionAnswer): Promise<void>
     sendNow(sessionId: string, text: string, attachments?: string[]): Promise<void>
     cancel(sessionId: string): Promise<void>
@@ -658,8 +665,8 @@ export interface LoomApi {
     close(sessionId: string): Promise<void>
     closed(workspaceId: string): Promise<SessionRow[]>
     reopen(sessionId: string): Promise<SessionRow>
-    queue(sessionId: string): Promise<string[]>
-    dequeue(sessionId: string, index: number): Promise<string[]>
+    queue(sessionId: string): Promise<QueuedMessage[]>
+    dequeue(sessionId: string, index: number): Promise<QueuedMessage[]>
   }
   comments: {
     list(workspaceId: string): Promise<CommentRow[]>

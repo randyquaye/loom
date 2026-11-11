@@ -108,6 +108,8 @@ export const agentEvent = z.discriminatedUnion('type', [
     outputTokens: z.number().optional(),
     /** Latest request's input footprint, separate from accumulated turn usage. */
     contextTokens: z.number().optional(),
+    contextWindowTokens: z.number().optional(),
+    partial: z.boolean().optional(),
     scope: z.enum(['thread', 'turn', 'request']).optional(),
     cacheReadInputTokens: z.number().optional(),
     cacheWriteInputTokens: z.number().optional()
