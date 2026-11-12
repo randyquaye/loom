@@ -3,16 +3,22 @@ import { createPortal } from 'react-dom'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
+import type { TerminalInfo } from '../../../shared/ipc-contract'
 import { Splitter } from '../ui/Splitter'
 import { useToasts } from '../ui/Toast'
 import { TERM_DEFAULT, TERM_MIN, termMax, usePanels } from '../../state/panels'
+import { useProjects } from '../../state/projects'
 import { clampInWindow, WINDOW_EDGE } from '../ui/anchor'
 import '../panels/panels.css'
 
 interface Tab {
   key: number
   label: string
+  /** A terminal already running on the runner: the tab shows it instead of starting one. */
+  attach?: TerminalInfo
 }
+
+const FIRST_TAB: Tab = { key: 1, label: 'shell 1' }
 
 const LABEL_MAX = 24
 
@@ -21,6 +27,9 @@ const LABEL_MAX = 24
  * a toggle that collapses it to the tab bar. Every tab owns a live PTY and xterm instance for its
  * whole lifetime; inactive and collapsed tabs stay mounted but hidden. Switching `workspaceId`
  * tears down every tab and starts over with a single shell.
+ *
+ * A cloud workspace's terminals live on the runner and outlive this pane: opening it shows
+ * the ones already running, leaving it only stops watching, and closing a tab is what ends one.
  */
 export function XtermPane({ workspaceId }: { workspaceId: string }) {
   return <TerminalTabs key={workspaceId} workspaceId={workspaceId} />
@@ -31,9 +40,16 @@ function TerminalTabs({ workspaceId }: { workspaceId: string }) {
   const push = useToasts((s) => s.push)
   // Labels keep counting up so `shell 2` stays `shell 2` after `shell 1` closes.
   const nextKey = useRef(2)
-  const [tabs, setTabs] = useState<Tab[]>([{ key: 1, label: 'shell 1' }])
+  const cloud = useProjects((s) =>
+    Object.values(s.workspacesByProject).some((rows) =>
+      rows.some((row) => row.id === workspaceId && row.cloud === true)
+    )
+  )
+  // A cloud pane has no tabs until it knows which terminals are already running.
+  const [tabs, setTabs] = useState<Tab[]>(cloud ? [] : [FIRST_TAB])
   const [activeKey, setActiveKey] = useState(1)
   const terms = useRef(new Map<number, Terminal>())
+  const ptyIds = useRef(new Map<number, string>())
   const [withSelection, setWithSelection] = useState<ReadonlySet<number>>(new Set())
   const [labels, setLabels] = useState<ReadonlyMap<number, string>>(new Map())
   const [renaming, setRenaming] = useState<number | null>(null)
@@ -56,6 +72,31 @@ function TerminalTabs({ workspaceId }: { workspaceId: string }) {
     observer.observe(pane)
     return () => observer.disconnect()
   }, [setPaneH])
+
+  useEffect(() => {
+    if (!cloud) return
+    let stale = false
+    void window.loom.terminal
+      .list(workspaceId)
+      .catch((): TerminalInfo[] => [])
+      .then((running) => {
+        if (stale) return
+        nextKey.current = Math.max(running.length, 1) + 1
+        setTabs(
+          running.length === 0
+            ? [FIRST_TAB]
+            : running.map((attach, index) => ({ key: index + 1, label: `shell ${index + 1}`, attach }))
+        )
+      })
+    return () => {
+      stale = true
+    }
+  }, [cloud, workspaceId])
+
+  const trackPty = useCallback((key: number, id: string | null) => {
+    if (id === null) ptyIds.current.delete(key)
+    else ptyIds.current.set(key, id)
+  }, [])
 
   const register = useCallback((key: number, term: Terminal | null) => {
     if (term) terms.current.set(key, term)
@@ -80,6 +121,9 @@ function TerminalTabs({ workspaceId }: { workspaceId: string }) {
 
   function closeTab(key: number) {
     if (tabs.length <= 1) return
+    // The runner keeps a cloud terminal until it is told to end it; closing its tab is that.
+    const ptyId = ptyIds.current.get(key)
+    if (cloud && ptyId !== undefined) void window.loom.terminal.destroy(ptyId)
     const index = tabs.findIndex((t) => t.key === key)
     const remaining = tabs.filter((t) => t.key !== key)
     if (key === activeKey) {
@@ -237,9 +281,12 @@ function TerminalTabs({ workspaceId }: { workspaceId: string }) {
               hostId={`${baseId}-host-${tab.key}`}
               labelledBy={`${baseId}-tab-${tab.key}`}
               workspaceId={workspaceId}
+              attach={tab.attach}
+              detached={cloud}
               active={tab.key === activeKey}
               shown={!collapsed}
               onTerminal={register}
+              onPty={trackPty}
               onSelection={selectionChanged}
             />
           ))}
@@ -340,16 +387,21 @@ interface ShellHostProps {
   hostId: string
   labelledBy: string
   workspaceId: string
+  /** Show this running terminal, with what it last printed, instead of starting a new one. */
+  attach: TerminalInfo | undefined
+  /** Leave the terminal running when this host goes away; only its tab being closed ends it. */
+  detached: boolean
   active: boolean
   /** False while the terminal is collapsed to its tab bar. */
   shown: boolean
   onTerminal: (key: number, term: Terminal | null) => void
+  onPty: (key: number, id: string | null) => void
   onSelection: (key: number, has: boolean) => void
 }
 
 /** One PTY + xterm instance, alive from mount to unmount regardless of visibility. */
 function ShellHost(props: ShellHostProps) {
-  const { tabKey, workspaceId, active, shown, onTerminal, onSelection } = props
+  const { tabKey, workspaceId, attach, detached, active, shown, onTerminal, onPty, onSelection } = props
   const hostRef = useRef<HTMLDivElement>(null)
   const fitRef = useRef<(() => void) | null>(null)
   const [ptyId, setPtyId] = useState<string | null>(null)
@@ -393,17 +445,24 @@ function ShellHost(props: ShellHostProps) {
 
     void (async () => {
       let id: string
-      try {
-        id = await window.loom.terminal.create(workspaceId)
-      } catch (err) {
-        if (!disposed) push(`Could not start terminal: ${String(err)}`, 'err')
-        return
-      }
-      if (disposed) {
-        void window.loom.terminal.destroy(id)
-        return
+      if (attach !== undefined) {
+        id = attach.id
+        term.write(attach.scrollback)
+      } else {
+        try {
+          id = await window.loom.terminal.create(workspaceId)
+        } catch (err) {
+          if (!disposed) push(`Could not start terminal: ${String(err)}`, 'err')
+          return
+        }
+        // Never shown, so nothing is left running for it, here or on a runner.
+        if (disposed) {
+          void window.loom.terminal.destroy(id)
+          return
+        }
       }
       terminalId = id
+      onPty(tabKey, id)
       cleanups.push(
         window.loom.onTerminalData((push) => {
           if (push.id === id) term.write(push.data)
@@ -425,12 +484,13 @@ function ShellHost(props: ShellHostProps) {
     return () => {
       disposed = true
       for (const cleanup of cleanups) cleanup()
-      if (terminalId !== null) void window.loom.terminal.destroy(terminalId)
+      if (terminalId !== null && !detached) void window.loom.terminal.destroy(terminalId)
+      onPty(tabKey, null)
       fitRef.current = null
       onTerminal(tabKey, null)
       term.dispose()
     }
-  }, [tabKey, workspaceId, onTerminal, onSelection, push])
+  }, [tabKey, workspaceId, attach, detached, onTerminal, onPty, onSelection, push])
 
   // Report the visible terminal to main (run actions write there).
   useEffect(() => {

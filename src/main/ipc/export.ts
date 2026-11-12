@@ -3,7 +3,7 @@ import { dialog } from 'electron'
 import type { AgentEvent } from '../../shared/events'
 import { eventsToMarkdown } from '../export/markdown'
 import { slugify } from '../git/slug'
-import { handle, type IpcDeps } from './handle'
+import { handle, type IpcDeps } from './registry'
 
 interface SessionExportRow {
   title: string

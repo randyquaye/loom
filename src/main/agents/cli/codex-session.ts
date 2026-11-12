@@ -7,6 +7,7 @@ import {
   validateQuestionAnswers,
   visibleQuestionAnswers
 } from '../../../shared/questions'
+import type { WorkspaceRuntime } from '../../runtime'
 import type { RunningSession } from '../types'
 import { createEventQueue } from '../queue'
 import { assertSessionOpts } from './args'
@@ -33,7 +34,11 @@ function codexInput(text: string, images: PromptImage[]) {
   ]
 }
 
-export function startCodexSession(opts: SessionOpts, onRequest?: RequestHandler): RunningSession {
+export function startCodexSession(
+  opts: SessionOpts,
+  onRequest?: RequestHandler,
+  runtime?: WorkspaceRuntime
+): RunningSession {
   assertSessionOpts('codex', opts)
   const queue = createEventQueue()
   let active: Turn | undefined
@@ -205,7 +210,8 @@ export function startCodexSession(opts: SessionOpts, onRequest?: RequestHandler)
           queue.push(event)
         }
       },
-      signal
+      signal,
+      runtime
     )
     if (signal?.aborted) {
       await ready.close()

@@ -21,7 +21,7 @@ import {
 import { slugify } from '../git/slug'
 import { migrateProjectInstructions, saveProjectPrompts } from '../instructions/migrate-general'
 import { removeWorkspace } from '../workspace/bootstrap'
-import { handle, type IpcDeps } from './handle'
+import { handle, type IpcDeps } from './registry'
 
 export function registerProjectsIpc(deps: IpcDeps): void {
   handle('projects:list', async () => {
@@ -80,7 +80,12 @@ export function registerProjectsIpc(deps: IpcDeps): void {
     const project = getProjectOrThrow(deps.db, id)
     // ON DELETE CASCADE only drops rows; the worktrees and branches on disk have to go first.
     for (const workspace of listWorkspaces(deps.db, id)) {
-      await removeWorkspace({ db: deps.db, repoPath: project.repoPath, workspace })
+      await removeWorkspace({
+        db: deps.db,
+        repoPath: project.repoPath,
+        workspace,
+        dataRoot: deps.dataRoot
+      })
     }
     deleteProject(deps.db, id)
     // The cloned copy goes only when the user ticked the box: adopted folders are theirs,

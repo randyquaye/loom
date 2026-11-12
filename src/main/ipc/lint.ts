@@ -1,7 +1,7 @@
 import { makeWorktreeResolver } from '../fs/workspace-root'
 import { lintFile } from '../lint/adapters'
 import { contain } from '../security/contain'
-import { handle, type IpcDeps } from './handle'
+import { handle, type IpcDeps } from './registry'
 
 export function registerLintIpc(deps: IpcDeps): void {
   const worktreeOf = makeWorktreeResolver(deps.db)

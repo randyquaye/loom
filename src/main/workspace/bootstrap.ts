@@ -1,11 +1,15 @@
-import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { appendFile, lstat, mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { promisify } from 'node:util'
 import type Database from 'better-sqlite3'
 import { CONTEXT_DIR, WORKTREE_BRANCH_PREFIX } from '../../shared/brand'
-import type { WorkspaceRow, WorkspaceState } from '../../shared/ipc-contract'
+import type {
+  ProjectRow,
+  WorkspaceCheckout,
+  WorkspaceRow,
+  WorkspaceRuntimeKind,
+  WorkspaceState
+} from '../../shared/ipc-contract'
 import { MAX_WORKSPACES_PER_PROJECT } from '../../shared/limits'
 import { readRepoSettings } from '../config/repo-settings'
 import { getProjectOrThrow } from '../db/repos/projects'
@@ -19,11 +23,13 @@ import {
   setWorkspaceRuntime,
   setWorkspaceState
 } from '../db/repos/workspaces'
+import { addClone, cloneDefaultBranch, removeClone } from '../git/clone'
 import { ensureContextIgnored } from '../git/exclude'
 import { resolveBaseRef } from '../git/baseref'
 import { envOverlay } from '../env/vars'
 import { git } from '../git/run'
 import { allocateSlug, slugify } from '../git/slug'
+import { discardRuntime, loginEnvironment, runtimeFor } from '../runtime'
 import {
   addWorktree,
   isValidBranchRef,
@@ -35,7 +41,6 @@ import {
 import { copyWorkspaceFiles, resolveIncludeGlobs } from './copyfiles'
 import { assertValidWorkspaceName, WorkspaceNameError } from './name'
 
-const execFileAsync = promisify(execFile)
 const SETUP_MAX_BYTES = 8 * 1024 * 1024
 
 type StateSink = (push: { workspaceId: string; state: WorkspaceState; name?: string }) => void
@@ -121,12 +126,18 @@ export interface CreateWorkspaceInput {
   projectId: string
   name: string
   baseRef?: string | null
+  checkout?: WorkspaceCheckout
+  runtime?: WorkspaceRuntimeKind
+  /** Who the workspace belongs to on a runner; this Mac has one user and leaves it out. */
+  ownerId?: string | null
 }
 
 export interface RemoveWorkspaceInput {
   db: Database.Database
   repoPath: string
   workspace: WorkspaceRow
+  /** Needed to delete a clone: its folder is checked against this root before it is removed. */
+  dataRoot?: string
 }
 
 export async function seedContextDir(worktreePath: string): Promise<void> {
@@ -172,23 +183,40 @@ export async function ensureInitialCommit(
   ])
 }
 
+/**
+ * Where a workspace's repository-level files and git folder are read from: the project
+ * checkout for a worktree, the workspace itself for a clone, which has nothing outside it.
+ */
+export function repositoryRoot(
+  project: Pick<ProjectRow, 'repoPath'>,
+  workspace: Pick<WorkspaceRow, 'checkout' | 'worktreePath'>
+): string {
+  return workspace.checkout === 'clone' ? workspace.worktreePath : project.repoPath
+}
+
 export async function workspaceEnv(
   db: Database.Database,
   workspaceId: string
 ): Promise<Record<string, string>> {
   const workspace = getWorkspaceOrThrow(db, workspaceId)
   const project = getProjectOrThrow(db, workspace.projectId)
-  const defaultBranch = await git(project.repoPath, ['symbolic-ref', '--short', 'HEAD']).catch(() => 'main')
+  const root = repositoryRoot(project, workspace)
+  const defaultBranch =
+    workspace.checkout === 'clone'
+      ? ((await cloneDefaultBranch(root)) ?? 'main')
+      : await git(root, ['symbolic-ref', '--short', 'HEAD']).catch(() => 'main')
   return {
     LOOM_WORKSPACE_NAME: workspace.name,
     LOOM_WORKSPACE_ID: workspace.id,
     LOOM_WORKSPACE_PATH: workspace.worktreePath,
-    LOOM_ROOT_PATH: project.repoPath,
+    LOOM_ROOT_PATH: root,
     LOOM_DEFAULT_BRANCH: defaultBranch,
     LOOM_PORT: workspace.port === null ? '' : String(workspace.port),
-    LOOM_IS_LOCAL: '1',
+    // A container is not the user's own machine, wherever its host happens to be.
+    LOOM_IS_LOCAL: workspace.runtime === 'container' ? '0' : '1',
     // User variables last; LOOM_* names are reserved, so nothing above can be shadowed.
-    ...(await envOverlay(project.id))
+    ...(await envOverlay(project.id, workspace.ownerId)),
+    ...(await loginEnvironment(workspace))
   }
 }
 
@@ -203,15 +231,24 @@ export async function createWorkspace({
   dataRoot,
   projectId,
   name,
-  baseRef = null
+  baseRef = null,
+  checkout = 'worktree',
+  runtime = 'machine',
+  ownerId = null
 }: CreateWorkspaceInput): Promise<WorkspaceRow> {
   const project = getProjectOrThrow(db, projectId)
   assertValidWorkspaceName(name)
+  if (runtime === 'container' && checkout !== 'clone') {
+    throw new Error(
+      'a container workspace needs a clone checkout: a worktree keeps its git data outside the folder'
+    )
+  }
   const slug = allocateSlug(slugify(name), (candidate) =>
     repoBranchTaken(db, project.repoPath, workspaceBranch(candidate))
   )
   const branch = workspaceBranch(slug)
-  if (!(await isValidBranchRef(project.repoPath, branch))) {
+  // check-ref-format reads no repository; a clone's source may be a URL, so any directory serves.
+  if (!(await isValidBranchRef(checkout === 'clone' ? dataRoot : project.repoPath, branch))) {
     throw new WorkspaceNameError(`"${name}" cannot be used as the git ref ${branch}`)
   }
   const workspace: WorkspaceRow = {
@@ -225,13 +262,16 @@ export async function createWorkspace({
     state: 'initializing',
     port: allocatePort(db),
     initializationFilesCopied: null,
-    setupLogPath: null
+    setupLogPath: null,
+    checkout,
+    runtime,
+    ownerId
   }
   try {
     // Count and insert atomically so two concurrent creates cannot both pass
     // the per-project cap.
     db.transaction(() => {
-      if (countWorkspaces(db, projectId) >= MAX_WORKSPACES_PER_PROJECT) {
+      if (countWorkspaces(db, projectId, ownerId) >= MAX_WORKSPACES_PER_PROJECT) {
         throw new WorkspaceLimitError(project.name, MAX_WORKSPACES_PER_PROJECT)
       }
       insertWorkspace(db, workspace)
@@ -245,6 +285,7 @@ export async function createWorkspace({
     dataRoot,
     projectSlug: slugify(project.name),
     repoPath: project.repoPath,
+    remoteUrl: project.remoteUrl,
     workspace,
     baseRef
   })
@@ -256,8 +297,56 @@ interface InitializeInput {
   dataRoot: string
   projectSlug: string
   repoPath: string
+  remoteUrl: string | null
   workspace: WorkspaceRow
   baseRef: string | null
+}
+
+/** Cuts the worktree from the project repository, which may first need a commit and a fetch. */
+async function checkOutWorktree(input: InitializeInput, log: (line: string) => Promise<void>): Promise<void> {
+  const { repoPath, workspace } = input
+  const slug = workspace.branch.slice(WORKTREE_BRANCH_PREFIX.length)
+  await ensureInitialCommit(repoPath, log)
+  // A base ref picked from a GitHub PR head usually exists only on origin, so it is
+  // resolved (fetching if needed) before git is asked to start a worktree from it.
+  let baseRef = input.baseRef
+  if (baseRef !== null) {
+    await log(`resolve base ref ${baseRef}`)
+    baseRef = await resolveBaseRef(repoPath, baseRef)
+    await log(`base ref -> ${baseRef}`)
+  }
+  // A bootstrap that died mid-add leaves a branch and a husk dir behind; both make
+  // `git worktree add` fatal on the next attempt, so clear them before trying again.
+  await recoverStaleWorktree(repoPath, workspace.branch, workspace.worktreePath, log)
+  await log(`worktree add ${workspace.branch} -> ${workspace.worktreePath}`)
+  await addWorktree(repoPath, input.dataRoot, input.projectSlug, slug, baseRef)
+}
+
+type RemoteAccess = (ownerId: string | null) => Promise<Record<string, string>>
+
+/** With nothing wired, git reaches remotes as the machine it runs on does. */
+const AS_THIS_MACHINE: RemoteAccess = async () => ({})
+let remoteAccess = AS_THIS_MACHINE
+
+/**
+ * Wired by a runner that keeps its users' GitHub logins: what git needs in its environment
+ * to reach a remote as a workspace's owner. Null puts the machine's own access back.
+ */
+export function setRemoteAccess(next: RemoteAccess | null): void {
+  remoteAccess = next ?? AS_THIS_MACHINE
+}
+
+async function checkOutClone(input: InitializeInput, log: (line: string) => Promise<void>): Promise<void> {
+  const { repoPath, workspace } = input
+  await log(`clone ${repoPath} -> ${workspace.worktreePath} on ${workspace.branch}`)
+  await addClone({
+    source: repoPath,
+    target: workspace.worktreePath,
+    branch: workspace.branch,
+    baseRef: input.baseRef,
+    originUrl: input.remoteUrl,
+    remoteEnv: await remoteAccess(workspace.ownerId)
+  })
 }
 
 async function initializeWorkspace(input: InitializeInput): Promise<void> {
@@ -272,41 +361,42 @@ async function initializeWorkspace(input: InitializeInput): Promise<void> {
     await appendFile(initLog, `${new Date().toISOString()} ${line}\n`).catch(() => {})
   }
   try {
-    const slug = workspace.branch.slice(WORKTREE_BRANCH_PREFIX.length)
-    await ensureInitialCommit(repoPath, log)
-    // A base ref picked from a GitHub PR head usually exists only on origin, so it is
-    // resolved (fetching if needed) before git is asked to start a worktree from it.
-    let baseRef = input.baseRef
-    if (baseRef !== null) {
-      await log(`resolve base ref ${baseRef}`)
-      baseRef = await resolveBaseRef(repoPath, baseRef)
-      await log(`base ref -> ${baseRef}`)
-    }
-    // A bootstrap that died mid-add leaves a branch and a husk dir behind; both make
-    // `git worktree add` fatal on the next attempt, so clear them before trying again.
-    await recoverStaleWorktree(repoPath, workspace.branch, workspace.worktreePath, log)
-    await log(`worktree add ${workspace.branch} -> ${workspace.worktreePath}`)
-    await addWorktree(repoPath, input.dataRoot, input.projectSlug, slug, baseRef)
+    const isClone = workspace.checkout === 'clone'
+    await (isClone ? checkOutClone(input, log) : checkOutWorktree(input, log))
+    const root = repositoryRoot({ repoPath }, workspace)
     await seedContextDir(workspace.worktreePath)
-    await ensureContextIgnored(repoPath)
-    const settings = await readRepoSettings(repoPath)
-    const globs = await resolveIncludeGlobs(repoPath, settings)
-    const copied = await copyWorkspaceFiles(repoPath, workspace.worktreePath, globs)
+    await ensureContextIgnored(root)
+    const settings = await readRepoSettings(root)
+    // Gitignored seeds such as .env come from the project checkout, which a clone does not have.
+    const copied = isClone
+      ? 0
+      : await copyWorkspaceFiles(
+          repoPath,
+          workspace.worktreePath,
+          await resolveIncludeGlobs(repoPath, settings)
+        )
     setWorkspaceRuntime(db, workspace.id, { copied })
-    await log(`copied ${copied} file(s)`)
+    const wanted = isClone ? (await resolveIncludeGlobs(root, settings)).length : 0
+    await log(
+      wanted > 0
+        ? `files to copy: skipped ${wanted} pattern(s). There is no project folder here to copy from; ` +
+            'use environment values or the setup script instead'
+        : `copied ${copied} file(s)`
+    )
     setWorkspaceState(db, workspace.id, 'setting_up')
     pushState(workspace.id, 'setting_up')
+    const runtime = runtimeFor(workspace, input.dataRoot)
+    await runtime.ensureRunning()
     if (settings.setup !== null) {
       const setupLog = path.join(logDir, 'setup.log')
       setWorkspaceRuntime(db, workspace.id, { setupLog })
       const env = await workspaceEnv(db, workspace.id)
       await log(`setup: ${settings.setup}`)
       try {
-        const { stdout, stderr } = await execFileAsync('zsh', ['-lc', settings.setup], {
+        const { stdout, stderr } = await runtime.exec('zsh', ['-lc', settings.setup], {
           cwd: workspace.worktreePath,
-          env: { ...process.env, ...env },
-          maxBuffer: SETUP_MAX_BYTES,
-          shell: false
+          env,
+          maxBuffer: SETUP_MAX_BYTES
         })
         await writeFile(setupLog, `${stdout}${stderr}`, 'utf8').catch(() => {})
       } catch (err) {
@@ -330,8 +420,16 @@ async function initializeWorkspace(input: InitializeInput): Promise<void> {
   }
 }
 
-export async function removeWorkspace({ db, repoPath, workspace }: RemoveWorkspaceInput): Promise<void> {
-  await removeWorktree(repoPath, workspace.worktreePath, workspace.branch)
+export async function removeWorkspace({
+  db,
+  repoPath,
+  workspace,
+  dataRoot
+}: RemoveWorkspaceInput): Promise<void> {
+  // The container goes first: its processes still hold files in the folder being deleted.
+  await discardRuntime(workspace)
+  if (workspace.checkout === 'clone') await removeClone(workspace.worktreePath, dataRoot)
+  else await removeWorktree(repoPath, workspace.worktreePath, workspace.branch)
   deleteWorkspace(db, workspace.id)
 }
 

@@ -3,7 +3,7 @@ import { getProjectOrThrow } from '../db/repos/projects'
 import { listBranches } from '../git/branches'
 import { diffFor, listChanges } from '../git/status'
 import { diffCheckpoint, listCheckpoints, restoreCheckpoint, saveCheckpoint } from '../git/checkpoint'
-import { handle, type IpcDeps } from './handle'
+import { handle, type IpcDeps } from './registry'
 
 export function registerGitIpc(deps: IpcDeps): void {
   const worktreeOf = makeWorktreeResolver(deps.db)

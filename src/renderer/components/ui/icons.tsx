@@ -113,3 +113,21 @@ export function GlobeIcon() {
     </Glyph>
   )
 }
+
+/** Copy to the clipboard: one sheet over another. */
+export function CopyIcon() {
+  return (
+    <Glyph>
+      <rect x="7" y="7" width="10" height="10" rx="2" />
+      <path d="M13 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" />
+    </Glyph>
+  )
+}
+
+export function CloudIcon() {
+  return (
+    <Glyph>
+      <path d="M6.5 15h7.5a3 3 0 0 0 .5-5.96A4.5 4.5 0 0 0 5.9 8.2 3.4 3.4 0 0 0 6.5 15z" />
+    </Glyph>
+  )
+}

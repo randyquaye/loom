@@ -11,8 +11,16 @@ interface ProjectsState {
   addProject(input: ProjectAddInput): Promise<ProjectRow>
   /** Registers a project main already created (quick start, clone) and loads its workspaces. */
   adoptProject(project: ProjectRow): Promise<void>
-  /** baseRef: branch to start the worktree from; null keeps the repo's current HEAD. */
-  addWorkspace(projectId: string, name: string, baseRef?: string | null): Promise<WorkspaceRow>
+  /**
+   * baseRef: branch to start from; null keeps the repo's current HEAD. `cloud` creates the
+   * workspace on the runner this Loom follows instead of on this Mac.
+   */
+  addWorkspace(
+    projectId: string,
+    name: string,
+    baseRef?: string | null,
+    cloud?: boolean
+  ): Promise<WorkspaceRow>
   removeWorkspace(id: string): Promise<void>
   /** Main deletes every workspace (worktree and branch) first; the list is then reloaded. */
   removeProject(id: string, deleteRepo: boolean): Promise<void>
@@ -58,8 +66,8 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     await get().loadWorkspaces(project.id)
   },
 
-  async addWorkspace(projectId, name, baseRef = null) {
-    const workspace = await window.loom.workspaces.add(projectId, name, baseRef)
+  async addWorkspace(projectId, name, baseRef = null, cloud = false) {
+    const workspace = await window.loom.workspaces.add(projectId, name, baseRef, cloud)
     set({
       workspacesByProject: {
         ...get().workspacesByProject,

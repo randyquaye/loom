@@ -1,8 +1,5 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
+import { machineRuntime, type WorkspaceRuntime } from '../../runtime'
 import { cleanTitle, titleInstruction } from '../../sessions/title'
-
-const execFileAsync = promisify(execFile)
 
 const TITLE_TIMEOUT_MS = 20_000
 const MAX_OUTPUT_BYTES = 64 * 1024
@@ -15,16 +12,15 @@ const MAX_OUTPUT_BYTES = 64 * 1024
 export async function cliSessionTitle(
   bin: string,
   args: readonly string[],
-  prompt: string
+  prompt: string,
+  runtime: WorkspaceRuntime = machineRuntime
 ): Promise<string | null> {
   try {
-    const pending = execFileAsync(bin, [...args], {
-      shell: false,
-      timeout: TITLE_TIMEOUT_MS,
+    const { stdout } = await runtime.exec(bin, args, {
+      input: `${titleInstruction(prompt)}\n`,
+      timeoutMs: TITLE_TIMEOUT_MS,
       maxBuffer: MAX_OUTPUT_BYTES
     })
-    pending.child.stdin?.end(`${titleInstruction(prompt)}\n`)
-    const { stdout } = await pending
     return cleanTitle(stdout)
   } catch {
     return null

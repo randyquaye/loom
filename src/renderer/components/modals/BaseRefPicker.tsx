@@ -31,7 +31,8 @@ function issuePrompt(issue: LinearIssueSummary): string {
     : `${head}\n\n${issue.description}`
 }
 
-const searchPrs = (query: string | null, projectId: string) => window.loom.github.prs(projectId, query)
+const searchPrs = (query: string | null, projectId: string, cloud: boolean) =>
+  window.loom.github.prs(projectId, query, cloud)
 const searchIssues = (query: string | null) => window.loom.linear.issues(query)
 
 /**
@@ -40,14 +41,15 @@ const searchIssues = (query: string | null) => window.loom.linear.issues(query)
  * both result and error so a retry shows loading.
  */
 function useDebouncedSearch<T>(
-  search: (query: string | null, projectId: string) => Promise<T>,
+  search: (query: string | null, projectId: string, cloud: boolean) => Promise<T>,
   {
     open,
     active,
     projectId,
     query,
-    attempt
-  }: { open: boolean; active: boolean; projectId: string; query: string; attempt: number }
+    attempt,
+    cloud
+  }: { open: boolean; active: boolean; projectId: string; query: string; attempt: number; cloud: boolean }
 ) {
   const [found, setFound] = useState<{ query: string; result: T } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -56,14 +58,14 @@ function useDebouncedSearch<T>(
   useEffect(() => {
     setFound(null)
     setError(null)
-  }, [open, projectId])
+  }, [open, projectId, cloud])
 
   useEffect(() => {
     if (!open || !active) return
     let live = true
     const timer = setTimeout(() => {
       setError(null)
-      search(query.trim() === '' ? null : query, projectId)
+      search(query.trim() === '' ? null : query, projectId, cloud)
         .then((result) => {
           if (live) setFound({ query, result })
         })
@@ -75,7 +77,7 @@ function useDebouncedSearch<T>(
       live = false
       clearTimeout(timer)
     }
-  }, [search, open, active, projectId, query, attempt])
+  }, [search, open, active, projectId, query, attempt, cloud])
 
   function clear() {
     setFound(null)
@@ -96,14 +98,16 @@ export function BaseRefPicker({
   value,
   onChange,
   onSeedPrompt,
-  onOpenSettings
+  onOpenSettings,
+  cloud = false
 }: {
+  cloud?: boolean
   projectId: string
   value: string | null
   onChange: (ref: string | null) => void
   /** Receives an issue's prompt block; the parent owns merging it and focusing the prompt. */
   onSeedPrompt: (text: string) => void
-  onOpenSettings: () => void
+  onOpenSettings: (integration: 'github' | 'linear') => void
 }) {
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<Tab>('branches')
@@ -135,7 +139,7 @@ export function BaseRefPicker({
     }
   }, [open, projectId, attempt])
 
-  const searchInputs = { open, projectId, query, attempt }
+  const searchInputs = { open, projectId, query, attempt, cloud }
   const prSearch = useDebouncedSearch(searchPrs, { ...searchInputs, active: tab === 'prs' })
   const issueSearch = useDebouncedSearch(searchIssues, { ...searchInputs, active: tab === 'issues' })
 
@@ -292,7 +296,7 @@ export function BaseRefPicker({
                   prSearch.clear()
                   setAttempt((n) => n + 1)
                 }}
-                onOpenSettings={onOpenSettings}
+                onOpenSettings={() => onOpenSettings('github')}
               />
             )}
             {tab === 'issues' && (
@@ -304,7 +308,7 @@ export function BaseRefPicker({
                   issueSearch.clear()
                   setAttempt((n) => n + 1)
                 }}
-                onOpenSettings={onOpenSettings}
+                onOpenSettings={() => onOpenSettings('linear')}
               />
             )}
             {tab === 'branches' && error !== null && (

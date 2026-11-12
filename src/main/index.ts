@@ -3,10 +3,13 @@ import { app, BrowserWindow, dialog, safeStorage } from 'electron'
 import { openDb } from './db'
 import { listProjects } from './db/repos/projects'
 import { migrateProjectInstructions } from './instructions/migrate-general'
-import { missingChannelHandlers, registerIpc, setTrustedOrigin } from './ipc'
+import { openCloudAccount, type CloudAccount } from './cloud/account'
+import { createCloudRoute, type CloudRoute } from './cloud/route'
+import { setCloudAccount, setCloudStatus } from './cloud/status'
+import { missingChannelHandlers, registerIpc, setIpcRouter, setTrustedOrigin } from './ipc'
 import { registerBackends } from './agents/wiring'
 import { destroyAllTerminals, setTerminalSink } from './pty'
-import { createSecretStore, safeStorageCipher } from './secrets'
+import { createSecretStore, safeStorageCipher, type SecretStore } from './secrets'
 import { setEnvSecretStore } from './env/vars'
 import {
   setSessionSink,
@@ -21,12 +24,73 @@ import { setWorkspaceStateSink } from './workspace/bootstrap'
 import {
   SESSION_EVENT_CHANNEL,
   SESSION_ACTIVITY_CHANNEL,
+  CLOUD_STATUS_CHANNEL,
   SESSION_QUEUE_CHANNEL,
   SESSION_TITLE_CHANNEL,
   WORKSPACE_STATE_CHANNEL
 } from '../shared/ipc-contract'
 
 app.enableSandbox()
+
+let mainWindow: BrowserWindow | null = null
+let cloud: CloudRoute | null = null
+let account: CloudAccount | null = null
+
+function toWindow(channel: string, payload: unknown): void {
+  if (mainWindow !== null && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
+}
+
+/** This Mac's live updates. With a runner configured they are merged with the runner's first. */
+function emit(channel: string, payload: unknown): void {
+  if (cloud === null) toWindow(channel, payload)
+  else cloud.fromLocal(channel, payload)
+}
+
+function wireLiveUpdates(): void {
+  setTerminalSink((channel, push) => emit(channel, push))
+  setSessionSink((push) => emit(SESSION_EVENT_CHANNEL, push))
+  setActivitySink((push) => emit(SESSION_ACTIVITY_CHANNEL, push))
+  setWorkspaceStateSink((push) => emit(WORKSPACE_STATE_CHANNEL, push))
+  setQueueSink((push) => emit(SESSION_QUEUE_CHANNEL, push))
+  setTitleSink((push) => emit(SESSION_TITLE_CHANNEL, push))
+}
+
+/**
+ * Following a runner is opt-in: until an address is set, in Settings or by LOOM_RUNNER_URL,
+ * no route exists and Loom is the local app it always was. A cloud that cannot be set up is
+ * reported and left off; it never stops the local app from starting.
+ */
+async function openCloud(
+  db: ReturnType<typeof openDb>,
+  dataRoot: string,
+  secrets: SecretStore
+): Promise<void> {
+  try {
+    account = await openCloudAccount({
+      vault: secrets,
+      environment: { url: process.env.LOOM_RUNNER_URL, token: process.env.LOOM_RUNNER_TOKEN },
+      openBrowser: (url) => void openExternalSafe(url),
+      follow(url, auth) {
+        const route = createCloudRoute({ db, dataRoot, url, ...auth, toWindow })
+        cloud = route
+        setIpcRouter(route.route)
+        return {
+          reconnect: () => route.reconnect(),
+          close() {
+            route.close()
+            cloud = null
+            setIpcRouter(null)
+            setCloudStatus({ state: 'off' })
+            toWindow(CLOUD_STATUS_CHANNEL, { state: 'off' })
+          }
+        }
+      }
+    })
+    setCloudAccount(account)
+  } catch (error) {
+    console.warn('[loom] Cloud is unavailable:', error)
+  }
+}
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -47,24 +111,7 @@ function createWindow(): void {
     }
   })
   win.on('ready-to-show', () => win.show())
-  setTerminalSink((channel, push) => {
-    if (!win.isDestroyed()) win.webContents.send(channel, push)
-  })
-  setSessionSink((push) => {
-    if (!win.isDestroyed()) win.webContents.send(SESSION_EVENT_CHANNEL, push)
-  })
-  setActivitySink((push) => {
-    if (!win.isDestroyed()) win.webContents.send(SESSION_ACTIVITY_CHANNEL, push)
-  })
-  setWorkspaceStateSink((push) => {
-    if (!win.isDestroyed()) win.webContents.send(WORKSPACE_STATE_CHANNEL, push)
-  })
-  setQueueSink((push) => {
-    if (!win.isDestroyed()) win.webContents.send(SESSION_QUEUE_CHANNEL, push)
-  })
-  setTitleSink((push) => {
-    if (!win.isDestroyed()) win.webContents.send(SESSION_TITLE_CHANNEL, push)
-  })
+  mainWindow = win
   win.webContents.setWindowOpenHandler(({ url }) => {
     void openExternalSafe(url)
     return { action: 'deny' }
@@ -121,6 +168,8 @@ if (!app.requestSingleInstanceLock()) {
       }
       registerIpc({ db, secrets, dataRoot: dataDir })
       registerBackends(secrets)
+      wireLiveUpdates()
+      await openCloud(db, dataDir, secrets)
       if (!app.isPackaged) {
         const missing = missingChannelHandlers()
         if (missing.length > 0) console.warn('[loom] ipc channels without handlers:', missing)
@@ -142,5 +191,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('will-quit', () => {
     closeAllSessions()
     destroyAllTerminals()
+    // Only the connection ends: what runs on the runner keeps running.
+    account?.close()
   })
 }

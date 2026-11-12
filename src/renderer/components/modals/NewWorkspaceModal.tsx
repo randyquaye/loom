@@ -1,5 +1,7 @@
+import { LocationSwitcher } from '../ui/LocationSwitcher'
 import { useCallback, useRef, useState } from 'react'
 import type { BackendId, Effort } from '../../../shared/models'
+import { useCloud } from '../../state/cloud'
 import { initialChoice, useDefaults } from '../../state/defaults'
 import { useProjects } from '../../state/projects'
 import { useSessions } from '../../state/sessions'
@@ -48,6 +50,8 @@ export function NewWorkspaceModal({
   const push = useToasts((s) => s.push)
   const [projectId, setProjectId] = useState<string | null>(initialProjectId)
   const [baseRef, setBaseRef] = useState<string | null>(null)
+  const cloudState = useCloud((s) => s.status.state)
+  const [wantsCloud, setWantsCloud] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [picked, setPicked] = useState<Choice | null>(null)
   const [busy, setBusy] = useState(false)
@@ -90,6 +94,10 @@ export function NewWorkspaceModal({
 
   const { backend, model, effort } = picked ?? initialChoice(loadout, modelsByBackend)
   const project = projects.find((p) => p.id === projectId) ?? null
+  // A cloud workspace is cloned from the project's remote, so one without a remote cannot have any.
+  const cloudOffered = cloudState !== 'off' && project !== null && project.remoteUrl !== null
+  const cloudReachable = cloudState === 'connected'
+  const inCloud = wantsCloud && cloudOffered && cloudReachable
   const ready = prompt.trim() !== '' && model !== '' && !busy && project !== null
 
   async function submit() {
@@ -102,7 +110,7 @@ export function NewWorkspaceModal({
     )
     let workspaceId: string
     try {
-      workspaceId = (await addWorkspace(projectId, name, baseRef)).id
+      workspaceId = (await addWorkspace(projectId, name, baseRef, inCloud)).id
     } catch (err) {
       // Keep the modal and the prompt so the user can pick another project or retry (e.g. at the cap).
       push(`Could not create workspace: ${String(err)}`, 'err')
@@ -200,16 +208,26 @@ export function NewWorkspaceModal({
         <ProjectMenu open={menuOpen} onClose={closeMenu} onPick={selectProject} onClone={openClone} />
       </div>
       <span className="spacer" />
+      {cloudOffered && (
+        <LocationSwitcher
+          value={inCloud ? 'cloud' : 'mac'}
+          onChange={(location) => setWantsCloud(location === 'cloud')}
+          cloudDisabled={!cloudReachable}
+          label="Where the workspace runs"
+        />
+      )}
       {/* Branches and PRs belong to a repository, so the chip waits for a project. */}
       {projectId !== null && (
         <BaseRefPicker
+          cloud={inCloud}
           projectId={projectId}
           value={baseRef}
           onChange={setBaseRef}
           onSeedPrompt={seedPrompt}
-          onOpenSettings={() => {
+          onOpenSettings={(integration) => {
             close()
-            navigate({ name: 'settings' })
+            navigate({ name: 'settings', page: 'integrations' })
+            useUi.getState().setSettingsLocation(integration === 'github' && inCloud ? 'cloud' : 'mac')
           }}
         />
       )}
@@ -225,7 +243,8 @@ export function NewWorkspaceModal({
         onPick={(b, m, e) => setPicked({ backend: b, model: m, effort: e })}
       />
       <span className="spacer" />
-      {project === null && <span className="nw-need-project">Choose a project to create</span>}
+      {project === null && <span className="nw-hint">Choose a project to create</span>}
+      {inCloud && <span className="nw-hint">Starts from what is pushed to the remote</span>}
       <button
         type="button"
         className="icon-btn"

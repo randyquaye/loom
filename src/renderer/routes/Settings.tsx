@@ -2,6 +2,7 @@ import { useProjects } from '../state/projects'
 import { DEFAULT_SETTINGS_PAGE, useUi, type SettingsPage } from '../state/ui'
 import { Loadout } from './Loadout'
 import { AgentsPage } from './settings/AgentsPage'
+import { CloudPage } from './settings/CloudPage'
 import { EnvPage } from './settings/EnvPage'
 import { InstructionsPage } from './settings/InstructionsPage'
 import { IntegrationsPage } from './settings/IntegrationsPage'
@@ -16,11 +17,12 @@ const PAGE_HEAD: Record<
 > = {
   preferences: { title: 'Preferences', description: 'Make Loom work the way you prefer.' },
   shortcuts: { title: 'Shortcuts', description: 'Keyboard shortcuts available across Loom.' },
-  integrations: { title: 'Integrations', description: 'Connect GitHub and Linear to your workspaces.' },
+  integrations: { title: 'Integrations', description: 'Connect GitHub and configure services used by Loom.' },
+  cloud: { title: 'Cloud', description: 'The runner your cloud workspaces live on, and your sign-in to it.' },
   env: { title: 'Environment', description: 'Variables passed to agents, terminals and run actions.' },
   instructions: { title: 'Instructions', description: 'Markdown appended to every agent session.' },
   models: { title: 'Default models', description: 'The models and effort new sessions start on.' },
-  agents: { title: 'Agents', description: 'Sign-in status and API keys for each agent backend.' }
+  agents: { title: 'Agents', description: 'Connect Claude and Codex for local and cloud workspaces.' }
 }
 
 function isProjectPage(page: SettingsPage): page is `project:${string}` {
@@ -55,6 +57,7 @@ export function Settings() {
         {projectId !== null && <ProjectPage projectId={projectId} />}
         {page === 'shortcuts' && <ShortcutsPage />}
         {page === 'integrations' && <IntegrationsPage />}
+        {page === 'cloud' && <CloudPage />}
         {page === 'env' && <EnvPage />}
         {page === 'instructions' && <InstructionsPage />}
         {page === 'models' && <Loadout />}

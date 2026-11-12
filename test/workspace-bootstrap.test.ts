@@ -342,7 +342,10 @@ describe('removeWorkspace', () => {
       state: 'error',
       port: 4100,
       initializationFilesCopied: null,
-      setupLogPath: null
+      setupLogPath: null,
+      checkout: 'worktree',
+      runtime: 'machine',
+      ownerId: null
     }
     fx.db
       .prepare(

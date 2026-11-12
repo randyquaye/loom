@@ -1,5 +1,6 @@
 import type { AgentEvent, QuestionAnswer, ToolName } from '../../shared/events'
 import type { AuthStatus, BackendId, ModelDescriptor, PromptImage, SessionOpts } from '../../shared/models'
+import type { WorkspaceRuntime } from '../runtime/types'
 
 /** A tool call normalized once, identically for events and for execution. */
 export interface NormalizedTool {
@@ -33,7 +34,8 @@ export interface AgentBackend {
   readonly kind: 'cli' | 'loop'
   authStatus(): Promise<AuthStatus>
   listModels(): Promise<ModelDescriptor[]>
-  startSession(opts: SessionOpts): Promise<RunningSession>
+  /** `runtime` is where a CLI backend starts its process; omitted means this machine. */
+  startSession(opts: SessionOpts, runtime?: WorkspaceRuntime): Promise<RunningSession>
   /** Optional: a name of at most five words for a session, derived from its first prompt. */
-  title?(prompt: string, model: string): Promise<string | null>
+  title?(prompt: string, model: string, runtime?: WorkspaceRuntime): Promise<string | null>
 }

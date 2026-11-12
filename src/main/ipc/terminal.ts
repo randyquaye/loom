@@ -1,15 +1,27 @@
-import { handle, type IpcDeps } from './handle'
+import { handle, type IpcDeps } from './registry'
 import { attachmentFileName, writeAttachment } from '../context/materialize'
-import { createTerminal, destroyTerminal, resizeTerminal, setActiveTerminal, writeTerminal } from '../pty'
+import { getWorkspaceOrThrow } from '../db/repos/workspaces'
+import {
+  createTerminal,
+  destroyTerminal,
+  listTerminals,
+  resizeTerminal,
+  setActiveTerminal,
+  writeTerminal
+} from '../pty'
+import { runtimeFor } from '../runtime'
 import { workspaceEnv } from '../workspace/bootstrap'
 
 export function registerTerminalIpc(deps: IpcDeps): void {
   handle('terminal:create', async ({ workspaceId }) => {
-    const row = deps.db.prepare('SELECT worktree_path FROM workspaces WHERE id = ?').get(workspaceId) as
-      { worktree_path: string } | undefined
-    if (row === undefined) throw new Error(`unknown workspace ${workspaceId}`)
-    return createTerminal(row.worktree_path, await workspaceEnv(deps.db, workspaceId))
+    const workspace = getWorkspaceOrThrow(deps.db, workspaceId)
+    const runtime = runtimeFor(workspace, deps.dataRoot)
+    await runtime.ensureRunning()
+    return createTerminal(workspace.worktreePath, await workspaceEnv(deps.db, workspaceId), runtime)
   })
+  handle('terminal:list', ({ workspaceId }) =>
+    listTerminals(getWorkspaceOrThrow(deps.db, workspaceId).worktreePath)
+  )
   handle('terminal:attach', ({ workspaceId, text }) => {
     const row = deps.db.prepare('SELECT worktree_path FROM workspaces WHERE id = ?').get(workspaceId) as
       { worktree_path: string } | undefined

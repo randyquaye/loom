@@ -1,5 +1,11 @@
 import { create } from 'zustand'
-import type { SessionActivity, SessionForkInput, SessionRow, SessionUnread } from '../../shared/ipc-contract'
+import type {
+  NumberedSessionEventPush,
+  SessionActivity,
+  SessionForkInput,
+  SessionRow,
+  SessionUnread
+} from '../../shared/ipc-contract'
 import type { AgentEvent } from '../../shared/events'
 import type { BackendId, Effort, ModelDescriptor } from '../../shared/models'
 import { createCompletionChime } from '../audio/completion'
@@ -16,6 +22,8 @@ interface SessionsState {
   /** Last catalog failure per backend; cleared when a retry starts. */
   modelErrorByBackend: Record<string, string>
   load(workspaceId: string): Promise<void>
+  /** After the runner connection returns: refresh open workspaces' tabs and fetch what they missed. */
+  catchUp(): Promise<void>
   loadModels(backend: BackendId): Promise<void>
   /** Clear a failed catalog load and fetch it again. */
   retryModels(backend: BackendId): Promise<void>
@@ -33,6 +41,66 @@ interface SessionsState {
   /** Bring a recently closed tab back (transcript and worktree were never deleted). */
   reopen(workspaceId: string, sessionId: string): Promise<void>
   setActive(workspaceId: string, sessionId: string): void
+}
+
+/** Per tab: the number of the last event shown, and whether its history has been fetched. */
+const lastSeq = new Map<string, number>()
+const loaded = new Set<string>()
+/** History fetches on their way, each with the events that arrived while it was. */
+const loading = new Map<string, { held: NumberedSessionEventPush[]; done: Promise<void> }>()
+
+function setEvents(sessionId: string, next: (current: AgentEvent[]) => AgentEvent[]): void {
+  useSessions.setState((s) => ({
+    eventsBySession: { ...s.eventsBySession, [sessionId]: next(s.eventsBySession[sessionId] ?? []) }
+  }))
+}
+
+/** Appends a live event unless its number says it is already shown; reports whether it was new. */
+function showLive(sessionId: string, event: AgentEvent, seq: number | undefined): boolean {
+  if (seq !== undefined) {
+    if (seq <= (lastSeq.get(sessionId) ?? 0)) return false
+    lastSeq.set(sessionId, seq)
+  }
+  setEvents(sessionId, (current) => [...current, event])
+  return true
+}
+
+/**
+ * Fetches a tab's events numbered above `after`. Live events can arrive while the answer is
+ * on its way: a turn runs in a tab before it is opened, or carries on across a reconnect.
+ * Those are held back and joined on by number, so the transcript is complete, in order,
+ * with no repeats.
+ */
+function fetchEvents(sessionId: string, after: number): Promise<void> {
+  const inFlight = loading.get(sessionId)
+  if (inFlight !== undefined) return inFlight.done
+  const held: NumberedSessionEventPush[] = []
+  const done = window.loom.sessions
+    .eventsAfter(sessionId, after)
+    .then(
+      (fetched) => {
+        const last = fetched.at(-1)?.seq ?? after
+        const later = held.filter((push) => push.seq > last)
+        lastSeq.set(sessionId, later.at(-1)?.seq ?? last)
+        loaded.add(sessionId)
+        const fresh = [...fetched, ...later].map(({ event }) => event)
+        // From zero the answer is the whole history: it replaces whatever arrived before it.
+        setEvents(sessionId, (current) => (after === 0 ? fresh : [...current, ...fresh]))
+      },
+      (error: unknown) => {
+        // Without history the held events are all there is; show them rather than lose them.
+        for (const push of held) showLive(sessionId, push.event, push.seq)
+        throw error
+      }
+    )
+    .finally(() => loading.delete(sessionId))
+  loading.set(sessionId, { held, done })
+  return done
+}
+
+/** A tab's whole history is fetched once. */
+function loadHistory(sessionId: string): Promise<void> {
+  return loaded.has(sessionId) ? Promise.resolve() : fetchEvents(sessionId, 0)
 }
 
 export const useSessions = create<SessionsState>((set, get) => ({
@@ -61,20 +129,26 @@ export const useSessions = create<SessionsState>((set, get) => ({
 
   async load(workspaceId) {
     const sessions = await window.loom.sessions.list(workspaceId)
-    const eventsBySession = { ...get().eventsBySession }
-    for (const session of sessions) {
-      if (eventsBySession[session.id] === undefined) {
-        eventsBySession[session.id] = await window.loom.sessions.events(session.id)
-      }
-    }
+    for (const session of sessions) await loadHistory(session.id)
     set({
       sessionsByWorkspace: { ...get().sessionsByWorkspace, [workspaceId]: sessions },
-      eventsBySession,
       activeSessionByWorkspace: {
         ...get().activeSessionByWorkspace,
         [workspaceId]: get().activeSessionByWorkspace[workspaceId] ?? sessions[0]?.id ?? null
       }
     })
+  },
+
+  async catchUp() {
+    // A tab or workspace the runner cannot answer for right now is tried again next time.
+    for (const workspaceId of Object.keys(get().sessionsByWorkspace)) {
+      await get()
+        .load(workspaceId)
+        .catch(() => {})
+    }
+    await Promise.all(
+      [...loaded].map((sessionId) => fetchEvents(sessionId, lastSeq.get(sessionId) ?? 0).catch(() => {}))
+    )
   },
 
   async loadModels(backend) {
@@ -112,6 +186,8 @@ export const useSessions = create<SessionsState>((set, get) => ({
       eventsBySession: { ...get().eventsBySession, [session.id]: [] },
       activeSessionByWorkspace: { ...get().activeSessionByWorkspace, [workspaceId]: session.id }
     })
+    // A tab that was just made has no history to fetch.
+    loaded.add(session.id)
     return session
   },
 
@@ -133,6 +209,8 @@ export const useSessions = create<SessionsState>((set, get) => ({
     const nextActive = (remaining[index] ?? remaining[index - 1])?.id ?? ''
     const eventsBySession = { ...get().eventsBySession }
     delete eventsBySession[sessionId]
+    loaded.delete(sessionId)
+    lastSeq.delete(sessionId)
     set({
       sessionsByWorkspace: { ...get().sessionsByWorkspace, [workspaceId]: remaining },
       unreadBySession: { ...get().unreadBySession, [sessionId]: { workspaceId, seq: 0, eventId: 0 } },
@@ -153,17 +231,11 @@ export const useSessions = create<SessionsState>((set, get) => ({
       activeSessionByWorkspace: { ...get().activeSessionByWorkspace, [input.workspaceId]: row.id }
     })
     // History arrives after the tab is already showing; live events that beat it are kept.
-    void window.loom.sessions
-      .events(row.id)
-      .then((events) => {
-        if (get().eventsBySession[row.id] !== undefined) return
-        set({ eventsBySession: { ...get().eventsBySession, [row.id]: events } })
-      })
-      .catch(() => {
-        if (get().eventsBySession[row.id] === undefined) {
-          set({ eventsBySession: { ...get().eventsBySession, [row.id]: [] } })
-        }
-      })
+    void loadHistory(row.id).catch(() => {
+      if (get().eventsBySession[row.id] === undefined) {
+        set({ eventsBySession: { ...get().eventsBySession, [row.id]: [] } })
+      }
+    })
     return row
   },
 
@@ -210,13 +282,15 @@ export function subscribeSessionEvents(shouldPlayCompletionSound?: (sessionId: s
     })
   window.loom.onSessionEvent((push) => {
     const { sessionId, event, unread } = push
-    useSessions.setState((s) => ({
-      ...(unread === undefined ? {} : { unreadBySession: { ...s.unreadBySession, [sessionId]: unread } }),
-      eventsBySession: {
-        ...s.eventsBySession,
-        [sessionId]: [...(s.eventsBySession[sessionId] ?? []), event]
-      }
-    }))
+    // Main numbers every event it pushes; the window type leaves the number out.
+    const seq = (push as Partial<NumberedSessionEventPush>).seq
+    const fetching = loading.get(sessionId)
+    if (fetching !== undefined && seq !== undefined) fetching.held.push({ ...push, seq })
+    // A repeat was already shown, counted as unread and chimed for.
+    else if (!showLive(sessionId, event, seq)) return
+    if (unread !== undefined) {
+      useSessions.setState((s) => ({ unreadBySession: { ...s.unreadBySession, [sessionId]: unread } }))
+    }
     completionChime(push)
   })
   // Titles arrive after the first prompt: an excerpt first, then the model's own name.

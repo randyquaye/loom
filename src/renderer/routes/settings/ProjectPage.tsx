@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { ProjectRow } from '../../../shared/ipc-contract'
 import { FIX_ERRORS_PROMPT, REVIEW_DIFF_PROMPT } from '../../../shared/prompts/flows'
 import { useToasts } from '../../components/ui/Toast'
+import { useCloud } from '../../state/cloud'
 import { useProjects } from '../../state/projects'
 import { EnvVarList } from './EnvVarList'
 import { InstructionsEditor } from './InstructionsEditor'
@@ -45,6 +46,8 @@ const FLOWS: { key: keyof Prompts; title: string; description: string; placehold
 /** Settings project page: one collapsible panel per flow prompt, saved together, then project env vars and instructions. */
 export function ProjectPage({ projectId }: { projectId: string }) {
   const project = useProjects((s) => s.projects.find((p) => p.id === projectId))
+  // Cloud values live on the runner, so they can only be shown while it can be asked.
+  const cloud = useCloud((s) => s.status.state === 'connected')
   if (project === undefined) {
     return (
       <section className="settings-section">
@@ -62,6 +65,15 @@ export function ProjectPage({ projectId }: { projectId: string }) {
         projectId={project.id}
         intro={`Injected into every agent session, terminal and run action in ${project.name}. Values here override instance-wide variables of the same name; agents see names, never values.`}
       />
+      {cloud && project.remoteUrl !== null && (
+        <EnvVarList
+          key={`cloud-env-${project.id}`}
+          cloud
+          scope="project"
+          projectId={project.id}
+          intro={`Injected into ${project.name}'s cloud workspaces. Kept on the cloud host, apart from this Mac's values; nobody else on the host can read them.`}
+        />
+      )}
       <InstructionsEditor
         key={`instructions-${project.id}-${project.customPromptGeneral === null ? 'merged' : 'recovery'}`}
         scope="project"

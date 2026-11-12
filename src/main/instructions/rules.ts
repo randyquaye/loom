@@ -22,3 +22,29 @@ export const LOOM_WORKSPACE_RULES = [
   '  do not post to external services or open network mutations unless the user',
   '  explicitly asks; do not commit unless asked.'
 ].join('\n')
+
+/** The same rules for a workspace that is a clone running in its own container. */
+export const LOOM_CONTAINER_WORKSPACE_RULES = [
+  '## Loom workspace facts',
+  '',
+  '- This checkout is one Loom cloud workspace: a self-contained git clone on branch',
+  '  `loom/<slug>`, running in its own Linux container. Other workspaces run in other',
+  '  containers. Work leaves this checkout only when its branch is pushed. Never',
+  '  switch branches, reset --hard, or touch refs/loom/* yourself.',
+  '- `.context/` is git-excluded scratch space: `loom.context` holds workspace',
+  '  facts (name, branch, repository, agent, port); `attachments/` holds turn',
+  '  attachments (uploaded files, fork transcripts, terminal selections). Read them',
+  '  when a turn references them; write notes there, never into tracked files unasked.',
+  '- Loom auto-saves a checkpoint of this checkout before every user turn',
+  '  (private refs under `refs/loom/checkpoints/`). Undo happens through the',
+  '  app UI; do not attempt manual restores.',
+  '- Environment: LOOM_WORKSPACE_NAME, LOOM_WORKSPACE_ID, LOOM_WORKSPACE_PATH,',
+  '  LOOM_ROOT_PATH (this checkout), LOOM_DEFAULT_BRANCH, LOOM_PORT (ten-port block',
+  '  starting there), LOOM_IS_LOCAL=0. Use $LOOM_PORT for dev servers.',
+  '- Repository settings live in `.loom/settings.toml`: `scripts.setup` ran at',
+  '  workspace creation; `scripts.run.<id>` are user-triggered actions. Do not',
+  '  edit it unless asked.',
+  '- Etiquette: reference files as repo-relative paths with optional :LINE;',
+  '  do not post to external services or open network mutations unless the user',
+  '  explicitly asks; do not commit unless asked.'
+].join('\n')

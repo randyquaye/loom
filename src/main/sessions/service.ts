@@ -8,9 +8,11 @@ import {
   type QueuedMessage,
   type SessionActivity,
   type SessionCreateInput,
-  type SessionEventPush,
+  type NumberedSessionEventPush,
+  type SequencedEvent,
   type SessionRow,
-  type SessionTitlePush
+  type SessionTitlePush,
+  type WorkspaceCheckout
 } from '../../shared/ipc-contract'
 import { MAX_SESSIONS_PER_WORKSPACE, MAX_SESSION_INSTRUCTION_CHARS } from '../../shared/limits'
 import type { BackendId, Effort, PromptImage } from '../../shared/models'
@@ -27,20 +29,22 @@ import {
 } from '../context/materialize'
 import { CheckpointBusyError, CheckpointRootError, saveCheckpoint } from '../git/checkpoint'
 import { GitError } from '../git/run'
-import { getWorkspaceOrThrow, renameWorkspaceIfAuto } from '../db/repos/workspaces'
+import { getWorkspace, getWorkspaceOrThrow, renameWorkspaceIfAuto } from '../db/repos/workspaces'
 import { readInstructionOverlay } from '../instructions/files'
 import { composeInstructions, composeLegacyInstructions } from '../instructions/compose'
 import { migrateProjectInstructions } from '../instructions/migrate-general'
 import { retireWorkspaceAgentsDoc } from '../instructions/legacy-agents'
+import { runtimeFor } from '../runtime'
 import {
   announceWorkspace,
+  repositoryRoot,
   waitForWorkspaceSettled,
   WorkspaceNotReadyError,
   workspaceEnv
 } from '../workspace/bootstrap'
 import { eventsToMarkdown } from '../export/markdown'
 
-type Sink = (push: SessionEventPush) => void
+type Sink = (push: NumberedSessionEventPush) => void
 
 let sink: Sink | null = null
 
@@ -132,8 +136,23 @@ export function reopenSession(db: Database.Database, sessionId: string): Session
   return db.prepare(`SELECT ${SESSION_COLUMNS} FROM sessions WHERE id = ?`).get(sessionId) as SessionRow
 }
 
-export function createSession(db: Database.Database, input: SessionCreateInput): SessionRow {
+/**
+ * `instructionSnapshot` is the complete instruction text for the tab when its creator
+ * already has it; left empty, the text is composed and saved on the first send.
+ */
+export function createSession(
+  db: Database.Database,
+  input: SessionCreateInput,
+  instructionSnapshot = ''
+): SessionRow {
   assertSessionCapacity(db, input.workspaceId)
+  // A loop backend executes its tools inside Loom's own process, which is outside the container.
+  if (
+    getWorkspace(db, input.workspaceId)?.runtime === 'container' &&
+    getBackend(input.backend)?.kind === 'loop'
+  ) {
+    throw new Error(`${input.backend} cannot run in a container workspace; use Claude or Codex`)
+  }
   const row: SessionRow = {
     id: randomUUID(),
     workspaceId: input.workspaceId,
@@ -148,7 +167,7 @@ export function createSession(db: Database.Database, input: SessionCreateInput):
   }
   db.prepare(
     `INSERT INTO sessions (id, workspace_id, backend, model, effort, title, created_at, closed_at, forked_from, instruction_snapshot)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '')`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     row.id,
     row.workspaceId,
@@ -158,21 +177,31 @@ export function createSession(db: Database.Database, input: SessionCreateInput):
     row.title,
     row.createdAt,
     row.closedAt,
-    row.forkedFrom
+    row.forkedFrom,
+    instructionSnapshot
   )
   return row
 }
 
 export function sessionEvents(db: Database.Database, sessionId: string): AgentEvent[] {
+  return sessionEventsAfter(db, sessionId, 0).map(({ event }) => event)
+}
+
+/** Every event of a tab numbered above `afterSeq`: what a reconnecting desktop is missing. */
+export function sessionEventsAfter(
+  db: Database.Database,
+  sessionId: string,
+  afterSeq: number
+): SequencedEvent[] {
   const rows = db
-    .prepare('SELECT payload, ts FROM events WHERE session_id = ? ORDER BY seq')
-    .all(sessionId) as Array<{ payload: string; ts: number }>
+    .prepare('SELECT seq, payload, ts FROM events WHERE session_id = ? AND seq > ? ORDER BY seq')
+    .all(sessionId, afterSeq) as Array<{ seq: number; payload: string; ts: number }>
   return rows.map((row) => {
-    const event = JSON.parse(row.payload) as AgentEvent
+    let event = JSON.parse(row.payload) as AgentEvent
     // Rows written before turns carried real stamps get them from the row timestamp.
-    if (event.type === 'turn.done' && event.at === undefined) return { ...event, at: row.ts }
-    if (event.type === 'turn.started' && !event.at) return { ...event, at: row.ts }
-    return event
+    if (event.type === 'turn.done' && event.at === undefined) event = { ...event, at: row.ts }
+    else if (event.type === 'turn.started' && !event.at) event = { ...event, at: row.ts }
+    return { seq: row.seq, event }
   })
 }
 
@@ -204,7 +233,7 @@ function appendEvent(db: Database.Database, sessionId: string, event: AgentEvent
     stamped.text !== ''
       ? { workspaceId: row.workspace_id, seq: seqRow.next, eventId: Number(inserted.lastInsertRowid) }
       : undefined
-  sink?.({ sessionId, event: stamped, ...(unread === undefined ? {} : { unread }) })
+  sink?.({ sessionId, seq: seqRow.next, event: stamped, ...(unread === undefined ? {} : { unread }) })
 }
 
 /** A non-retryable failure, recorded in the transcript where the user will see it. */
@@ -234,8 +263,23 @@ function sendDetached(db: Database.Database, sessionId: string, input: PreparedT
 async function pump(db: Database.Database, sessionId: string, session: RunningSession): Promise<void> {
   let settled = false
   let failed = false
+  /** The prompt whose turn the agent last announced. */
+  let announced: string | undefined
   try {
-    for await (const event of session.events) {
+    for await (const agentEvent of session.events) {
+      const prompt = live.get(sessionId) === session ? busyTurns.get(sessionId) : undefined
+      if (agentEvent.type === 'turn.started') {
+        announced = prompt
+        nameOnce(sessionId)
+      }
+      // An agent that fails on its way up never learns a turn id and reports under one of its
+      // own making. Recorded as it came, nothing would ever close the prompt and the tab
+      // would show a running turn for good; so the failure is recorded under the prompt.
+      const unannounced = prompt !== undefined && announced !== prompt
+      const event =
+        unannounced && (agentEvent.type === 'error' || agentEvent.type === 'turn.done')
+          ? { ...agentEvent, turnId: prompt }
+          : agentEvent
       appendEvent(db, sessionId, event)
       // Errors do not end a turn: codex reports retryable failures mid-turn and keeps going,
       // and every backend closes a failed turn with turn.done. Settling early let the next
@@ -267,9 +311,28 @@ async function pump(db: Database.Database, sessionId: string, session: RunningSe
   }
 }
 
-/** Turns in flight and messages waiting for them, per session (process-local). */
+export type QueuedTurn = PreparedTurn & { id: string }
+
+/** Where waiting messages are kept so that they outlive the process. */
+export interface QueueStore {
+  load(): Map<string, QueuedTurn[]>
+  save(sessionId: string, items: readonly QueuedTurn[]): void
+}
+
+let queueStore: QueueStore | null = null
+
+/**
+ * Wired by a process whose tabs outlive it. Queues the store already holds are adopted as
+ * they are: they wait for the user, and nothing is sent by adopting them.
+ */
+export function persistQueues(store: QueueStore): void {
+  queueStore = store
+  for (const [sessionId, items] of store.load()) queues.set(sessionId, items)
+}
+
+/** Turns in flight and messages waiting for them, per session. */
 const busyTurns = new Map<string, string>()
-const queues = new Map<string, (PreparedTurn & { id: string })[]>()
+const queues = new Map<string, QueuedTurn[]>()
 const promotions = new Map<string, { drain: boolean }>()
 const preparing = new Map<string, { work: Promise<PreparedTurn>; controller: AbortController }>()
 /** A message the user forced over a running turn; sent the moment that turn ends. */
@@ -282,6 +345,7 @@ const immediate = new Map<string, PreparedTurn[]>()
  */
 function settleTurn(db: Database.Database, sessionId: string, drain: boolean): void {
   busyTurns.delete(sessionId)
+  nameOnce(sessionId)
   setActivity(sessionId)
   const pending = immediate.get(sessionId)
   const now = pending?.shift()
@@ -325,7 +389,9 @@ export function setQueueSink(fn: QueueSink): void {
   queueSink = fn
 }
 
+/** Every change to a queue passes through here: it is saved, then announced. */
 function pushQueue(sessionId: string): void {
+  queueStore?.save(sessionId, queues.get(sessionId) ?? [])
   queueSink?.({ sessionId, items: sessionQueue(sessionId) })
 }
 
@@ -343,13 +409,27 @@ function setTitle(db: Database.Database, sessionId: string, title: string): void
   titleSink?.({ sessionId, title })
 }
 
+/** Tabs whose first prompt is sent and whose model-made name has not been asked for yet. */
+const unnamed = new Map<string, () => Promise<void>>()
+
 /**
- * Names a conversation from its first prompt: an excerpt immediately so the list is never
- * blank, replaced by the model's own name whenever it arrives. There is deliberately no
- * caller-side timeout: each backend caps its own naming call (CLI one-shots at 20s, the loop
- * completion via abort), and a cold spawn that lost an 8s race used to strand the excerpt
- * forever. Any failure keeps the excerpt. The workspace's display name follows the first
- * model title while it is still auto-derived.
+ * Asks for the model's name for a tab, once, when the tab's own agent has started its turn
+ * or the turn has ended. Not sooner: on a brand-new home two Codex processes starting
+ * together break Codex's own state, and the one that loses is the tab.
+ */
+function nameOnce(sessionId: string): void {
+  const name = unnamed.get(sessionId)
+  if (name === undefined) return
+  unnamed.delete(sessionId)
+  void name()
+}
+
+/**
+ * Replaces the excerpt a conversation was named with by the model's own name, whenever it
+ * arrives. There is deliberately no caller-side timeout: each backend caps its own naming
+ * call (CLI one-shots at 20s, the loop completion via abort), and a cold spawn that lost an
+ * 8s race used to strand the excerpt forever. Any failure keeps the excerpt. The workspace's
+ * display name follows the first model title while it is still auto-derived.
  */
 async function renameFromPrompt(
   db: Database.Database,
@@ -359,11 +439,15 @@ async function renameFromPrompt(
   model: string,
   prompt: string
 ): Promise<void> {
-  setTitle(db, sessionId, excerptTitle(prompt))
   const backendImpl = getBackend(backend)
   let named: string | null = null
   try {
-    const raw = backendImpl?.title === undefined ? null : await backendImpl.title(prompt, model)
+    let raw: string | null = null
+    if (backendImpl?.title !== undefined) {
+      const runtime = runtimeFor(getWorkspaceOrThrow(db, workspaceId), loomDataRoot)
+      await runtime.ensureRunning()
+      raw = await backendImpl.title(prompt, model, runtime)
+    }
     named = cleanTitle(raw)
   } catch {
     named = null
@@ -569,34 +653,43 @@ async function sendPreparedTurn(
     appendEvent(db, sessionId, { type: 'user.text', turnId, text: input.displayText ?? body })
     // Titles and checkpoints describe what the user asked, not the inlined files.
     if (isFirstPrompt) {
-      void renameFromPrompt(
-        db,
-        sessionId,
-        row.workspace_id,
-        row.backend as BackendId,
-        row.model,
-        input.promptText ?? input.displayText ?? body
+      const asked = input.promptText ?? input.displayText ?? body
+      // An excerpt at once, so the list is never blank; the model's name follows.
+      setTitle(db, sessionId, excerptTitle(asked))
+      unnamed.set(sessionId, () =>
+        renameFromPrompt(db, sessionId, row.workspace_id, row.backend as BackendId, row.model, asked)
       )
     }
 
     const wsRow = db
       .prepare(
-        `SELECT w.name, w.branch, w.worktree_path, p.repo_path, p.id AS project_id
+        `SELECT w.name, w.branch, w.worktree_path, w.checkout, w.owner_id, p.repo_path, p.id AS project_id
          FROM workspaces w JOIN projects p ON p.id = w.project_id WHERE w.id = ?`
       )
       .get(row.workspace_id) as
-      | { name: string; branch: string; worktree_path: string; repo_path: string; project_id: string }
+      | {
+          name: string
+          branch: string
+          worktree_path: string
+          checkout: WorkspaceCheckout
+          owner_id: string | null
+          repo_path: string
+          project_id: string
+        }
       | undefined
     if (wsRow !== undefined) {
       await writeLoomContext(wsRow.worktree_path, {
         workspaceName: wsRow.name,
         branch: wsRow.branch,
-        repoPath: wsRow.repo_path,
+        repoPath: repositoryRoot(
+          { repoPath: wsRow.repo_path },
+          { checkout: wsRow.checkout, worktreePath: wsRow.worktree_path }
+        ),
         backend: row.backend,
         model: row.model,
         effort: row.effort,
         at: Date.now(),
-        envNames: await envNames(wsRow.project_id)
+        envNames: await envNames(wsRow.project_id, wsRow.owner_id)
       }).catch(() => {})
       void autoCheckpoint(wsRow.worktree_path, turnId, input.promptText ?? input.displayText ?? body).catch(
         (error: unknown) => appendError(db, sessionId, 'checkpoint.save', error)
@@ -639,15 +732,20 @@ async function sendPreparedTurn(
           sessionId
         )
       }
-      session = await backend.startSession({
-        workspaceId: row.workspace_id,
-        worktreePath: worktree.worktree_path,
-        model: row.model,
-        effort: row.effort as Effort,
-        systemPromptAppend,
-        resumeId: row.provider_session_id ?? undefined,
-        env: await workspaceEnv(db, row.workspace_id)
-      })
+      const runtime = runtimeFor(gate, loomDataRoot)
+      await runtime.ensureRunning()
+      session = await backend.startSession(
+        {
+          workspaceId: row.workspace_id,
+          worktreePath: worktree.worktree_path,
+          model: row.model,
+          effort: row.effort as Effort,
+          systemPromptAppend,
+          resumeId: row.provider_session_id ?? undefined,
+          env: await workspaceEnv(db, row.workspace_id)
+        },
+        runtime
+      )
       if (busyTurns.get(sessionId) !== turnId) {
         await session.close()
         return
@@ -712,21 +810,30 @@ async function instructionPrompt(
   }
   const row = db
     .prepare(
-      `SELECT w.worktree_path, p.id AS project_id, p.custom_prompt_general AS general
+      `SELECT w.worktree_path, w.runtime, w.owner_id, p.id AS project_id, p.custom_prompt_general AS general
        FROM workspaces w JOIN projects p ON p.id = w.project_id WHERE w.id = ?`
     )
-    .get(workspaceId) as { worktree_path: string; project_id: string; general: string | null } | undefined
+    .get(workspaceId) as
+    | {
+        worktree_path: string
+        runtime: string
+        owner_id: string | null
+        project_id: string
+        general: string | null
+      }
+    | undefined
   const repositoryInstructions = inlineRepositoryInstructions
     ? await repoInstructionFiles(row?.worktree_path)
     : []
   const overlay = row === undefined ? [] : await instructionOverlay(row.project_id)
-  const names = row === undefined ? [] : await envNames(row.project_id)
+  const names = row === undefined ? [] : await envNames(row.project_id, row.owner_id)
   const compose = legacyFormat ? composeLegacyInstructions : composeInstructions
   return compose({
     repositoryInstructions,
     overlay,
     general: row?.general ?? null,
-    envNames: names
+    envNames: names,
+    container: row?.runtime === 'container'
   })
 }
 
@@ -833,6 +940,7 @@ export function closeSession(sessionId: string): void {
     live.delete(sessionId)
   }
   busyTurns.delete(sessionId)
+  unnamed.delete(sessionId)
   queues.delete(sessionId)
   setActivity(sessionId)
   immediate.delete(sessionId)
@@ -850,6 +958,42 @@ export function closeSessionRow(db: Database.Database, sessionId: string): void 
     sessionId
   )
   closeSession(sessionId)
+  // Shutting down keeps saved queues; closing the tab is what drops them.
+  queueStore?.save(sessionId, [])
+}
+
+const OPEN_TURNS_SQL = `
+  SELECT e.session_id AS sessionId, json_extract(e.payload, '$.turnId') AS turnId
+  FROM events e
+  WHERE e.type IN ('user.text', 'turn.started')
+    AND e.seq = (
+      SELECT MAX(seq) FROM events latest
+      WHERE latest.session_id = e.session_id AND latest.type IN ('user.text', 'turn.started')
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM events done
+      WHERE done.session_id = e.session_id AND done.type = 'turn.done' AND done.seq > e.seq
+        AND json_extract(done.payload, '$.turnId') = json_extract(e.payload, '$.turnId')
+    )`
+
+/**
+ * Run once when a process that owns tabs starts. A turn with no ending belonged to the
+ * process that died; it is closed as interrupted and never re-sent, which leaves that
+ * decision, and the queue behind it, to the user. Returns how many turns were closed.
+ */
+export function closeInterruptedTurns(db: Database.Database): number {
+  const open = db.prepare(OPEN_TURNS_SQL).all() as Array<{ sessionId: string; turnId: string }>
+  for (const { sessionId, turnId } of open) {
+    appendError(
+      db,
+      sessionId,
+      'turn.interrupted',
+      'Interrupted: Loom restarted while this turn was running. Nothing was re-sent.',
+      turnId
+    )
+    appendEvent(db, sessionId, { type: 'turn.done', turnId, stopReason: 'interrupted' })
+  }
+  return open.length
 }
 
 export interface ForkInput {
@@ -863,7 +1007,11 @@ export interface ForkInput {
 /** Forks by seeding a brand-new session with the source transcript as its first user turn. */
 const FORK_SEED_MAX_EVENTS = 200
 
-export async function forkSession(db: Database.Database, input: ForkInput): Promise<SessionRow> {
+export async function forkSession(
+  db: Database.Database,
+  input: ForkInput,
+  instructionSnapshot = ''
+): Promise<SessionRow> {
   const source = db
     .prepare('SELECT title, backend, model, effort, created_at FROM sessions WHERE id = ?')
     .get(input.sourceSessionId) as
@@ -884,13 +1032,17 @@ export async function forkSession(db: Database.Database, input: ForkInput): Prom
     },
     capped
   )
-  const created = createSession(db, {
-    workspaceId: input.workspaceId,
-    backend: input.backend,
-    model: input.model,
-    effort: input.effort,
-    title: `fork of ${source.title}`
-  })
+  const created = createSession(
+    db,
+    {
+      workspaceId: input.workspaceId,
+      backend: input.backend,
+      model: input.model,
+      effort: input.effort,
+      title: `fork of ${source.title}`
+    },
+    instructionSnapshot
+  )
   db.prepare('UPDATE sessions SET forked_from = ? WHERE id = ?').run(input.sourceSessionId, created.id)
   // The transcript lands as a .context attachment the seeded turn points at,
   // instead of inflating the first user message with the whole markdown body.

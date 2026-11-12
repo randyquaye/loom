@@ -1,18 +1,7 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
-import type Database from 'better-sqlite3'
-import { ipcSchemas, type IpcContract, type SecretPresence } from '../../shared/ipc-contract'
-import type { SecretId } from '../../shared/models'
-import { maskSecret, type SecretStore } from '../secrets'
+import { dispatch, onChannelRegistered } from './registry'
 
-/**
- * The IPC registration primitive, kept apart from index.ts so the per-area modules
- * import it without an import cycle through the module that registers them all.
- */
-export interface IpcDeps {
-  db: Database.Database
-  secrets: SecretStore
-  dataRoot: string
-}
+export { handle, missingChannelHandlers, secretPresence, type IpcDeps } from './registry'
 
 let trustedOrigin: string | null = null
 
@@ -28,28 +17,23 @@ function assertTrustedSender(event: IpcMainInvokeEvent): void {
   }
 }
 
-type Handler<K extends keyof IpcContract> = (
-  input: IpcContract[K]['in']
-) => Promise<IpcContract[K]['out']> | IpcContract[K]['out']
+export type IpcRouter = (channel: string, input: unknown) => unknown
 
-export function handle<K extends keyof IpcContract>(channel: K, fn: Handler<K>): void {
-  registeredChannels.add(channel)
+let router: IpcRouter = dispatch
+
+/**
+ * Installed while a runner is followed: it sends calls about cloud workspaces there. Null puts
+ * back the local answers alone.
+ */
+export function setIpcRouter(next: IpcRouter | null): void {
+  router = next ?? dispatch
+}
+
+// Loading this module is what makes a process the desktop: from here on every registered
+// handler is exposed to the window, behind the trusted-sender check.
+onChannelRegistered((channel) => {
   ipcMain.handle(channel, (event, input: unknown) => {
     assertTrustedSender(event)
-    const parsed = ipcSchemas[channel].parse(input) as IpcContract[K]['in']
-    return fn(parsed)
+    return router(channel, input)
   })
-}
-
-const registeredChannels = new Set<string>()
-
-/** Dev-time guard: every contract channel must have a handler (review finding #13). */
-export function missingChannelHandlers(): string[] {
-  return Object.keys(ipcSchemas).filter((channel) => !registeredChannels.has(channel))
-}
-
-/** Whether a stored key exists, masked for display; the raw value never crosses the bridge. */
-export async function secretPresence(secrets: SecretStore, id: SecretId): Promise<SecretPresence> {
-  const value = await secrets.get(id)
-  return value === null ? { present: false, masked: null } : { present: true, masked: maskSecret(value) }
-}
+})

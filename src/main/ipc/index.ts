@@ -1,10 +1,12 @@
 import { BACKEND_IDS, type AuthStatus, type BackendId } from '../../shared/models'
 import { authStatusFor, getBackend } from '../agents/registry'
-import { handle, secretPresence, type IpcDeps } from './handle'
+import { handle, secretPresence, type IpcDeps } from './registry'
+import { registerCloudIpc } from './cloud'
 import { registerCommentsIpc } from './comments'
 import { registerEnvIpc } from './env'
 import { registerExportIpc } from './export'
 import { registerFilesIpc } from './files'
+import { registerDesktopFilesIpc } from './files-desktop'
 import { registerGithubIpc } from './github'
 import { registerGitIpc } from './git'
 import { registerHistoryIpc } from './history'
@@ -18,11 +20,17 @@ import { registerSessionsIpc } from './sessions'
 import { registerShellIpc } from './shell'
 import { registerTerminalIpc } from './terminal'
 import { registerWorkspacesIpc } from './workspaces'
+import { workspacePlacement, type WorkspacePlacement } from '../workspace/placement'
 
-export { handle, missingChannelHandlers, setTrustedOrigin, type IpcDeps } from './handle'
+export { setIpcRouter, setTrustedOrigin } from './handle'
+export { handle, missingChannelHandlers, type IpcDeps } from './registry'
 
-export function registerIpc(deps: IpcDeps): void {
+export function registerIpc(
+  deps: IpcDeps,
+  placement: WorkspacePlacement = workspacePlacement('worktree')
+): void {
   handle('app:ping', () => 'pong')
+  registerCloudIpc()
 
   handle('secrets:has', ({ provider }) => secretPresence(deps.secrets, provider))
   handle('secrets:set', ({ provider, value }) => deps.secrets.set(provider, value))
@@ -46,13 +54,14 @@ export function registerIpc(deps: IpcDeps): void {
   handle('providers:models', async ({ backend }) => (await getBackend(backend)?.listModels()) ?? [])
 
   registerProjectsIpc(deps)
-  registerWorkspacesIpc(deps)
+  registerWorkspacesIpc(deps, placement)
   registerGitIpc(deps)
   registerGithubIpc(deps)
   registerIntegrationsIpc(deps)
   registerLinearIpc(deps)
   registerEnvIpc(deps)
   registerFilesIpc(deps)
+  registerDesktopFilesIpc(deps)
   registerLintIpc(deps)
   registerTerminalIpc(deps)
   registerHistoryIpc(deps)

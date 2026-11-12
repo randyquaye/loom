@@ -7,13 +7,17 @@ import { m005 } from './005_diff_comments'
 import { m006 } from './006_workspace_auto_named'
 import { m007 } from './007_session_instructions'
 import { m008 } from './008_session_read'
+import { m009 } from './009_workspace_placement'
+import { m010 } from './010_session_durability'
+import { m011 } from './011_owners'
+import { m012 } from './012_sign_in'
 
 export interface Migration {
   name: string
   up(db: Database.Database): void
 }
 
-const migrations: Migration[] = [m001, m002, m003, m004, m005, m006, m007, m008]
+const migrations: Migration[] = [m001, m002, m003, m004, m005, m006, m007, m008, m009, m010, m011, m012]
 
 export function migrate(db: Database.Database): void {
   db.exec('CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)')

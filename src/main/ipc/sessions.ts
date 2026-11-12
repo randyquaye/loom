@@ -1,4 +1,4 @@
-import { handle, type IpcDeps } from './handle'
+import { handle, type IpcDeps } from './registry'
 import { sessionInstructions } from '../sessions/instructions'
 import { markSessionRead, unreadSessions } from '../sessions/unread'
 import {
@@ -16,6 +16,7 @@ import {
   steerTurn,
   steerQueued,
   sessionEvents,
+  sessionEventsAfter,
   sessionActivity,
   sessionQueue
 } from '../sessions/service'
@@ -39,6 +40,9 @@ export function registerSessionsIpc(deps: IpcDeps): void {
   )
   handle('sessions:cancel', ({ sessionId }) => cancelTurn(deps.db, sessionId))
   handle('sessions:events', ({ sessionId }) => sessionEvents(deps.db, sessionId))
+  handle('sessions:eventsAfter', ({ sessionId, afterSeq }) =>
+    sessionEventsAfter(deps.db, sessionId, afterSeq)
+  )
   handle('sessions:instructions', ({ sessionId }) => sessionInstructions(deps.db, sessionId))
   handle('sessions:fork', (input) => forkSession(deps.db, input))
   handle('sessions:close', ({ sessionId }) => closeSessionRow(deps.db, sessionId))

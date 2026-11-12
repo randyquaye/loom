@@ -35,7 +35,19 @@ export interface WorkspaceRow {
   port: number | null
   initializationFilesCopied: number | null
   setupLogPath: string | null
+  checkout: WorkspaceCheckout
+  runtime: WorkspaceRuntimeKind
+  /** The user a workspace on a runner belongs to; null on this Mac, where there is one user. */
+  ownerId: string | null
+  /** Set by the desktop on a workspace a runner owns; absent on one that lives on this Mac. */
+  cloud?: true
 }
+
+/** How a workspace holds its files: a worktree of the project repository, or a self-contained clone. */
+export type WorkspaceCheckout = 'worktree' | 'clone'
+
+/** Where a workspace's agents, terminals and setup script run. A container needs a clone checkout. */
+export type WorkspaceRuntimeKind = 'machine' | 'container'
 
 /** Run actions a repo's .loom/settings.toml exposes to the workspace topbar. */
 export interface RepoScriptsInfo {
@@ -74,6 +86,69 @@ export interface SessionInstructionsInfo {
   status: 'pending' | 'saved' | 'legacy'
   text: string | null
   repositoryMode: 'native' | 'root-files'
+}
+
+/** The runner this desktop follows, as Settings shows it. */
+export interface CloudRunner {
+  /** ws:// or wss:// address; null when Loom follows no runner. */
+  url: string | null
+  /** The address comes from LOOM_RUNNER_URL, so Settings cannot change it. */
+  fixed: boolean
+  /** A developer's token from the environment stands in for signing in. */
+  devToken: boolean
+}
+
+/** Which of a person's agent logins the runner keeps for their cloud workspaces. */
+export interface AgentLogins {
+  /** False where the runner leaves logins in the home folder, as a developer's own runner does. */
+  managed: boolean
+  claude: boolean
+  codex: boolean
+  /** A token for git and gh in cloud workspaces. */
+  github: boolean
+  /** A Codex sign-in is waiting for the person to finish in their browser. */
+  codexSigningIn: boolean
+  attempts?: Partial<Record<'codex' | 'github', LoginAttempt>>
+  githubApp?: {
+    configured: boolean
+    account: string | null
+    installed: boolean
+    installUrl: string | null
+  }
+}
+
+export interface LoginAttempt {
+  id: string
+  state: 'starting' | 'waiting' | 'connected' | 'failed' | 'expired'
+  expiresAt: number
+  url?: string
+  code?: string
+  message?: string
+}
+
+/** What to do to finish a Codex sign-in: the page to open and the code to enter there. */
+export interface CodexSignIn {
+  url: string
+  code: string
+}
+
+export type AgentLoginProvider = 'claude' | 'codex' | 'github'
+
+/** Whether this desktop is following a runner, and how that is going. */
+export type CloudStatus =
+  | { state: 'off' }
+  | { state: 'connecting' }
+  | { state: 'connected' }
+  | { state: 'unreachable' }
+  /** The runner is there, but this desktop has no sign-in it accepts. */
+  | { state: 'signed-out' }
+  /** The desktop and the runner are different versions; one of them has to be updated. */
+  | { state: 'update'; message: string }
+
+export interface TerminalInfo {
+  id: string
+  /** The most recent output, when the terminal's owner keeps it; otherwise empty. */
+  scrollback: string
 }
 
 export interface FileNode {
@@ -263,9 +338,12 @@ export interface IpcContract {
   'providers:models': { in: { backend: BackendId }; out: ModelDescriptor[] }
 
   'integrations:status': { in: void; out: IntegrationsStatus }
-  'github:prs': { in: { projectId: string; query: string | null }; out: PullRequestListResult }
+  'github:prs': {
+    in: { projectId: string; query: string | null; cloud?: boolean | undefined }
+    out: PullRequestListResult
+  }
   'github:workspacePr': { in: { workspaceId: string }; out: WorkspacePrResult }
-  'github:branchPrs': { in: { projectId: string }; out: BranchPrsResult }
+  'github:branchPrs': { in: { projectId: string; cloud?: boolean | undefined }; out: BranchPrsResult }
 
   'linear:hasKey': { in: void; out: SecretPresence }
   'linear:setKey': { in: { value: string }; out: void }
@@ -296,7 +374,10 @@ export interface IpcContract {
   }
 
   'workspaces:list': { in: { projectId: string }; out: WorkspaceRow[] }
-  'workspaces:add': { in: { projectId: string; name: string; baseRef: string | null }; out: WorkspaceRow }
+  'workspaces:add': {
+    in: { projectId: string; name: string; baseRef: string | null; cloud: boolean }
+    out: WorkspaceRow
+  }
   'workspaces:remove': { in: { id: string }; out: void }
   'workspaces:setArchived': { in: { id: string; archived: boolean }; out: void }
   'workspaces:scripts': { in: { workspaceId: string }; out: RepoScriptsInfo }
@@ -322,6 +403,7 @@ export interface IpcContract {
   'sessions:sendNow': { in: { sessionId: string; text: string; attachments: string[] }; out: void }
   'sessions:cancel': { in: { sessionId: string }; out: void }
   'sessions:events': { in: { sessionId: string }; out: AgentEvent[] }
+  'sessions:eventsAfter': { in: { sessionId: string; afterSeq: number }; out: SequencedEvent[] }
   'sessions:instructions': { in: { sessionId: string }; out: SessionInstructionsInfo }
   'sessions:exportMarkdown': { in: { sessionId: string }; out: string | null }
   'sessions:fork': { in: SessionForkInput; out: SessionRow }
@@ -346,6 +428,7 @@ export interface IpcContract {
   'lint:run': { in: { workspaceId: string; path: string; text: string }; out: Diagnostic[] }
 
   'terminal:create': { in: { workspaceId: string }; out: string }
+  'terminal:list': { in: { workspaceId: string }; out: TerminalInfo[] }
   'terminal:attach': { in: { workspaceId: string; text: string }; out: string }
   'terminal:write': { in: { id: string; data: string }; out: void }
   'terminal:resize': { in: { id: string; cols: number; rows: number }; out: void }
@@ -354,9 +437,29 @@ export interface IpcContract {
 
   'history:search': { in: { query: string; projectId: string | null }; out: HistoryHit[] }
 
-  'env:list': { in: { scope: EnvScope; projectId: string | null }; out: EnvVarRow[] }
-  'env:set': { in: { scope: EnvScope; projectId: string | null; name: string; value: string }; out: void }
-  'env:delete': { in: { scope: EnvScope; projectId: string | null; name: string }; out: void }
+  'cloud:status': { in: void; out: CloudStatus }
+  'cloud:runner': { in: void; out: CloudRunner }
+  'cloud:setRunner': { in: { url: string | null }; out: CloudRunner }
+  /** Answers once the person has finished in the browser, which can take minutes. */
+  'cloud:signIn': { in: void; out: void }
+  'cloud:signOut': { in: void; out: void }
+  'logins:status': { in: void; out: AgentLogins }
+  /** The token `claude setup-token` printed. It goes to the runner's vault and nowhere else. */
+  'logins:connectClaude': { in: { token: string }; out: void }
+  /** Opens the runner's GitHub App authorization flow. */
+  'logins:connectGithub': { in: void; out: { url: string } }
+  'logins:checkGithub': { in: void; out: void }
+  /** Starts a Codex sign-in on the runner, away from every workspace; an earlier one is abandoned. */
+  'logins:connectCodex': { in: void; out: CodexSignIn }
+  'logins:disconnect': { in: { provider: AgentLoginProvider }; out: void }
+
+  /** `cloud` means the values kept on the runner for cloud workspaces, not this Mac's. */
+  'env:list': { in: { scope: EnvScope; projectId: string | null; cloud: boolean }; out: EnvVarRow[] }
+  'env:set': {
+    in: { scope: EnvScope; projectId: string | null; name: string; value: string; cloud: boolean }
+    out: void
+  }
+  'env:delete': { in: { scope: EnvScope; projectId: string | null; name: string; cloud: boolean }; out: void }
 }
 
 const id = z.string().min(1).max(64)
@@ -389,9 +492,13 @@ export const ipcSchemas = {
   'providers:status': z.undefined(),
   'providers:models': z.object({ backend }),
   'integrations:status': z.undefined(),
-  'github:prs': z.object({ projectId: id, query: z.string().max(200).nullable() }),
+  'github:prs': z.object({
+    projectId: id,
+    query: z.string().max(200).nullable(),
+    cloud: z.boolean().optional()
+  }),
   'github:workspacePr': z.object({ workspaceId: id }),
-  'github:branchPrs': z.object({ projectId: id }),
+  'github:branchPrs': z.object({ projectId: id, cloud: z.boolean().optional() }),
   'linear:hasKey': z.undefined(),
   'linear:setKey': z.object({ value: z.string().min(1).max(4096) }),
   'linear:deleteKey': z.undefined(),
@@ -402,14 +509,20 @@ export const ipcSchemas = {
   'elevenlabs:ttsToken': z.undefined(),
   'linear:issues': z.object({ query: z.string().max(200).nullable() }),
   'shell:openExternal': z.object({ url: z.string().min(1).max(2048) }),
-  'env:list': z.object({ scope: envScope, projectId: nullableId }),
+  'env:list': z.object({ scope: envScope, projectId: nullableId, cloud: z.boolean().default(false) }),
   'env:set': z.object({
     scope: envScope,
     projectId: nullableId,
     name: z.string().min(1).max(128),
-    value: z.string().max(65536)
+    value: z.string().max(65536),
+    cloud: z.boolean().default(false)
   }),
-  'env:delete': z.object({ scope: envScope, projectId: nullableId, name: z.string().min(1).max(128) }),
+  'env:delete': z.object({
+    scope: envScope,
+    projectId: nullableId,
+    name: z.string().min(1).max(128),
+    cloud: z.boolean().default(false)
+  }),
   'projects:list': z.undefined(),
   'projects:add': z.object({
     name: z.string().min(1).max(64),
@@ -451,7 +564,8 @@ export const ipcSchemas = {
   'workspaces:add': z.object({
     projectId: id,
     name: workspaceName,
-    baseRef: z.string().min(1).max(200).nullable()
+    baseRef: z.string().min(1).max(200).nullable(),
+    cloud: z.boolean().default(false)
   }),
   'workspaces:remove': z.object({ id }),
   'workspaces:setArchived': z.object({ id, archived: z.boolean() }),
@@ -480,6 +594,7 @@ export const ipcSchemas = {
   'sessions:sendNow': promptInput,
   'sessions:cancel': z.object({ sessionId: id }),
   'sessions:events': z.object({ sessionId: id }),
+  'sessions:eventsAfter': z.object({ sessionId: id, afterSeq: z.number().int().min(0) }),
   'sessions:instructions': z.object({ sessionId: id }),
   'sessions:exportMarkdown': z.object({ sessionId: id }),
   'sessions:fork': z.object({
@@ -513,6 +628,7 @@ export const ipcSchemas = {
   'files:pickExternal': z.undefined(),
   'lint:run': z.object({ workspaceId: id, path: relPath, text: z.string().max(2000000) }),
   'terminal:create': z.object({ workspaceId: id }),
+  'terminal:list': z.object({ workspaceId: id }),
   'terminal:attach': z.object({ workspaceId: id, text: z.string().min(1).max(200000) }),
   'terminal:write': z.object({ id, data: z.string().max(65536) }),
   'terminal:resize': z.object({
@@ -522,7 +638,18 @@ export const ipcSchemas = {
   }),
   'terminal:destroy': z.object({ id }),
   'terminal:setActive': z.object({ id }),
-  'history:search': z.object({ query: z.string().max(200), projectId: nullableId })
+  'history:search': z.object({ query: z.string().max(200), projectId: nullableId }),
+  'cloud:status': z.undefined(),
+  'cloud:runner': z.undefined(),
+  'cloud:setRunner': z.object({ url: z.string().max(2048).nullable() }),
+  'cloud:signIn': z.undefined(),
+  'cloud:signOut': z.undefined(),
+  'logins:status': z.undefined(),
+  'logins:connectClaude': z.object({ token: z.string().min(1).max(4096) }),
+  'logins:connectCodex': z.undefined(),
+  'logins:connectGithub': z.undefined(),
+  'logins:checkGithub': z.undefined(),
+  'logins:disconnect': z.object({ provider: z.enum(['claude', 'codex', 'github']) })
 } satisfies { [K in keyof IpcContract]: z.ZodType<IpcContract[K]['in']> }
 
 export const SESSION_EVENT_CHANNEL = 'session:event'
@@ -532,6 +659,23 @@ export interface SessionEventPush {
   event: AgentEvent
   unread?: SessionUnread
 }
+
+/**
+ * A pushed event with its number within its tab (from 1, no gaps). The window ignores the
+ * number; a desktop following a runner uses it to notice and fill what a dropped
+ * connection cost it.
+ */
+export interface NumberedSessionEventPush extends SessionEventPush {
+  seq: number
+}
+
+/** One stored event with its number, for asking "what came after the last one I have?". */
+export interface SequencedEvent {
+  seq: number
+  event: AgentEvent
+}
+
+export const CLOUD_STATUS_CHANNEL = 'cloud:status'
 
 export const TERMINAL_DATA_CHANNEL = 'terminal:data'
 export interface TerminalDataPush {
@@ -603,9 +747,9 @@ export interface LoomApi {
     status(): Promise<IntegrationsStatus>
   }
   github: {
-    prs(projectId: string, query?: string | null): Promise<PullRequestListResult>
+    prs(projectId: string, query?: string | null, cloud?: boolean): Promise<PullRequestListResult>
     workspacePr(workspaceId: string): Promise<WorkspacePrResult>
-    branchPrs(projectId: string): Promise<BranchPrsResult>
+    branchPrs(projectId: string, cloud?: boolean): Promise<BranchPrsResult>
   }
   linear: {
     hasKey(): Promise<SecretPresence>
@@ -621,9 +765,16 @@ export interface LoomApi {
     ttsToken(): Promise<SingleUseTokenResult>
   }
   env: {
-    list(scope: EnvScope, projectId: string | null): Promise<EnvVarRow[]>
-    set(scope: EnvScope, projectId: string | null, name: string, value: string): Promise<void>
-    delete(scope: EnvScope, projectId: string | null, name: string): Promise<void>
+    /** `cloud` selects the values kept on the runner for cloud workspaces. */
+    list(scope: EnvScope, projectId: string | null, cloud?: boolean): Promise<EnvVarRow[]>
+    set(
+      scope: EnvScope,
+      projectId: string | null,
+      name: string,
+      value: string,
+      cloud?: boolean
+    ): Promise<void>
+    delete(scope: EnvScope, projectId: string | null, name: string, cloud?: boolean): Promise<void>
   }
   shell: {
     /** Opens an http(s) URL in the OS default browser; every other scheme is dropped. */
@@ -646,7 +797,8 @@ export interface LoomApi {
   }
   workspaces: {
     list(projectId: string): Promise<WorkspaceRow[]>
-    add(projectId: string, name: string, baseRef?: string | null): Promise<WorkspaceRow>
+    /** `cloud` creates the workspace on the runner this desktop follows. */
+    add(projectId: string, name: string, baseRef?: string | null, cloud?: boolean): Promise<WorkspaceRow>
     remove(id: string): Promise<void>
     setArchived(id: string, archived: boolean): Promise<void>
     scripts(workspaceId: string): Promise<RepoScriptsInfo>
@@ -674,6 +826,8 @@ export interface LoomApi {
     sendNow(sessionId: string, text: string, attachments?: string[]): Promise<void>
     cancel(sessionId: string): Promise<void>
     events(sessionId: string): Promise<AgentEvent[]>
+    /** A tab's events numbered above `afterSeq`; 0 asks for all of them. */
+    eventsAfter(sessionId: string, afterSeq: number): Promise<SequencedEvent[]>
     instructions(sessionId: string): Promise<SessionInstructionsInfo>
     exportMarkdown(sessionId: string): Promise<string | null>
     fork(input: SessionForkInput): Promise<SessionRow>
@@ -704,6 +858,8 @@ export interface LoomApi {
   }
   terminal: {
     create(workspaceId: string): Promise<string>
+    /** Terminals of the workspace that are already running, for a desktop that reconnects. */
+    list(workspaceId: string): Promise<TerminalInfo[]>
     attach(workspaceId: string, text: string): Promise<string>
     write(id: string, data: string): Promise<void>
     resize(id: string, cols: number, rows: number): Promise<void>
@@ -714,6 +870,25 @@ export interface LoomApi {
   history: {
     search(query: string, projectId: string | null): Promise<HistoryHit[]>
   }
+  cloud: {
+    status(): Promise<CloudStatus>
+    runner(): Promise<CloudRunner>
+    /** Null stops following a runner. Answers with the address as it was kept. */
+    setRunner(url: string | null): Promise<CloudRunner>
+    /** Opens the sign-in page in the browser; calling again abandons the earlier attempt. */
+    signIn(): Promise<void>
+    signOut(): Promise<void>
+  }
+  /** Agent logins for cloud workspaces, kept by the runner. */
+  logins: {
+    status(): Promise<AgentLogins>
+    connectClaude(token: string): Promise<void>
+    connectCodex(): Promise<CodexSignIn>
+    connectGithub(): Promise<{ url: string }>
+    checkGithub(): Promise<void>
+    disconnect(provider: AgentLoginProvider): Promise<void>
+  }
+  onCloudStatus(cb: (status: CloudStatus) => void): () => void
   onSessionEvent(cb: (push: SessionEventPush) => void): () => void
   onSessionActivity(cb: (push: SessionActivity) => void): () => void
   onTerminalData(cb: (push: TerminalDataPush) => void): () => void

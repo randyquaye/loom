@@ -1,7 +1,7 @@
 import type { LinearIssueListResult } from '../../shared/ipc-contract'
 import { LinearAuthError, LINEAR_KEY_HINT } from '../integrations/linear/client'
 import { listAssignedIssues } from '../integrations/linear/issues'
-import { handle, secretPresence, type IpcDeps } from './handle'
+import { handle, secretPresence, type IpcDeps } from './registry'
 
 export function registerLinearIpc(deps: IpcDeps): void {
   handle('linear:hasKey', () => secretPresence(deps.secrets, 'linear'))

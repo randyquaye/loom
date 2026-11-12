@@ -8,6 +8,9 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "runner": "electron-vite build && node out/main/runner.js",
+    "update-seccomp": "node scripts/update-docker-seccomp.mjs",
+    "workspace-image": "docker build -t loom-workspace:latest --build-arg LOOM_UID=$(id -u) --build-arg LOOM_GID=$(id -g) images/workspace",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -19,6 +22,7 @@
     "package": "electron-vite build && electron-builder --mac"
   },
   "dependencies": {
+    "@hono/node-server": "^2.1.7",
     "@monaco-editor/react": "^4.7.0",
     "@typescript-eslint/eslint-plugin": "^8.72.1",
     "@typescript-eslint/parser": "^8.72.1",
@@ -28,6 +32,7 @@
     "better-sqlite3": "^13.0.3",
     "clsx": "^2.1.1",
     "eslint": "^10.14.0",
+    "hono": "^4.13.18",
     "markdownlint": "^0.42.0",
     "markdownlint-cli2": "^0.24.0",
     "mermaid": "^12.3.0",
@@ -39,6 +44,7 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "typescript": "^6.0.3",
+    "ws": "^8.22.2",
     "zod": "^4.6.7",
     "zustand": "^5.0.16"
   },
@@ -49,6 +55,7 @@
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^6.2.1",
     "electron": "^45.2.2",
     "electron-builder": "^26.18.0",

@@ -237,6 +237,32 @@ body[data-modality='keyboard'] .side-foot-btn:focus-visible {
   color: var(--text);
 }
 
+/* Marks a workspace that lives on the runner rather than on this Mac. At rest it rests in the
+   slot kept for the "⋯", against the row's right edge; when the "⋯" appears it slides aside.
+   A transform, so the name beside it never reflows. */
+.ws-cloud {
+  flex: none;
+  display: inline-flex;
+  color: var(--text-muted);
+  transform: translateX(24px);
+  transition: transform var(--dur-2) var(--ease);
+}
+
+.ws-item:hover .ws-cloud,
+.ws-item[data-menu='true'] .ws-cloud,
+.ws-item:has(.ws-more:focus-visible) .ws-cloud {
+  transform: none;
+}
+
+.ws-cloud svg {
+  width: 20px;
+  height: 20px;
+}
+
+.ws-item[data-unreachable='true'] .ws-row {
+  opacity: 0.55;
+}
+
 .ws-unread-dot {
   flex: none;
   width: 6px;
@@ -245,7 +271,8 @@ body[data-modality='keyboard'] .side-foot-btn:focus-visible {
   background: var(--info);
 }
 
-/* Workspace row + "⋯" menu: reserve both the menu and state slot in every bootstrap state. */
+/* Workspace row + "⋯" menu: reserve both the menu and state slot in every bootstrap state.
+   The "⋯" sits 2px inside the highlight's right edge; the row's own marks end right beside it. */
 .sidebar .ws-item {
   position: relative;
   display: flex;
@@ -259,7 +286,7 @@ body[data-modality='keyboard'] .side-foot-btn:focus-visible {
 .sidebar .ws-item .ws-row {
   flex: 1;
   min-width: 0;
-  padding-right: calc(var(--s-6) * 2);
+  padding-right: 26px;
 }
 
 .sidebar .ws-item[data-archived='true'] .ws-row {
@@ -275,16 +302,13 @@ body[data-modality='keyboard'] .side-foot-btn:focus-visible {
 .sidebar .ws-more-wrap {
   position: absolute;
   top: 0;
-  right: var(--s-6);
+  right: 2px;
   bottom: 0;
   align-items: center;
 }
 
 .sidebar .ws-state-slot {
-  position: absolute;
-  top: 0;
-  right: var(--s-2);
-  bottom: 0;
+  flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -317,12 +341,16 @@ body[data-modality='keyboard'] .side-foot-btn:focus-visible {
   .ws-state-spinner {
     animation: none;
   }
+
+  .ws-cloud {
+    transition: none;
+  }
 }
 
 .ws-more {
   opacity: 0;
   transition:
-    opacity var(--dur-1) var(--ease),
+    opacity var(--dur-2) var(--ease),
     background var(--dur-1) var(--ease);
 }
 
@@ -568,6 +596,41 @@ body[data-modality='keyboard'] .settings-nav-row:focus-visible {
 }
 
 /* Footer: the Settings row on the same 8px inset as project rows; provider detail lives in Settings. */
+/* One line saying how the connection to the runner is doing; absent when no runner is followed. */
+.cloud-status {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-4);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.cloud-status-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.cloud-status[data-state='connected'] .cloud-status-dot {
+  background: var(--ok);
+}
+
+.cloud-status[data-state='unreachable'] .cloud-status-dot,
+.cloud-status[data-state='signed-out'] .cloud-status-dot {
+  background: var(--warn);
+}
+
+.cloud-status[data-state='update'] {
+  color: var(--danger);
+}
+
+.cloud-status[data-state='update'] .cloud-status-dot {
+  background: var(--danger);
+}
+
 .side-foot {
   padding: var(--s-2);
   border-top: 1px solid var(--hairline);

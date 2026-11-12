@@ -35,13 +35,13 @@ function detail(err: unknown, key: string): string {
 /** Injected in tests so no suite ever shells out to a real gh or the network. */
 export type GhExec = (args: readonly string[]) => Promise<string>
 
-export const ghExec: GhExec = async (args) => {
+async function runGh(args: readonly string[], env: NodeJS.ProcessEnv): Promise<string> {
   try {
     const { stdout } = await execFileAsync('gh', [...args], {
       shell: false,
       maxBuffer: MAX_OUTPUT_BYTES,
       timeout: GH_TIMEOUT_MS,
-      env: ghEnv()
+      env
     })
     return stdout
   } catch (err) {
@@ -50,6 +50,13 @@ export const ghExec: GhExec = async (args) => {
     if (isAuthFailure(stderr)) throw new GhNotAuthenticatedError(stderr.split('\n')[0])
     throw new GhRequestError(args, stderr)
   }
+}
+
+export const ghExec: GhExec = (args) => runGh(args, ghEnv())
+
+/** The runner supplies the caller's App token through the child environment only. */
+export function ghWithToken(accessToken: string): GhExec {
+  return (args) => runGh(args, { ...ghEnv(), GH_TOKEN: accessToken, GITHUB_TOKEN: accessToken })
 }
 
 export interface GhAuthState {

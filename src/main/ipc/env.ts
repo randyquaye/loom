@@ -1,5 +1,5 @@
 import { deleteEnvVar, listEnvVars, setEnvVar } from '../env/vars'
-import { handle, type IpcDeps } from './handle'
+import { handle, type IpcDeps } from './registry'
 
 /**
  * Environment variables are stored encrypted in the secret store; only names and masked

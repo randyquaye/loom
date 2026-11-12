@@ -1,4 +1,5 @@
 import type { AuthStatus, ModelDescriptor, SessionOpts } from '../../../shared/models'
+import type { WorkspaceRuntime } from '../../runtime'
 import type { AgentBackend, RunningSession } from '../types'
 import { assertSessionOpts } from './args'
 import { CODEX_MODELS } from './catalog'
@@ -24,16 +25,16 @@ export function createCodexBackend(): AgentBackend {
       )
     },
 
-    title(prompt: string, model: string): Promise<string | null> {
-      return cliSessionTitle(CODEX_BIN, ['exec', '--skip-git-repo-check', '-m', model], prompt)
+    title(prompt: string, model: string, runtime?: WorkspaceRuntime): Promise<string | null> {
+      return cliSessionTitle(CODEX_BIN, ['exec', '--skip-git-repo-check', '-m', model], prompt, runtime)
     },
 
-    startSession(opts: SessionOpts): Promise<RunningSession> {
+    startSession(opts: SessionOpts, runtime?: WorkspaceRuntime): Promise<RunningSession> {
       // Renderer-supplied model/effort/path are validated before anything is
       // turned into argv; an unknown model rejects here rather than spawning.
       assertSessionOpts('codex', opts)
 
-      return Promise.resolve(startCodexSession(opts))
+      return Promise.resolve(startCodexSession(opts, undefined, runtime))
     }
   }
 }

@@ -19,15 +19,18 @@ type Editor = { name: string; replacing: boolean } | null
 /**
  * Settings environment section for one scope: name + masked value rows with Replace / Remove,
  * and the name/value editor modal. Values only ever travel renderer → main; rows carry masks.
+ * With `cloud` the rows are the ones kept on the runner for cloud workspaces, not this Mac's.
  */
 export function EnvVarList({
   scope,
   projectId,
-  intro
+  intro,
+  cloud = false
 }: {
   scope: EnvScope
   projectId: string | null
   intro: string
+  cloud?: boolean
 }) {
   const push = useToasts((s) => s.push)
   const [rows, setRows] = useState<EnvVarRow[] | null>(null)
@@ -38,18 +41,18 @@ export function EnvVarList({
 
   const refresh = useCallback(() => {
     window.loom.env
-      .list(scope, projectId)
+      .list(scope, projectId, cloud)
       .then((list) => {
         setRows(list)
         setError(null)
       })
       .catch((err: unknown) => setError(String(err)))
-  }, [scope, projectId])
+  }, [scope, projectId, cloud])
 
   useEffect(() => {
     let live = true
     window.loom.env
-      .list(scope, projectId)
+      .list(scope, projectId, cloud)
       .then((list) => {
         if (live) setRows(list)
       })
@@ -59,7 +62,7 @@ export function EnvVarList({
     return () => {
       live = false
     }
-  }, [scope, projectId])
+  }, [scope, projectId, cloud])
 
   // Modal re-runs its focus effect whenever onClose changes identity, so keep it stable.
   const closeEditor = useCallback(() => {
@@ -72,7 +75,7 @@ export function EnvVarList({
   function save() {
     if (editor === null || !name || !value) return
     window.loom.env
-      .set(scope, projectId, name, value)
+      .set(scope, projectId, name, value, cloud)
       .then(() => {
         push(`Saved ${name}`)
         closeEditor()
@@ -84,7 +87,7 @@ export function EnvVarList({
   function remove(target: string) {
     setRemoving(target)
     window.loom.env
-      .delete(scope, projectId, target)
+      .delete(scope, projectId, target, cloud)
       .then(() => {
         push(`Removed ${target}`)
         refresh()
@@ -104,7 +107,7 @@ export function EnvVarList({
     <>
       <section className="settings-section">
         <div className="settings-label-row">
-          <div className="settings-label">Environment</div>
+          <div className="settings-label">{cloud ? 'Cloud environment' : 'Environment'}</div>
           {rows !== null && !empty && add}
         </div>
         <p className="settings-note">{intro}</p>
@@ -173,7 +176,10 @@ export function EnvVarList({
             onChange={(e) => setEditor((prev) => (prev === null ? prev : { ...prev, name: e.target.value }))}
           />
         </Field>
-        <Field label="Value" hint="Stored encrypted in the macOS Keychain.">
+        <Field
+          label="Value"
+          hint={cloud ? 'Stored encrypted on the cloud host.' : 'Stored encrypted in the macOS Keychain.'}
+        >
           <input
             className="input"
             type="password"

@@ -1,0 +1,27 @@
+.location-switcher {
+  display: inline-flex;
+  align-self: flex-start;
+  width: auto;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--r-1);
+  background: var(--surface-1);
+}
+
+.location-switcher > button {
+  padding: 4px var(--s-3);
+  border-radius: var(--r-1);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.location-switcher > button:hover:not(:disabled) {
+  color: var(--text);
+}
+.location-switcher > button[aria-checked='true'] {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.location-switcher > button:disabled {
+  opacity: 0.5;
+}

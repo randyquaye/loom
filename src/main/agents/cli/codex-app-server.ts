@@ -3,34 +3,36 @@ import type { SessionOpts } from '../../../shared/models'
 import { assertSessionOpts } from './args'
 import { isRec, str, sub } from './record'
 import { createRpcTransport, type RpcCall } from './rpc'
-import { captureStderr, spawnChild, terminateChild } from './spawn'
+import { machineRuntime, type WorkspaceRuntime } from '../../runtime'
+import { captureStderr } from './spawn'
 
 /** Opens a persistent connection without starting a turn; the owner must close it. */
 export async function openCodexThread(
   opts: SessionOpts,
   onCall: (call: RpcCall, rpc: ReturnType<typeof createRpcTransport>) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  runtime: WorkspaceRuntime = machineRuntime
 ) {
   assertSessionOpts('codex', opts)
   signal?.throwIfAborted()
   // Enable native questions for ordinary turns without changing the user's config file.
-  const child = spawnChild(
+  const proc = runtime.spawn(
     'codex',
     ['--config', 'features.default_mode_request_user_input=true', 'app-server', '--listen', 'stdio://'],
-    opts.worktreePath,
-    opts.env
+    { cwd: opts.worktreePath, env: opts.env }
   )
+  const child = proc.child
   const stderr = captureStderr(child)
   const exited = new Promise<void>((resolve) => {
     child.once('close', () => resolve())
     child.once('error', () => resolve())
   })
   const rpc = createRpcTransport(child, (call) => onCall(call, rpc))
-  const abort = (): void => terminateChild(child)
+  const abort = (): void => proc.terminate()
   signal?.addEventListener('abort', abort, { once: true })
 
   async function close(): Promise<void> {
-    terminateChild(child)
+    proc.terminate()
     await exited
   }
 

@@ -1,6 +1,6 @@
 import { makeWorktreeResolver } from '../fs/workspace-root'
 import { addComment, listComments, removeComment, rewriteCommentsFile } from '../db/repos/comments'
-import { handle, type IpcDeps } from './handle'
+import { handle, type IpcDeps } from './registry'
 
 export function registerCommentsIpc(deps: IpcDeps): void {
   const worktreeOf = makeWorktreeResolver(deps.db)

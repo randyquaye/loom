@@ -1,16 +1,29 @@
 import { useProjects } from '../../state/projects'
 import { DEFAULT_SETTINGS_PAGE, useUi, type SettingsPage } from '../../state/ui'
 
-const GENERAL: { page: SettingsPage; label: string; glyph: string }[] = [
-  { page: 'preferences', label: 'Preferences', glyph: '⚙' },
-  { page: 'shortcuts', label: 'Shortcuts', glyph: '⌘' },
-  { page: 'integrations', label: 'Integrations', glyph: '⇄' },
+interface NavPage {
+  page: SettingsPage
+  label: string
+  glyph: string
+}
+
+/** Each section lists its pages in alphabetical order. */
+const GENERAL: NavPage[] = [
+  { page: 'cloud', label: 'Cloud', glyph: '☁' },
   { page: 'env', label: 'Environment', glyph: '$' },
-  { page: 'instructions', label: 'Instructions', glyph: '✎' },
-  { page: 'models', label: 'Default models', glyph: '◇' }
+  { page: 'integrations', label: 'Integrations', glyph: '⇄' },
+  { page: 'preferences', label: 'Preferences', glyph: '⚙' },
+  { page: 'shortcuts', label: 'Shortcuts', glyph: '⌘' }
 ]
 
-function NavRow({ page, label, glyph }: { page: SettingsPage; label: string; glyph: string }) {
+/** Everything about the agents themselves: who they are signed in as, how they start, what they are told. */
+const AGENTS: NavPage[] = [
+  { page: 'agents', label: 'Agents', glyph: '◉' },
+  { page: 'models', label: 'Default models', glyph: '◇' },
+  { page: 'instructions', label: 'Instructions', glyph: '✎' }
+]
+
+function NavRow({ page, label, glyph }: NavPage) {
   const route = useUi((s) => s.route)
   const navigate = useUi((s) => s.navigate)
   const current = route.name === 'settings' && (route.page ?? DEFAULT_SETTINGS_PAGE) === page
@@ -43,7 +56,9 @@ export function SettingsNav() {
       </div>
       <div className="section-label">Agents</div>
       <div className="project-block">
-        <NavRow page="agents" label="Agents" glyph="◉" />
+        {AGENTS.map((row) => (
+          <NavRow key={row.page} {...row} />
+        ))}
       </div>
       <div className="section-label">Projects</div>
       <div className="project-block">

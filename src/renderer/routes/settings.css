@@ -369,3 +369,68 @@ body[data-modality='keyboard'] .project-prompts-footer :focus-visible {
   font-family: var(--mono);
   text-transform: none;
 }
+
+.settings-location {
+  padding-bottom: var(--s-3);
+}
+.settings-location-row {
+  display: flex;
+  justify-content: flex-end;
+  padding-inline: var(--s-2);
+}
+.connection-row {
+  flex-wrap: wrap;
+}
+.connection-row .settings-provider {
+  flex-basis: 180px;
+}
+.connection-command {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-2);
+  background: var(--surface-1);
+}
+.connection-command code {
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+.connection-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+/* Copying is what the person came to this line to do: the control is sized to be hit. */
+.connection-copy .icon-btn,
+.connection-command .icon-btn {
+  flex: none;
+  width: 32px;
+  height: 32px;
+}
+.connection-copy .icon,
+.connection-command .icon {
+  width: 20px;
+  height: 20px;
+}
+.connection-copy > span {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+.connection-error {
+  color: var(--danger);
+  margin: 0;
+}
+.connection-url {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.connection-notice,
+.connection-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}

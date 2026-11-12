@@ -38,7 +38,11 @@ describe('db', () => {
       '005_diff_comments',
       '006_workspace_auto_named',
       '007_session_instructions',
-      '008_session_read'
+      '008_session_read',
+      '009_workspace_placement',
+      '010_session_durability',
+      '011_owners',
+      '012_sign_in'
     ])
     second.close()
   })

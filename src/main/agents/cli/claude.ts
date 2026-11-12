@@ -1,4 +1,5 @@
 import type { AuthStatus, ModelDescriptor, SessionOpts } from '../../../shared/models'
+import type { WorkspaceRuntime } from '../../runtime'
 import type { AgentBackend, RunningSession } from '../types'
 import { assertSessionOpts } from './args'
 import { CLAUDE_MODELS } from './catalog'
@@ -25,14 +26,14 @@ export function createClaudeBackend(): AgentBackend {
       )
     },
 
-    title(prompt: string, model: string): Promise<string | null> {
-      return cliSessionTitle(CLAUDE_BIN, ['-p', '--model', model], prompt)
+    title(prompt: string, model: string, runtime?: WorkspaceRuntime): Promise<string | null> {
+      return cliSessionTitle(CLAUDE_BIN, ['-p', '--model', model], prompt, runtime)
     },
 
-    startSession(opts: SessionOpts): Promise<RunningSession> {
+    startSession(opts: SessionOpts, runtime?: WorkspaceRuntime): Promise<RunningSession> {
       assertSessionOpts('claude', opts)
 
-      return Promise.resolve(startClaudeSession(opts))
+      return Promise.resolve(startClaudeSession(opts, runtime))
     }
   }
 }

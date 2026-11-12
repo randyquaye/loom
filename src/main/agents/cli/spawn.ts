@@ -171,11 +171,11 @@ function attachChild(
 export function spawnChild(
   bin: string,
   args: string[],
-  cwd: string,
+  cwd: string | undefined,
   extraEnv?: Record<string, string>
 ): ChildProcessWithoutNullStreams {
   return spawn(bin, args, {
-    cwd,
+    ...(cwd === undefined ? {} : { cwd }),
     // argv goes straight to execve: no shell, so no value can be re-read as shell
     // syntax no matter what the renderer put in it.
     shell: false,

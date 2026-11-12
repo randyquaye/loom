@@ -1,3 +1,7 @@
+import { useUi } from '../../state/ui'
+import { CloudConnections } from './CloudConnections'
+import { ConnectionLocation } from './ConnectionLocation'
+import { LocalConnectModal } from './LocalConnectModal'
 import { useCallback, useEffect, useState } from 'react'
 import type { GithubStatus, IntegrationsStatus, SecretPresence } from '../../../shared/ipc-contract'
 import { Field } from '../../components/ui/Field'
@@ -33,11 +37,14 @@ function presenceTone(presence: SecretPresence | null): 'ok' | 'warn' | 'idle' {
 
 function presenceText(presence: SecretPresence | null): string {
   if (presence === null) return 'Checking…'
-  return presence.present ? 'Ready' : 'API key required'
+  return presence.present ? 'Key saved on this Mac' : 'API key required'
 }
 
 /** Settings "Integrations": GitHub CLI status plus stored keys for Linear and ElevenLabs. */
 export function IntegrationsPage() {
+  const location = useUi((state) => state.settingsLocation)
+  const [localGithub, setLocalGithub] = useState<'github' | null>(null)
+  const closeLocalGithub = useCallback(() => setLocalGithub(null), [])
   const push = useToasts((s) => s.push)
   const voiceId = useDefaults((s) => s.voiceId)
   const setVoiceId = useDefaults((s) => s.setVoiceId)
@@ -54,22 +61,24 @@ export function IntegrationsPage() {
   const [linearKey, setLinearKey] = useState<SecretPresence | null>(null)
   const [elKey, setElKey] = useState<SecretPresence | null>(null)
 
-  function refreshIntegrations() {
-    window.loom.linear
-      .hasKey()
-      .then(setLinearKey)
-      .catch((err: unknown) => push(`Could not check linear key: ${String(err)}`, 'err'))
-    window.loom.elevenlabs
-      .hasKey()
-      .then(setElKey)
-      .catch((err: unknown) => push(`Could not check elevenlabs key: ${String(err)}`, 'err'))
-    window.loom.integrations
-      .status()
-      .then((status) => {
-        setIntegrations(status)
-        setIntegrationsError(null)
-      })
-      .catch((err: unknown) => setIntegrationsError(String(err)))
+  async function refreshIntegrations() {
+    await Promise.all([
+      window.loom.linear
+        .hasKey()
+        .then(setLinearKey)
+        .catch(() => push('Could not check Linear key', 'err')),
+      window.loom.elevenlabs
+        .hasKey()
+        .then(setElKey)
+        .catch(() => push('Could not check ElevenLabs key', 'err')),
+      window.loom.integrations
+        .status()
+        .then((status) => {
+          setIntegrations(status)
+          setIntegrationsError(null)
+        })
+        .catch((err: unknown) => setIntegrationsError(String(err)))
+    ])
   }
 
   useEffect(() => {
@@ -170,8 +179,25 @@ export function IntegrationsPage() {
     }
   }
 
+  if (location === 'cloud')
+    return (
+      <>
+        <ConnectionLocation />
+        <CloudConnections providers={['github']} />
+        <section className="settings-section">
+          <p className="settings-note">Linear issue picking and spoken replies run on this Mac.</p>
+          <div>
+            <button className="btn btn-ghost" onClick={() => useUi.getState().setSettingsLocation('mac')}>
+              Manage desktop services
+            </button>
+          </div>
+        </section>
+      </>
+    )
+
   return (
     <>
+      <ConnectionLocation />
       <section className="settings-section">
         <div className="settings-label">Integrations</div>
         <div className="settings-list">
@@ -188,7 +214,7 @@ export function IntegrationsPage() {
               aria-hidden="true"
             />
             <div className="settings-provider">
-              <span className="settings-name">github</span>
+              <span className="settings-name">GitHub</span>
               <span className="settings-state">
                 {integrationsError !== null
                   ? 'Unavailable'
@@ -200,11 +226,14 @@ export function IntegrationsPage() {
             <span className="settings-mask">
               {integrations?.github.state === 'ready' ? integrations.github.account : null}
             </span>
+            <button className="btn" onClick={() => setLocalGithub('github')}>
+              {integrations?.github.state === 'ready' ? 'Sign-in help' : 'Connect'}
+            </button>
           </div>
           <div className="settings-row">
             <span className="settings-dot" data-tone={presenceTone(linearKey)} aria-hidden="true" />
             <div className="settings-provider">
-              <span className="settings-name">linear</span>
+              <span className="settings-name">Linear</span>
               <span className="settings-state">{presenceText(linearKey)}</span>
             </div>
             <span className="settings-mask">
@@ -220,7 +249,7 @@ export function IntegrationsPage() {
           <div className="settings-row">
             <span className="settings-dot" data-tone={presenceTone(elKey)} aria-hidden="true" />
             <div className="settings-provider">
-              <span className="settings-name">elevenlabs</span>
+              <span className="settings-name">ElevenLabs</span>
               <span className="settings-state">{presenceText(elKey)}</span>
             </div>
             <span className="settings-mask">{elKey?.present ? (elKey.masked ?? 'stored') : 'not set'}</span>
@@ -285,6 +314,7 @@ export function IntegrationsPage() {
           </button>
         </div>
       </section>
+      <LocalConnectModal provider={localGithub} onClose={closeLocalGithub} onRefresh={refreshIntegrations} />
       <Modal
         open={editing}
         title="Linear API key"

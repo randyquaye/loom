@@ -1,13 +1,15 @@
 import type { InstructionScope } from '../../shared/ipc-contract'
 import type { KnowledgeSource } from '../../shared/models'
 import { AUTOLINK_SYSTEM_PROMPT } from '../agents/prompts/autolink'
-import { LOOM_WORKSPACE_RULES } from './rules'
+import { LOOM_CONTAINER_WORKSPACE_RULES, LOOM_WORKSPACE_RULES } from './rules'
 
 export interface InstructionInput {
   repositoryInstructions: readonly string[]
   overlay: readonly { scope: InstructionScope; text: string }[]
   general: string | null
   envNames: readonly string[]
+  /** True for a workspace that runs in a container, whose facts differ from a worktree's. */
+  container?: boolean | undefined
   /** Reserved input; source retrieval and prompt injection are not implemented. */
   knowledgeSource?: KnowledgeSource | undefined
 }
@@ -30,7 +32,8 @@ export function composeInstructions(input: InstructionInput): string {
 
 /** Reconstructs the old format only to prove ownership before retiring a generated companion. */
 export function composeLegacyInstructions(input: InstructionInput): string {
-  const parts = [AUTOLINK_SYSTEM_PROMPT, LOOM_WORKSPACE_RULES, ...input.repositoryInstructions]
+  const rules = input.container === true ? LOOM_CONTAINER_WORKSPACE_RULES : LOOM_WORKSPACE_RULES
+  const parts = [AUTOLINK_SYSTEM_PROMPT, rules, ...input.repositoryInstructions]
   for (const entry of input.overlay) {
     const heading = entry.scope === 'instance' ? 'Instance instructions' : 'Project instructions'
     parts.push(`# ${heading}\n\n${entry.text}`)

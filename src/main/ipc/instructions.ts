@@ -1,6 +1,6 @@
 import { readInstructions, writeInstructions } from '../instructions/files'
 import { saveProjectInstructions } from '../instructions/migrate-general'
-import { handle, type IpcDeps } from './handle'
+import { handle, type IpcDeps } from './registry'
 
 export function registerInstructionsIpc(deps: IpcDeps): void {
   handle('instructions:get', ({ scope, projectId }) => readInstructions(deps.dataRoot, scope, projectId))

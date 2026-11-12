@@ -1,5 +1,10 @@
 import type Database from 'better-sqlite3'
-import type { WorkspaceRow, WorkspaceState } from '../../../shared/ipc-contract'
+import type {
+  WorkspaceCheckout,
+  WorkspaceRow,
+  WorkspaceRuntimeKind,
+  WorkspaceState
+} from '../../../shared/ipc-contract'
 
 export interface DbWorkspaceRow {
   id: string
@@ -14,10 +19,13 @@ export interface DbWorkspaceRow {
   initialization_files_copied: number | null
   initialization_log_path: string | null
   setup_log_path: string | null
+  checkout: string
+  runtime: string
+  owner_id: string | null
 }
 
 const COLUMNS =
-  'id, project_id, name, branch, worktree_path, created_at, archived, state, port, initialization_files_copied, initialization_log_path, setup_log_path'
+  'id, project_id, name, branch, worktree_path, created_at, archived, state, port, initialization_files_copied, initialization_log_path, setup_log_path, checkout, runtime, owner_id'
 
 export function toWorkspaceRow(row: DbWorkspaceRow): WorkspaceRow {
   return {
@@ -31,7 +39,10 @@ export function toWorkspaceRow(row: DbWorkspaceRow): WorkspaceRow {
     state: row.state as WorkspaceState,
     port: row.port,
     initializationFilesCopied: row.initialization_files_copied,
-    setupLogPath: row.setup_log_path
+    setupLogPath: row.setup_log_path,
+    checkout: row.checkout as WorkspaceCheckout,
+    runtime: row.runtime as WorkspaceRuntimeKind,
+    ownerId: row.owner_id
   }
 }
 
@@ -48,12 +59,13 @@ export function getWorkspace(db: Database.Database, id: string): WorkspaceRow | 
   return row === undefined ? null : toWorkspaceRow(row)
 }
 
-export function countWorkspaces(db: Database.Database, projectId: string): number {
+export function countWorkspaces(db: Database.Database, projectId: string, ownerId: string | null): number {
   // Archived workspaces are parked, not active: they must not consume a slot in
-  // the per-project cap, matching what the sidebar shows and enables.
+  // the per-project cap, matching what the sidebar shows and enables. The cap is each
+  // owner's own; `IS` also matches the ownerless workspaces of this Mac.
   const row = db
-    .prepare('SELECT COUNT(*) AS n FROM workspaces WHERE project_id = ? AND archived = 0')
-    .get(projectId) as { n: number }
+    .prepare('SELECT COUNT(*) AS n FROM workspaces WHERE project_id = ? AND archived = 0 AND owner_id IS ?')
+    .get(projectId, ownerId) as { n: number }
   return row.n
 }
 
@@ -77,8 +89,8 @@ export function insertWorkspace(db: Database.Database, workspace: WorkspaceRow):
   db.prepare(
     `INSERT INTO workspaces
      (id, project_id, name, branch, worktree_path, created_at, archived, state, port,
-      initialization_files_copied, setup_log_path)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      initialization_files_copied, setup_log_path, checkout, runtime, owner_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     workspace.id,
     workspace.projectId,
@@ -90,7 +102,10 @@ export function insertWorkspace(db: Database.Database, workspace: WorkspaceRow):
     workspace.state,
     workspace.port,
     workspace.initializationFilesCopied,
-    workspace.setupLogPath
+    workspace.setupLogPath,
+    workspace.checkout,
+    workspace.runtime,
+    workspace.ownerId
   )
 }
 

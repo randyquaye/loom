@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 import { createInterface } from 'node:readline'
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import {
   questionRequest,
   type AgentEvent,
@@ -15,7 +14,8 @@ import type { RunningSession } from '../types'
 import { buildClaudeArgs } from './args'
 import { claudeUsage, createClaudeParser } from './parse-claude'
 import { errorEvent, list, str, sub, tryParseRecord, type Rec } from './record'
-import { captureStderr, spawnChild, terminateChild } from './spawn'
+import { machineRuntime, type RuntimeProcess, type WorkspaceRuntime } from '../../runtime'
+import { captureStderr } from './spawn'
 
 type Done = Extract<AgentEvent, { type: 'turn.done' }>
 interface Turn {
@@ -36,7 +36,10 @@ interface Pending {
 }
 
 /** Claude's streaming control frames are distinct from Codex JSON-RPC. */
-export function startClaudeSession(opts: SessionOpts): RunningSession {
+export function startClaudeSession(
+  opts: SessionOpts,
+  runtime: WorkspaceRuntime = machineRuntime
+): RunningSession {
   const args = [
     ...buildClaudeArgs(opts),
     '--input-format=stream-json',
@@ -45,7 +48,7 @@ export function startClaudeSession(opts: SessionOpts): RunningSession {
     ...(opts.resumeId ? [`--resume=${opts.resumeId}`] : [])
   ]
   const queue = createEventQueue()
-  let child: ChildProcessWithoutNullStreams | undefined
+  let proc: RuntimeProcess | undefined
   let exited = Promise.resolve()
   let initialized: Promise<void> | undefined
   let ready = false
@@ -62,7 +65,7 @@ export function startClaudeSession(opts: SessionOpts): RunningSession {
   >()
 
   function write(frame: unknown): Promise<void> {
-    const stream = child?.stdin
+    const stream = proc?.child.stdin
     if (stream === undefined || stream.destroyed)
       return Promise.reject(new Error('Claude connection is closed'))
     return new Promise((resolve, reject) =>
@@ -111,7 +114,7 @@ export function startClaudeSession(opts: SessionOpts): RunningSession {
     finish('error')
     for (const pending of controls.values()) pending.reject(error)
     controls.clear()
-    if (child !== undefined) terminateChild(child)
+    proc?.terminate()
     queue.end()
   }
   function maybeFinish(): void {
@@ -261,14 +264,15 @@ export function startClaudeSession(opts: SessionOpts): RunningSession {
   }
   function connect(): Promise<void> {
     if (initialized !== undefined) return initialized
-    child = spawnChild('claude', args, opts.worktreePath, {
-      ...opts.env,
-      CLAUDE_CODE_SDK_READS_SESSION_STATE: '1'
+    proc = runtime.spawn('claude', args, {
+      cwd: opts.worktreePath,
+      env: { ...opts.env, CLAUDE_CODE_SDK_READS_SESSION_STATE: '1' }
     })
+    const child = proc.child
     const stderr = captureStderr(child)
     exited = new Promise((resolve) => {
-      child!.once('close', () => resolve())
-      child!.once('error', () => resolve())
+      child.once('close', () => resolve())
+      child.once('error', () => resolve())
     })
     const lines = createInterface({ input: child.stdout, crlfDelay: Infinity })
     lines.on('line', (line) => {

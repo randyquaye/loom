@@ -1,5 +1,5 @@
 import type { ElevenLabsStatus, SingleUseTokenResult } from '../../shared/ipc-contract'
-import { handle, secretPresence, type IpcDeps } from './handle'
+import { handle, secretPresence, type IpcDeps } from './registry'
 
 export const ELEVENLABS_KEY_HINT =
   'Add an ElevenLabs API key in Settings → Integrations to enable spoken replies.'

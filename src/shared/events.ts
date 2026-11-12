@@ -124,7 +124,8 @@ export const agentEvent = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('turn.done'),
     turnId: z.string(),
-    stopReason: z.enum(['end', 'cancelled', 'error', 'limit']),
+    // 'interrupted': the process running the turn went away; nothing was re-sent.
+    stopReason: z.enum(['end', 'cancelled', 'error', 'limit', 'interrupted']),
     // Stamped at append time so history reloads can show turn duration and date.
     at: z.number().optional()
   })

@@ -56,7 +56,7 @@
   color: var(--text-muted);
 }
 
-.nw-need-project {
+.nw-hint {
   color: var(--text-muted);
   font-size: var(--fs-sm);
 }

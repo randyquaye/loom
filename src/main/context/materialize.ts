@@ -50,11 +50,16 @@ export async function writeLoomContext(worktreePath: string, ctx: WorkspaceConte
   await writeFile(path.join(dir, 'loom.context'), contextText(ctx), 'utf8')
 }
 
-export function attachmentFileName(kind: 'transcript' | 'terminal', title: string, at: number): string {
-  if (kind === 'terminal') {
-    const stamp = new Date(at).toISOString().replace(/[:.]/g, '-')
-    return `terminal-selection-${stamp}.txt`
-  }
+export function attachmentFileName(
+  kind: 'transcript' | 'terminal' | 'upload',
+  title: string,
+  at: number
+): string {
+  const stamp = new Date(at).toISOString().replace(/[:.]/g, '-')
+  if (kind === 'terminal') return `terminal-selection-${stamp}.txt`
+  // An upload keeps its own name, so its type is still told by its extension; the stamp
+  // keeps two files of one name apart.
+  if (kind === 'upload') return `${stamp}-${path.basename(title.replaceAll('\\', '/'))}`
   const slug =
     title
       .replace(/[^\w.-]+/g, '-')
@@ -67,12 +72,16 @@ export function attachmentFileName(kind: 'transcript' | 'terminal', title: strin
  * Writes one attachment under .context/attachments/ and evicts past the cap.
  * Returns the workspace-relative path for prompt references.
  */
-export async function writeAttachment(worktreePath: string, fileName: string, text: string): Promise<string> {
+export async function writeAttachment(
+  worktreePath: string,
+  fileName: string,
+  content: string | Uint8Array
+): Promise<string> {
   const dir = path.join(worktreePath, CONTEXT_DIR, ATTACHMENTS_DIR)
   await mkdir(dir, { recursive: true })
   const safe = fileName.replace(/[/\\]/g, '-').replace(/\.\.+/g, '.')
   const abs = await contain(dir, safe)
-  await writeFile(abs, text, 'utf8')
+  await writeFile(abs, content)
   await evictOldest(dir)
   return `${CONTEXT_DIR}/${ATTACHMENTS_DIR}/${safe}`
 }

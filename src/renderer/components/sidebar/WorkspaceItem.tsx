@@ -1,11 +1,12 @@
 import { useCallback, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import type { BranchPrState, WorkspaceRow } from '../../../shared/ipc-contract'
+import type { BranchPrState, CloudStatus, WorkspaceRow } from '../../../shared/ipc-contract'
+import { useCloud } from '../../state/cloud'
 import { useProjects } from '../../state/projects'
 import { useSessions } from '../../state/sessions'
 import { useUi } from '../../state/ui'
 import { clampInWindow, topBelowOrAbove, useCloseOnAnchorMove } from '../ui/anchor'
-import { BranchIcon, MergedIcon, PullRequestIcon } from '../ui/icons'
+import { BranchIcon, CloudIcon, MergedIcon, PullRequestIcon } from '../ui/icons'
 import { SessionActivityIndicator } from '../ui/SessionActivityIndicator'
 import { Popover } from '../ui/Popover'
 import { useToasts } from '../ui/Toast'
@@ -60,6 +61,16 @@ export function RowMenu({
   )
 }
 
+/** What a cloud workspace's mark says: where it lives and, when it cannot be reached, why. */
+const CLOUD_TITLES: Record<CloudStatus['state'], string> = {
+  connected: 'Cloud workspace',
+  connecting: 'Cloud workspace: connecting to the runner…',
+  unreachable: 'Cloud workspace: the runner is unreachable',
+  'signed-out': 'Cloud workspace: sign in to reach it',
+  update: 'Cloud workspace: Loom and the runner are different versions',
+  off: 'Cloud workspace: no runner is set'
+}
+
 /** One sidebar workspace row plus its hover/focus "⋯" actions and checkpoints. */
 const PR_TITLES: Record<BranchPrState, string> = { open: 'Pull request open', merged: 'Pull request merged' }
 
@@ -81,6 +92,10 @@ export function WorkspaceItem({
     Object.values(s.unreadBySession).some((row) => row.workspaceId === workspace.id && row.seq > 0)
   )
   const GitIcon = pr === 'merged' ? MergedIcon : pr === 'open' ? PullRequestIcon : BranchIcon
+  // A cloud workspace lives on the runner: with the connection down it cannot be asked anything.
+  const cloudState = useCloud((s) => (workspace.cloud === true ? s.status.state : null))
+  const unreachable = cloudState !== null && cloudState !== 'connected'
+  const cloudTitle = CLOUD_TITLES[cloudState ?? 'connected']
   const setArchived = useProjects((s) => s.setArchived)
   const push = useToasts((s) => s.push)
   const [menu, setMenu] = useState(false)
@@ -112,7 +127,12 @@ export function WorkspaceItem({
   }
 
   return (
-    <div className="ws-item" data-archived={workspace.archived} data-menu={menu}>
+    <div
+      className="ws-item"
+      data-archived={workspace.archived}
+      data-menu={menu}
+      data-unreachable={unreachable}
+    >
       <button
         type="button"
         className="ws-row"
@@ -142,6 +162,11 @@ export function WorkspaceItem({
             />
           )}
         </span>
+        {workspace.cloud === true && (
+          <span className="ws-cloud" role="img" aria-label={cloudTitle} title={cloudTitle}>
+            <CloudIcon />
+          </span>
+        )}
       </button>
       <div className="popover-wrap ws-more-wrap">
         <button

@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import type { HistoryHit } from '../../shared/ipc-contract'
-import { handle, type IpcDeps } from './handle'
+import { handle, type IpcDeps } from './registry'
 
 const SEARCH_SQL = `
   SELECT s.id AS sessionId, s.workspace_id AS workspaceId, w.project_id AS projectId,
@@ -27,22 +27,31 @@ function asPhrase(query: string): string {
   return `"${query.replaceAll('"', '""')}"`
 }
 
-export function searchHistory(db: Database.Database, query: string, projectId: string | null): HistoryHit[] {
+/** `ownerId` narrows the search to one user's workspaces, as a runner must; omitted, all of them. */
+export function searchHistory(
+  db: Database.Database,
+  query: string,
+  projectId: string | null,
+  ownerId?: string
+): HistoryHit[] {
+  const scope: string[] = []
+  const scopeParams: string[] = []
+  if (projectId !== null) {
+    scope.push('w.project_id = ?')
+    scopeParams.push(projectId)
+  }
+  if (ownerId !== undefined) {
+    scope.push('w.owner_id = ?')
+    scopeParams.push(ownerId)
+  }
   const trimmed = query.trim()
   if (trimmed === '') {
-    const sql = `${RECENT_SQL}${projectId === null ? '' : ' WHERE w.project_id = ?'} ORDER BY s.created_at DESC LIMIT 50`
-    const rows =
-      projectId === null
-        ? (db.prepare(sql).all() as HistoryHit[])
-        : (db.prepare(sql).all(projectId) as HistoryHit[])
-    return rows
+    const where = scope.length === 0 ? '' : ` WHERE ${scope.join(' AND ')}`
+    const sql = `${RECENT_SQL}${where} ORDER BY s.created_at DESC LIMIT 50`
+    return db.prepare(sql).all(...scopeParams) as HistoryHit[]
   }
-  const sql = `${SEARCH_SQL}${projectId === null ? '' : ' AND w.project_id = ?'} ORDER BY rank LIMIT 50`
-  const rows =
-    projectId === null
-      ? (db.prepare(sql).all(asPhrase(trimmed)) as HistoryHit[])
-      : (db.prepare(sql).all(asPhrase(trimmed), projectId) as HistoryHit[])
-  return rows
+  const sql = `${SEARCH_SQL}${scope.map((clause) => ` AND ${clause}`).join('')} ORDER BY rank LIMIT 50`
+  return db.prepare(sql).all(asPhrase(trimmed), ...scopeParams) as HistoryHit[]
 }
 
 export function registerHistoryIpc(deps: IpcDeps): void {

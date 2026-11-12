@@ -7,6 +7,7 @@ export type SettingsPage =
   | 'preferences'
   | 'shortcuts'
   | 'integrations'
+  | 'cloud'
   | 'env'
   | 'instructions'
   | 'models'
@@ -39,6 +40,8 @@ interface UiState {
   route: Route
   /** Captured on entry to Settings; switching Settings pages keeps the original destination. */
   settingsReturnRoute: Exclude<Route, { name: 'settings' }>
+  settingsLocation: 'mac' | 'cloud'
+  setSettingsLocation(location: 'mac' | 'cloud'): void
   workspacePane: 'chat' | 'viewer'
   modals: ModalFlags
   paletteOpen: boolean
@@ -87,6 +90,8 @@ let voiceEnabledBeforeMode: boolean | null = null
 export const useUi = create<UiState>((set, get) => ({
   route: { name: 'home' },
   settingsReturnRoute: { name: 'home' },
+  settingsLocation: 'mac',
+  setSettingsLocation: (settingsLocation) => set({ settingsLocation }),
   workspacePane: 'chat',
   modals: CLOSED,
   paletteOpen: false,
@@ -147,11 +152,25 @@ export const useUi = create<UiState>((set, get) => ({
       return { attachmentsBySession }
     }),
   navigate: (route) =>
-    set((s) => ({
-      route,
-      settingsReturnRoute:
-        route.name === 'settings' && s.route.name !== 'settings' ? s.route : s.settingsReturnRoute
-    })),
+    set((state) => {
+      const enteringSettings = route.name === 'settings' && state.route.name !== 'settings'
+      let settingsLocation = state.settingsLocation
+      if (enteringSettings) {
+        const workspaceId = state.route.name === 'workspace' ? state.route.workspaceId : null
+        const workspace = Object.values(useProjects.getState().workspacesByProject)
+          .flat()
+          .find((row) => row.id === workspaceId)
+        settingsLocation = workspace?.cloud ? 'cloud' : 'mac'
+      }
+      return {
+        route,
+        settingsLocation,
+        settingsReturnRoute:
+          route.name === 'settings' && state.route.name !== 'settings'
+            ? state.route
+            : state.settingsReturnRoute
+      }
+    }),
   leaveSettings: () => {
     if (get().route.name !== 'settings') return
     const route = get().settingsReturnRoute

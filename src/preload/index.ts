@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import {
+  CLOUD_STATUS_CHANNEL,
   SESSION_EVENT_CHANNEL,
   SESSION_ACTIVITY_CHANNEL,
   SESSION_QUEUE_CHANNEL,
@@ -7,6 +8,7 @@ import {
   TERMINAL_DATA_CHANNEL,
   TERMINAL_EXIT_CHANNEL,
   WORKSPACE_STATE_CHANNEL,
+  type CloudStatus,
   type IpcContract,
   type LoomApi,
   type SessionEventPush,
@@ -48,9 +50,9 @@ const api: LoomApi = {
     status: () => invoke('integrations:status', undefined)
   },
   github: {
-    prs: (projectId, query) => invoke('github:prs', { projectId, query: query ?? null }),
+    prs: (projectId, query, cloud) => invoke('github:prs', { projectId, query: query ?? null, cloud }),
     workspacePr: (workspaceId) => invoke('github:workspacePr', { workspaceId }),
-    branchPrs: (projectId) => invoke('github:branchPrs', { projectId })
+    branchPrs: (projectId, cloud) => invoke('github:branchPrs', { projectId, cloud })
   },
   linear: {
     hasKey: () => invoke('linear:hasKey', undefined),
@@ -84,8 +86,8 @@ const api: LoomApi = {
   },
   workspaces: {
     list: (projectId) => invoke('workspaces:list', { projectId }),
-    add: (projectId, name, baseRef) =>
-      invoke('workspaces:add', { projectId, name, baseRef: baseRef ?? null }),
+    add: (projectId, name, baseRef, cloud) =>
+      invoke('workspaces:add', { projectId, name, baseRef: baseRef ?? null, cloud: cloud ?? false }),
     remove: (id) => invoke('workspaces:remove', { id }),
     setArchived: (id, archived) => invoke('workspaces:setArchived', { id, archived }),
     scripts: (workspaceId) => invoke('workspaces:scripts', { workspaceId }),
@@ -116,6 +118,7 @@ const api: LoomApi = {
       invoke('sessions:sendNow', { sessionId, text, attachments: attachments ?? [] }),
     cancel: (sessionId) => invoke('sessions:cancel', { sessionId }),
     events: (sessionId) => invoke('sessions:events', { sessionId }),
+    eventsAfter: (sessionId, afterSeq) => invoke('sessions:eventsAfter', { sessionId, afterSeq }),
     instructions: (sessionId) => invoke('sessions:instructions', { sessionId }),
     exportMarkdown: (sessionId) => invoke('sessions:exportMarkdown', { sessionId }),
     fork: (input) => invoke('sessions:fork', input),
@@ -140,15 +143,18 @@ const api: LoomApi = {
     pickExternal: () => invoke('files:pickExternal', undefined)
   },
   env: {
-    list: (scope, projectId) => invoke('env:list', { scope, projectId }),
-    set: (scope, projectId, name, value) => invoke('env:set', { scope, projectId, name, value }),
-    delete: (scope, projectId, name) => invoke('env:delete', { scope, projectId, name })
+    list: (scope, projectId, cloud) => invoke('env:list', { scope, projectId, cloud: cloud ?? false }),
+    set: (scope, projectId, name, value, cloud) =>
+      invoke('env:set', { scope, projectId, name, value, cloud: cloud ?? false }),
+    delete: (scope, projectId, name, cloud) =>
+      invoke('env:delete', { scope, projectId, name, cloud: cloud ?? false })
   },
   lint: {
     run: (workspaceId, path, text) => invoke('lint:run', { workspaceId, path, text })
   },
   terminal: {
     create: (workspaceId) => invoke('terminal:create', { workspaceId }),
+    list: (workspaceId) => invoke('terminal:list', { workspaceId }),
     attach: (workspaceId, text) => invoke('terminal:attach', { workspaceId, text }),
     write: (id, data) => invoke('terminal:write', { id, data }),
     resize: (id, cols, rows) => invoke('terminal:resize', { id, cols, rows }),
@@ -158,6 +164,22 @@ const api: LoomApi = {
   history: {
     search: (query, projectId) => invoke('history:search', { query, projectId })
   },
+  cloud: {
+    status: () => invoke('cloud:status', undefined),
+    runner: () => invoke('cloud:runner', undefined),
+    setRunner: (url) => invoke('cloud:setRunner', { url }),
+    signIn: () => invoke('cloud:signIn', undefined),
+    signOut: () => invoke('cloud:signOut', undefined)
+  },
+  logins: {
+    status: () => invoke('logins:status', undefined),
+    connectClaude: (token) => invoke('logins:connectClaude', { token }),
+    connectCodex: () => invoke('logins:connectCodex', undefined),
+    connectGithub: () => invoke('logins:connectGithub', undefined),
+    checkGithub: () => invoke('logins:checkGithub', undefined),
+    disconnect: (provider) => invoke('logins:disconnect', { provider })
+  },
+  onCloudStatus: (cb) => subscribe<CloudStatus>(CLOUD_STATUS_CHANNEL, cb),
   onSessionEvent: (cb) => subscribe<SessionEventPush>(SESSION_EVENT_CHANNEL, cb),
   onSessionActivity: (cb) => subscribe<SessionActivity>(SESSION_ACTIVITY_CHANNEL, cb),
   onTerminalData: (cb) => subscribe<TerminalDataPush>(TERMINAL_DATA_CHANNEL, cb),

@@ -1,9 +1,11 @@
+import { useCloud } from '../../state/cloud'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { BranchPrState, ProjectRow, WorkspaceRow } from '../../../shared/ipc-contract'
 import { MAX_WORKSPACES_PER_PROJECT } from '../../../shared/limits'
 import { useProjects } from '../../state/projects'
 import { useUi } from '../../state/ui'
 import { RemoveProjectModal } from '../modals/RemoveProjectModal'
+import { CloudStatusLine } from './CloudStatusLine'
 import { DeleteWorkspaceModal } from './DeleteWorkspaceModal'
 import { SettingsNav } from './SettingsNav'
 import { RowMenu, WorkspaceItem } from './WorkspaceItem'
@@ -64,17 +66,26 @@ const PR_POLL_MS = 60_000
  * Open/merged PR per head branch, per project: one `gh pr list` per project rather than one per
  * workspace. Projects without a GitHub remote, or without gh, simply show plain branch icons.
  */
-function useBranchPrs(projectIds: string[]): Record<string, Record<string, BranchPrState>> {
+function useBranchPrs(
+  targets: Array<{ projectId: string; cloud: boolean }>
+): Record<string, Record<string, BranchPrState>> {
   const [byProject, setByProject] = useState<Record<string, Record<string, BranchPrState>>>({})
-  const key = projectIds.join(',')
+  const key = JSON.stringify(targets)
+  const cloudState = useCloud((state) => state.status.state)
   useEffect(() => {
     let active = true
-    const ids = key === '' ? [] : key.split(',')
+    const ids = JSON.parse(key) as Array<{ projectId: string; cloud: boolean }>
     const refresh = () => {
       void Promise.all(
-        ids.map(async (id) => {
-          const result = await window.loom.github.branchPrs(id).catch(() => null)
-          return [id, result?.kind === 'ok' ? result.byBranch : {}] as const
+        ids.map(async ({ projectId, cloud }) => {
+          const result =
+            cloud && cloudState !== 'connected'
+              ? null
+              : await window.loom.github.branchPrs(projectId, cloud).catch(() => null)
+          return [
+            `${projectId}:${cloud ? 'cloud' : 'mac'}`,
+            result?.kind === 'ok' ? result.byBranch : {}
+          ] as const
         })
       ).then((entries) => {
         if (active) setByProject(Object.fromEntries(entries))
@@ -88,7 +99,7 @@ function useBranchPrs(projectIds: string[]): Record<string, Record<string, Branc
       clearInterval(timer)
       window.removeEventListener('focus', refresh)
     }
-  }, [key])
+  }, [key, cloudState])
   return byProject
 }
 
@@ -111,7 +122,14 @@ export function Sidebar() {
   const closeDelete = useCallback(() => setDeleting(null), [])
   const [removing, setRemoving] = useState<ProjectRow | null>(null)
   const closeRemove = useCallback(() => setRemoving(null), [])
-  const prsByProject = useBranchPrs(projects.map((p) => p.id))
+  const prsByProject = useBranchPrs(
+    projects.flatMap((project) => {
+      const workspaces = workspacesByProject[project.id] ?? []
+      return [false, true]
+        .filter((cloud) => workspaces.some((workspace) => Boolean(workspace.cloud) === cloud))
+        .map((cloud) => ({ projectId: project.id, cloud }))
+    })
+  )
 
   // Stored as the collapsed set so every project, including newly added ones, starts expanded.
   const toggleCollapsed = (projectId: string) =>
@@ -236,7 +254,7 @@ export function Sidebar() {
                             key={ws.id}
                             workspace={ws}
                             active={ws.id === activeWorkspaceId}
-                            pr={prsByProject[project.id]?.[ws.branch]}
+                            pr={prsByProject[`${project.id}:${ws.cloud ? 'cloud' : 'mac'}`]?.[ws.branch]}
                             onDelete={() => setDeleting(ws)}
                           />
                         ))}
@@ -260,7 +278,7 @@ export function Sidebar() {
                           key={ws.id}
                           workspace={ws}
                           active={ws.id === activeWorkspaceId}
-                          pr={prsByProject[project.id]?.[ws.branch]}
+                          pr={prsByProject[`${project.id}:${ws.cloud ? 'cloud' : 'mac'}`]?.[ws.branch]}
                           onDelete={() => setDeleting(ws)}
                         />
                       ))}
@@ -275,6 +293,7 @@ export function Sidebar() {
           )}
         </div>
 
+        <CloudStatusLine />
         <div className="side-foot">
           <button
             className="side-foot-btn"
