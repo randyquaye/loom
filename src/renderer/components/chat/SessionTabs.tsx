@@ -121,7 +121,7 @@ export function SessionTabs({
               }}
             >
               {running[session.id] === undefined ? (
-                <span className="tab-backend-dot" data-backend={session.backend} aria-hidden="true" />
+                <span className="tab-backend-mark" data-backend={session.backend} aria-hidden="true" />
               ) : (
                 <SessionActivityIndicator />
               )}

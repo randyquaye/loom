@@ -206,8 +206,8 @@ body[data-modality='keyboard'] .tab-pin:focus-within .tab-close {
   color: var(--text);
 }
 
-/* Minimal provider mark: the same identity dot Settings and the model picker use. */
-.tab-backend-dot {
+/* Local Icons8 logos occupy the same 16px slot as the running indicator. */
+.tab-backend-mark {
   flex: none;
   margin: 4.5px;
   width: 7px;
@@ -216,19 +216,27 @@ body[data-modality='keyboard'] .tab-pin:focus-within .tab-close {
   background: var(--text-faint);
 }
 
-.tab-backend-dot[data-backend='codex'] {
-  background: var(--provider-codex);
+.tab-backend-mark:is([data-backend='codex'], [data-backend='claude']) {
+  margin: 0;
+  width: var(--s-4);
+  height: var(--s-4);
+  border-radius: 0;
 }
 
-.tab-backend-dot[data-backend='claude'] {
-  background: var(--provider-claude);
+.tab-backend-mark[data-backend='codex'] {
+  background: currentColor;
+  mask: url('../../assets/chatgpt.png') center / contain no-repeat;
 }
 
-.tab-backend-dot[data-backend='gemini'] {
+.tab-backend-mark[data-backend='claude'] {
+  background: url('../../assets/claude-ai.png') center / contain no-repeat;
+}
+
+.tab-backend-mark[data-backend='gemini'] {
   background: var(--provider-gemini);
 }
 
-.tab-backend-dot[data-backend='qwen'] {
+.tab-backend-mark[data-backend='qwen'] {
   background: var(--provider-qwen);
 }
 
@@ -437,6 +445,8 @@ body:not([data-modality='keyboard']) .tab-history:focus-visible,
 }
 
 .composer .composer-box textarea {
+  field-sizing: content;
+  padding-bottom: 3lh;
   max-height: 40vh;
   resize: none;
 }

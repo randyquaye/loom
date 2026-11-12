@@ -67,9 +67,11 @@
 
 .nw-prompt {
   display: block;
+  field-sizing: content;
   width: 100%;
   min-height: 200px;
   padding: var(--s-4);
+  padding-bottom: calc(var(--s-4) + 3lh);
   border: none;
   background: none;
   color: var(--text);

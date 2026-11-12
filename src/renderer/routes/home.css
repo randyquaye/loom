@@ -1,5 +1,13 @@
 /* Spacing grid shared with panels.css / settings.css: panel 16, section 12, control 8, row 6. */
 
+/* Match the chat's 920px reading width, plus the existing panel padding. */
+.home-head,
+.home-results {
+  width: 100%;
+  max-width: calc(920px + 2 * var(--s-4));
+  margin-inline: auto;
+}
+
 /* One compact row: search grows, the project filter sits beside it. */
 .home-head {
   display: flex;

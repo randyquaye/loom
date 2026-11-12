@@ -8,29 +8,25 @@ export function PreferencesPage() {
       <label className="settings-row">
         <span className="settings-provider">
           <span className="settings-name">Completion sound</span>
-          <span id="completion-sound-help" className="settings-state">
-            Play a chime when a session finishes while you’re elsewhere.
-          </span>
+        </span>
+        <span className="settings-state" aria-hidden="true">
+          {enabled ? 'On' : 'Off'}
         </span>
         <input
           type="checkbox"
           role="switch"
           className="preferences-toggle"
           aria-label="Completion sound"
-          aria-describedby="completion-sound-help"
           checked={enabled}
           onChange={(event) => setEnabled(event.target.checked)}
         />
       </label>
       <p className="settings-note">
-        <a href="https://freesound.org/people/Robo9418/sounds/726858/" target="_blank" rel="noreferrer">
-          Doorbell Chime in the key of C by Robo9418
-        </a>{' '}
-        ·{' '}
-        <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">
-          CC BY 4.0
+        Claude and ChatGPT icons by{' '}
+        <a href="https://icons8.com/" target="_blank" rel="noreferrer">
+          Icons8
         </a>
-        . Shortened and faded to 0.7 seconds.
+        .
       </p>
     </section>
   )
