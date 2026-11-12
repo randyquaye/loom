@@ -1,12 +1,22 @@
 # The Loom pilot host: one always-on machine, one data disk, one open port.
 #
+#   infra/host/init.sh                                  (once in each checkout)
 #   terraform -chdir=infra/host plan  -var hostname=<name>
 #   terraform -chdir=infra/host apply -var hostname=<name>
 #
 # This only makes the machine. infra/host/deploy.sh puts Loom on it.
 
 terraform {
-  required_version = ">= 1.9"
+  required_version = ">= 1.10"
+
+  # The state is the only record of what this made, so it is kept in the project itself and
+  # not on anyone's laptop. The bucket is named when Terraform is initialised, by init.sh,
+  # because its name holds the account's number, which does not belong in the repository.
+  backend "s3" {
+    key          = "host/terraform.tfstate"
+    encrypt      = true
+    use_lockfile = true
+  }
 
   required_providers {
     aws = {
