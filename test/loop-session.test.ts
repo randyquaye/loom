@@ -66,12 +66,13 @@ describe('provider loop guidance and usage', () => {
       const sending = session.send('work')
       try {
         await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1))
-        await session.steer!('guidance')
+        await session.steer!('guidance', [], 'guidance-1')
         release()
         await sending
         expect(fetchImpl).toHaveBeenCalledTimes(2)
         expect(String(fetchImpl.mock.calls[1]?.[1]?.body)).toContain('guidance')
         expect(events.filter((event) => event.type === 'turn.started')).toHaveLength(1)
+        expect(events.find((event) => event.type === 'user.steer')).toMatchObject({ messageId: 'guidance-1' })
         expect([...usageByTurn(events).values()]).toMatchObject([
           { inputTokens: 23, outputTokens: 5, cacheReadInputTokens: 7, contextTokens: 3 }
         ])

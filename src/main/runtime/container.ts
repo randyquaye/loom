@@ -7,6 +7,7 @@ import * as pty from 'node-pty'
 import { LOGIN_FILES } from '../../shared/login-files'
 import dockerDefaultSeccomp from './docker-default-seccomp.json'
 import { collect } from './exec'
+import { prepareKataDisk } from './kata-storage'
 import type { ProcessOpts, WorkspaceRuntime } from './types'
 
 const execFileAsync = promisify(execFile)
@@ -34,6 +35,9 @@ export interface ContainerSpec {
   secureHome?(homePath: string): Promise<void>
   memory: string
   cpus: string
+  pids?: number
+  /** Opt-in VM boundary and a private persistent Docker disk; never used for sign-in helpers. */
+  kata?: { runtime: 'kata'; storagePath: string; diskGb: number }
 }
 
 const CONTAINER_HOME = '/home/loom'
@@ -147,6 +151,10 @@ function bindMount(source: string, target: string): string {
 export const containerArgs = {
   /** The main process only idles; --init reaps what the stopped process trees leave behind. */
   run(spec: ContainerSpec): string[] {
+    const pids = spec.pids ?? 512
+    if (!Number.isInteger(pids) || pids < 32 || pids > 32768) {
+      throw new Error('LOOM_WORKSPACE_PIDS must be an integer between 32 and 32768')
+    }
     return [
       'run',
       '--detach',
@@ -157,14 +165,42 @@ export const containerArgs = {
       spec.memory,
       '--cpus',
       spec.cpus,
-      // No Docker socket is mounted, and nothing inside can gain privileges it did not start with.
-      '--security-opt',
-      'no-new-privileges',
-      '--cap-drop',
-      'ALL',
-      '--security-opt',
-      `seccomp=${spec.seccompProfilePath}`,
-      ...(spec.apparmorProfile === undefined ? [] : ['--security-opt', `apparmor=${spec.apparmorProfile}`]),
+      '--pids-limit',
+      String(pids),
+      ...(spec.kata === undefined
+        ? [
+            '--security-opt',
+            'no-new-privileges',
+            '--cap-drop',
+            'ALL',
+            '--security-opt',
+            `seccomp=${spec.seccompProfilePath}`,
+            ...(spec.apparmorProfile === undefined
+              ? []
+              : ['--security-opt', `apparmor=${spec.apparmorProfile}`])
+          ]
+        : [
+            '--runtime',
+            spec.kata.runtime,
+            // These capabilities apply within the guest kernel. No host devices or socket are passed.
+            '--cap-add',
+            'SYS_ADMIN',
+            '--cap-add',
+            'NET_ADMIN',
+            '--cap-add',
+            'SYS_RESOURCE',
+            '--cap-add',
+            'SYS_PTRACE',
+            '--security-opt',
+            'seccomp=unconfined',
+            '--security-opt',
+            'apparmor=unconfined',
+            '--mount',
+            bindMount(
+              path.join(spec.kata.storagePath, 'docker.ext4'),
+              '/var/lib/loom-docker-state/docker.ext4'
+            )
+          ]),
       ...(spec.hosts ?? []).flatMap((host) => ['--add-host', host]),
       '--mount',
       bindMount(spec.checkoutPath, spec.checkoutPath),
@@ -185,7 +221,14 @@ export const containerArgs = {
    * `idFile`. Variables are passed by name only: `docker exec -e NAME` copies the value from
    * the docker program's own environment, which keeps secrets out of argv.
    */
-  exec(name: string, opts: ProcessOpts, idFile: string, command: readonly string[], tty = false): string[] {
+  exec(
+    name: string,
+    opts: ProcessOpts,
+    idFile: string,
+    command: readonly string[],
+    tty = false,
+    user?: string
+  ): string[] {
     const names = Object.keys(opts.env ?? {})
     const odd = names.find((key) => !VARIABLE_NAME.test(key))
     if (odd !== undefined) {
@@ -194,6 +237,9 @@ export const containerArgs = {
     return [
       'exec',
       tty ? '-it' : '-i',
+      ...(user === undefined
+        ? []
+        : ['--user', user, '--env', 'HOME=/home/loom', '--env', `USER=${user}`, '--env', `LOGNAME=${user}`]),
       ...(opts.cwd === undefined ? [] : ['-w', opts.cwd]),
       ...names.flatMap((key) => ['-e', `${ENV_PREFIX}${key}`]),
       name,
@@ -214,12 +260,39 @@ export function clientEnvironment(env: Record<string, string> | undefined): Reco
   return { ...process.env, ...Object.fromEntries(carried) } as Record<string, string>
 }
 
-async function docker(args: readonly string[]): Promise<string> {
+async function docker(args: readonly string[], timeout = 30_000): Promise<string> {
   try {
-    return (await execFileAsync('docker', [...args], { shell: false })).stdout
+    return (await execFileAsync('docker', [...args], { shell: false, timeout })).stdout
   } catch (error) {
     const stderr = (error as { stderr?: string }).stderr?.trim()
     throw new Error(`docker ${args[0]} failed: ${stderr || String(error)}`, { cause: error })
+  }
+}
+
+interface ContainerDetails {
+  State: { Running: boolean }
+  HostConfig: { Runtime: string; Privileged: boolean; Devices: unknown[] | null }
+  Mounts: Array<{ Source: string; Destination: string }>
+}
+
+async function inspectContainer(name: string): Promise<ContainerDetails | null> {
+  try {
+    return JSON.parse(await docker(['inspect', '--format', '{{json .}}', name])) as ContainerDetails
+  } catch (error) {
+    const stderr = (error as { cause?: { stderr?: string } }).cause?.stderr ?? ''
+    if (/No such (object|container):/i.test(stderr)) return null
+    throw error
+  }
+}
+
+/** A missing/stopped container differs from an unreachable Docker daemon. */
+export async function containerIsRunning(name: string): Promise<boolean> {
+  try {
+    return (await docker(['inspect', '--format', '{{.State.Running}}', name])).trim() === 'true'
+  } catch (error) {
+    const stderr = (error as { cause?: { stderr?: string } }).cause?.stderr ?? ''
+    if (/No such (object|container):/i.test(stderr)) return false
+    throw error
   }
 }
 
@@ -255,13 +328,24 @@ export async function removeContainersNamed(prefix: string): Promise<void> {
 
 /** `rm --force` also succeeds when the container is already gone. */
 export async function removeContainer(name: string): Promise<void> {
-  await docker(['rm', '--force', name])
+  const existing = await inspectContainer(name)
+  if (existing === null) return
+  // A planned stop flushes the inner daemon and filesystem before the VM is removed.
+  // Docker itself forces a stop after the deadline if the guest does not cooperate.
+  if (existing.HostConfig.Runtime === 'kata' && existing.State.Running) {
+    await docker(['stop', '--time', '30', name], 45_000)
+  }
+  await docker(['rm', '--force', name]).catch((error: unknown) => {
+    const stderr = (error as { cause?: { stderr?: string } }).cause?.stderr ?? ''
+    if (!/No such (object|container):/i.test(stderr)) throw error
+  })
 }
 
 /** Runs everything a workspace executes inside that workspace's own container. */
 export function createContainerRuntime(spec: ContainerSpec): WorkspaceRuntime {
   /** Starts and stops take turns, so a stop can never be overtaken by the start before it. */
   let lifecycle: Promise<void> = Promise.resolve()
+  const user = spec.kata === undefined ? undefined : 'loom'
 
   function inTurn(step: () => Promise<void>): Promise<void> {
     const next = lifecycle.catch(() => undefined).then(step)
@@ -270,13 +354,54 @@ export function createContainerRuntime(spec: ContainerSpec): WorkspaceRuntime {
   }
 
   async function start(): Promise<void> {
+    if (spec.kata !== undefined) {
+      const existing = await inspectContainer(spec.name)
+      if (existing !== null) {
+        const disk = path.join(spec.kata.storagePath, 'docker.ext4')
+        if (
+          existing.HostConfig.Runtime !== 'kata' ||
+          existing.HostConfig.Privileged ||
+          (existing.HostConfig.Devices?.length ?? 0) > 0 ||
+          !existing.Mounts.some(
+            (mount) => mount.Source === disk && mount.Destination === '/var/lib/loom-docker-state/docker.ext4'
+          )
+        ) {
+          throw new Error(
+            'Existing container does not match the requested Kata isolation and storage; stop it before restarting'
+          )
+        }
+        if (existing.State.Running) return waitForDocker()
+      }
+      await prepareKataDisk(spec.kata.storagePath, spec.kata.diskGb)
+    }
     const running = await docker(['inspect', '--format', '{{.State.Running}}', spec.name]).catch(() => null)
     if (running?.trim() === 'true') return
     await prepareHome(spec.homePath)
     await spec.secureHome?.(spec.homePath)
-    await writeFile(spec.seccompProfilePath, JSON.stringify(workspaceSeccompProfile()))
+    if (spec.kata === undefined)
+      await writeFile(spec.seccompProfilePath, JSON.stringify(workspaceSeccompProfile()))
     if (running !== null) await removeContainer(spec.name)
     await docker(containerArgs.run(spec))
+    if (spec.kata !== undefined) await waitForDocker()
+  }
+
+  async function waitForDocker(): Promise<void> {
+    const deadline = Date.now() + 120_000
+    while (Date.now() < deadline) {
+      const driver = await docker(
+        ['exec', '--user', 'loom', spec.name, 'docker', 'info', '--format', '{{.Driver}}'],
+        5_000
+      ).catch(() => null)
+      if (driver !== null) {
+        if (driver.trim() !== 'overlay2')
+          throw new Error('Kata workspace Docker must use its persistent overlay2 storage')
+        return
+      }
+      if (!(await containerIsRunning(spec.name)))
+        throw new Error('Kata workspace stopped before its private Docker daemon became ready')
+      await new Promise((resolve) => setTimeout(resolve, 250))
+    }
+    throw new Error('Kata workspace private Docker daemon did not become ready within 120 seconds')
   }
 
   function newIdFile(): string {
@@ -286,7 +411,17 @@ export function createContainerRuntime(spec: ContainerSpec): WorkspaceRuntime {
   function stopInside(idFile: string, signal: 'TERM' | 'HUP'): void {
     const stopper = spawn(
       'docker',
-      ['exec', spec.name, 'sh', '-c', STOP, idFile, signal, String(KILL_GRACE_SECONDS)],
+      [
+        'exec',
+        ...(user === undefined ? [] : ['--user', user]),
+        spec.name,
+        'sh',
+        '-c',
+        STOP,
+        idFile,
+        signal,
+        String(KILL_GRACE_SECONDS)
+      ],
       { stdio: 'ignore', shell: false }
     )
     stopper.on('error', () => {})
@@ -306,11 +441,15 @@ export function createContainerRuntime(spec: ContainerSpec): WorkspaceRuntime {
 
     spawn(file, args, opts = {}) {
       const idFile = newIdFile()
-      const child = spawn('docker', containerArgs.exec(spec.name, opts, idFile, [file, ...args]), {
-        shell: false,
-        env: clientEnvironment(opts.env),
-        stdio: ['pipe', 'pipe', 'pipe']
-      })
+      const child = spawn(
+        'docker',
+        containerArgs.exec(spec.name, opts, idFile, [file, ...args], false, user),
+        {
+          shell: false,
+          env: clientEnvironment(opts.env),
+          stdio: ['pipe', 'pipe', 'pipe']
+        }
+      )
       // Asked for even when the local client is already gone: the process may have outlived it.
       return { child, terminate: () => stopInside(idFile, 'TERM') }
     },
@@ -320,7 +459,7 @@ export function createContainerRuntime(spec: ContainerSpec): WorkspaceRuntime {
       const env = { ...opts.env, TERM: TERMINAL_NAME }
       const terminal = pty.spawn(
         'docker',
-        containerArgs.exec(spec.name, { ...opts, env }, idFile, ['zsh'], true),
+        containerArgs.exec(spec.name, { ...opts, env }, idFile, ['zsh'], true, user),
         { name: TERMINAL_NAME, cols: 80, rows: 24, env: clientEnvironment(env) }
       )
       return { pty: terminal, terminate: () => stopInside(idFile, 'HUP') }

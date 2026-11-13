@@ -73,6 +73,29 @@ sudo -u loom -H sh -c "cd '$LOOM_RELEASE' && pnpm install --prod --frozen-lockfi
 docker build --quiet --tag loom-workspace:latest \
   --build-arg LOOM_UID="$(id -u loom)" --build-arg LOOM_GID="$(id -g loom)" \
   "$LOOM_RELEASE/images/workspace"
+WORKSPACE_RUNTIME=${LOOM_WORKSPACE_CONTAINER_RUNTIME:-runc}
+WORKSPACE_PIDS=512
+RUNNER_MOUNTS=$DATA_DIR
+case "$WORKSPACE_RUNTIME" in
+  runc) ;;
+  kata)
+    bash "$LOOM_RELEASE/infra/kata/install.sh"
+    docker build --quiet --tag loom-workspace-kata:latest "$LOOM_RELEASE/images/workspace-kata"
+    WORKSPACE_PIDS=2048
+    # Kata's own read-only mounts do not hold against root in a workspace. Login files are
+    # given through this view instead: read-only on the host before Kata ever sees them.
+    LOGIN_FILES_VIEW=$DATA_DIR/login-files-view
+    sudo -u loom mkdir -p "$DATA_DIR/login-files"
+    mkdir -p "$LOGIN_FILES_VIEW"
+    grep -q " $LOGIN_FILES_VIEW " /etc/fstab ||
+      echo "$DATA_DIR/login-files $LOGIN_FILES_VIEW none bind,ro,nofail 0 0" >>/etc/fstab
+    mountpoint -q "$LOGIN_FILES_VIEW" || mount "$LOGIN_FILES_VIEW"
+    findmnt -no VFS-OPTIONS "$LOGIN_FILES_VIEW" | grep -qE '(^|,)ro(,|$)' ||
+      { echo 'The login files view is not read-only' >&2; exit 1; }
+    RUNNER_MOUNTS="$DATA_DIR $LOGIN_FILES_VIEW"
+    ;;
+  *) echo 'LOOM_WORKSPACE_CONTAINER_RUNTIME must be runc or kata' >&2; exit 1;;
+esac
 # Ubuntu's default profile for containers refuses the mounts Codex's sandbox makes.
 install -m 0644 "$LOOM_RELEASE/infra/host/loom-workspace.apparmor" /etc/apparmor.d/loom-workspace
 apparmor_parser --replace /etc/apparmor.d/loom-workspace
@@ -82,11 +105,33 @@ find /opt/loom/releases -mindepth 1 -maxdepth 1 -type d | sort -r | tail -n +4 |
 
 step "Settings"
 install -d -m 0750 -o root -g loom "$CONFIG_DIR"
-# The key that encrypts what the runner stores lives here, off the data disk, so a
-# snapshot of the data disk alone reveals nothing.
-if [ ! -f "$CONFIG_DIR/secret.key" ]; then
-  (umask 027 && openssl rand -base64 32 >"$CONFIG_DIR/secret.key")
+# The vault key is outside the data disk and recoverable independently in SSM.
+# Never replace an existing key: that would make every saved login unreadable.
+KEY_READ="$(mktemp)"
+KEY_ERROR="$(mktemp)"
+if aws ssm get-parameter --region "$LOOM_REGION" --name /loom/secret-key --with-decryption \
+  --query Parameter.Value --output text >"$KEY_READ" 2>"$KEY_ERROR"; then
+  KEY_VALUE="$(tr -d '\r\n' <"$KEY_READ")"
+  if [ -f "$CONFIG_DIR/secret.key" ] && [ "$(tr -d '\r\n' <"$CONFIG_DIR/secret.key")" != "$KEY_VALUE" ]; then
+    rm -f "$KEY_READ" "$KEY_ERROR"
+    echo "The local vault key differs from its recovery copy. Refusing to replace either." >&2
+    exit 1
+  fi
+  (umask 027 && printf '%s\n' "$KEY_VALUE" >"$CONFIG_DIR/secret.key")
+elif grep -q 'ParameterNotFound' "$KEY_ERROR"; then
+  if [ ! -f "$CONFIG_DIR/secret.key" ]; then
+    (umask 027 && openssl rand -base64 32 >"$CONFIG_DIR/secret.key")
+  fi
+  # The value is read from a file, never placed in a command line or printed.
+  aws ssm put-parameter --region "$LOOM_REGION" --name /loom/secret-key --type SecureString \
+    --value "file://$CONFIG_DIR/secret.key" --no-overwrite >/dev/null
+else
+  rm -f "$KEY_READ" "$KEY_ERROR"
+  echo "Could not read the vault recovery key. Refusing to generate a replacement." >&2
+  exit 1
 fi
+unset KEY_VALUE
+rm -f "$KEY_READ" "$KEY_ERROR"
 setting() {
   aws ssm get-parameter --region "$LOOM_REGION" --name "/loom/$1" --with-decryption \
     --query Parameter.Value --output text 2>/dev/null || true
@@ -100,7 +145,14 @@ LOOM_SECRET_KEY=$(cat "$CONFIG_DIR/secret.key")
 LOOM_RUNNER_HOST=127.0.0.1
 LOOM_RUNNER_PORT=$RUNNER_PORT
 LOOM_WORKSPACE_PLACEMENT=container
+LOOM_WORKSPACE_CONTAINER_RUNTIME=$WORKSPACE_RUNTIME
+LOOM_WORKSPACE_KATA_IMAGE=loom-workspace-kata:latest
+LOOM_WORKSPACE_DOCKER_DISK_GB=${LOOM_WORKSPACE_DOCKER_DISK_GB:-16}
 LOOM_WORKSPACE_APPARMOR=loom-workspace
+LOOM_WORKSPACE_IDLE_MINUTES=${LOOM_WORKSPACE_IDLE_MINUTES:-30}
+LOOM_WORKSPACE_MEMORY=${LOOM_WORKSPACE_MEMORY:-4g}
+LOOM_WORKSPACE_CPUS=${LOOM_WORKSPACE_CPUS:-2}
+LOOM_WORKSPACE_PIDS=${LOOM_WORKSPACE_PIDS:-$WORKSPACE_PIDS}
 LOOM_LOGIN_PROXY_PORT=$LOGIN_PROXY_PORT
 LOOM_CLAUDE_FRONT_URL=https://$LOOM_HOSTNAME:$CLAUDE_FRONT_PORT
 LOOM_CODEX_FRONT_URL=https://$LOOM_HOSTNAME:$CODEX_FRONT_PORT
@@ -194,7 +246,7 @@ After=network-online.target docker.service
 Wants=network-online.target
 Requires=docker.service
 # Without the data disk the runner would start an empty Loom on the root disk.
-RequiresMountsFor=$DATA_DIR
+RequiresMountsFor=$RUNNER_MOUNTS
 ConditionPathIsMountPoint=$DATA_DIR
 
 [Service]

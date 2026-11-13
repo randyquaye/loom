@@ -85,12 +85,11 @@ async function isGitWorkTree(target: string): Promise<boolean> {
   }
 }
 
-async function originUrl(repoPath: string): Promise<string | null> {
-  try {
-    return await git(repoPath, ['remote', 'get-url', 'origin'])
-  } catch {
-    return null
-  }
+/** A missing origin is null; an unreadable repository must not erase its saved remote. */
+export async function originUrl(repoPath: string): Promise<string | null> {
+  const remotes = await git(repoPath, ['remote'])
+  if (!remotes.split('\n').includes('origin')) return null
+  return git(repoPath, ['remote', 'get-url', 'origin'])
 }
 
 /** Knows whether a repository path already belongs to another project row. */
@@ -156,7 +155,7 @@ export async function addProjectFromLocalPath(
     id: randomUUID(),
     name,
     repoPath,
-    remoteUrl: await originUrl(repoPath),
+    remoteUrl: await originUrl(repoPath).catch(() => null),
     createdAt: Date.now(),
     customPromptGeneral: null,
     customPromptCodeReview: null,

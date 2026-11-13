@@ -11,14 +11,16 @@ output() { terraform -chdir=infra/host output -raw "$1"; }
 REGION="$(output region)"
 INSTANCE="$(output instance_id)"
 BUCKET="$(output artifact_bucket)"
+RUNTIME="$(output workspace_container_runtime 2>/dev/null || printf runc)"
+case "$RUNTIME" in runc|kata) ;; *) echo 'Invalid workspace container runtime' >&2; exit 1;; esac
 RELEASE="$(date -u +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)"
 
 pnpm build
 ARCHIVE="$(mktemp -d)/$RELEASE.tgz"
 COPYFILE_DISABLE=1 tar --no-xattrs -czf "$ARCHIVE" \
   package.json pnpm-lock.yaml pnpm-workspace.yaml \
-  out/main/runner.js out/main/chunks images/workspace \
-  infra/host/setup.sh infra/host/loom-workspace.apparmor
+  out/main/runner.js out/main/restore-check.js out/main/chunks images/workspace images/workspace-kata infra/kata \
+  infra/host/setup.sh infra/host/loom-workspace.apparmor infra/host/restore-host.sh
 aws s3 cp --only-show-errors --region "$REGION" "$ARCHIVE" "s3://$BUCKET/releases/$RELEASE.tgz"
 
 # What runs on the host: fetch the release, unpack it, and let setup.sh do the rest.
@@ -33,6 +35,7 @@ tar -xzf /tmp/$RELEASE.tgz -C /opt/loom/releases/$RELEASE
 rm /tmp/$RELEASE.tgz
 export LOOM_HOSTNAME=$(output hostname) LOOM_REGION=$REGION
 export LOOM_DATA_VOLUME_ID=$(output data_volume_id) LOOM_RELEASE=/opt/loom/releases/$RELEASE
+export LOOM_WORKSPACE_CONTAINER_RUNTIME=$RUNTIME
 bash /opt/loom/releases/$RELEASE/infra/host/setup.sh
 SCRIPT
 )"

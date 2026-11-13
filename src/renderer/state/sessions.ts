@@ -4,9 +4,11 @@ import type {
   SessionActivity,
   SessionForkInput,
   SessionRow,
-  SessionUnread
+  SessionUnread,
+  SequencedEvent
 } from '../../shared/ipc-contract'
 import type { AgentEvent } from '../../shared/events'
+import { openTurn } from '../../shared/turn-state'
 import type { BackendId, Effort, ModelDescriptor } from '../../shared/models'
 import { createCompletionChime } from '../audio/completion'
 
@@ -46,8 +48,18 @@ interface SessionsState {
 /** Per tab: the number of the last event shown, and whether its history has been fetched. */
 const lastSeq = new Map<string, number>()
 const loaded = new Set<string>()
-/** History fetches on their way, each with the events that arrived while it was. */
-const loading = new Map<string, { held: NumberedSessionEventPush[]; done: Promise<void> }>()
+const loading = new Map<string, Promise<void>>()
+/** Events beyond a gap stay here, including when a history request fails. */
+const waiting = new Map<string, Map<number, SequencedEvent>>()
+
+function heldEvents(sessionId: string): Map<number, SequencedEvent> {
+  let held = waiting.get(sessionId)
+  if (held === undefined) {
+    held = new Map()
+    waiting.set(sessionId, held)
+  }
+  return held
+}
 
 function setEvents(sessionId: string, next: (current: AgentEvent[]) => AgentEvent[]): void {
   useSessions.setState((s) => ({
@@ -73,28 +85,34 @@ function showLive(sessionId: string, event: AgentEvent, seq: number | undefined)
  */
 function fetchEvents(sessionId: string, after: number): Promise<void> {
   const inFlight = loading.get(sessionId)
-  if (inFlight !== undefined) return inFlight.done
-  const held: NumberedSessionEventPush[] = []
+  if (inFlight !== undefined) return inFlight
+  const held = heldEvents(sessionId)
+  let advanced = false
   const done = window.loom.sessions
     .eventsAfter(sessionId, after)
-    .then(
-      (fetched) => {
-        const last = fetched.at(-1)?.seq ?? after
-        const later = held.filter((push) => push.seq > last)
-        lastSeq.set(sessionId, later.at(-1)?.seq ?? last)
-        loaded.add(sessionId)
-        const fresh = [...fetched, ...later].map(({ event }) => event)
-        // From zero the answer is the whole history: it replaces whatever arrived before it.
-        setEvents(sessionId, (current) => (after === 0 ? fresh : [...current, ...fresh]))
-      },
-      (error: unknown) => {
-        // Without history the held events are all there is; show them rather than lose them.
-        for (const push of held) showLive(sessionId, push.event, push.seq)
-        throw error
+    .then((fetched) => {
+      for (const entry of fetched) held.set(entry.seq, entry)
+      let last = after
+      const fresh: AgentEvent[] = []
+      while (held.has(last + 1)) {
+        last += 1
+        fresh.push(held.get(last)!.event)
+        held.delete(last)
       }
-    )
-    .finally(() => loading.delete(sessionId))
-  loading.set(sessionId, { held, done })
+      for (const seq of held.keys()) if (seq <= last) held.delete(seq)
+      advanced = last > after
+      lastSeq.set(sessionId, last)
+      loaded.add(sessionId)
+      // From zero the answer is the whole history: it replaces whatever arrived before it.
+      setEvents(sessionId, (current) => (after === 0 ? fresh : [...current, ...fresh]))
+    })
+    .finally(() => {
+      loading.delete(sessionId)
+      if (advanced && held.size > 0) {
+        void fetchEvents(sessionId, lastSeq.get(sessionId) ?? 0).catch(() => {})
+      }
+    })
+  loading.set(sessionId, done)
   return done
 }
 
@@ -256,13 +274,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
 
 /** A late completion from an older connection cannot end the newest prompt/turn. */
 export function isTurnRunning(events: AgentEvent[]): boolean {
-  const done = new Set<string>()
-  for (let i = events.length - 1; i >= 0; i--) {
-    const event = events[i]
-    if (event?.type === 'turn.done') done.add(event.turnId)
-    if (event?.type === 'user.text' || event?.type === 'turn.started') return !done.has(event.turnId)
-  }
-  return false
+  return openTurn(events) !== undefined
 }
 
 let subscribed = false
@@ -284,8 +296,18 @@ export function subscribeSessionEvents(shouldPlayCompletionSound?: (sessionId: s
     const { sessionId, event, unread } = push
     // Main numbers every event it pushes; the window type leaves the number out.
     const seq = (push as Partial<NumberedSessionEventPush>).seq
-    const fetching = loading.get(sessionId)
-    if (fetching !== undefined && seq !== undefined) fetching.held.push({ ...push, seq })
+    const last = lastSeq.get(sessionId) ?? 0
+    if (seq !== undefined && seq <= last) return
+    if (
+      seq !== undefined &&
+      (loading.has(sessionId) ||
+        (loaded.has(sessionId) && (seq > last + 1 || (waiting.get(sessionId)?.size ?? 0) > 0)))
+    ) {
+      const held = heldEvents(sessionId)
+      if (held.has(seq)) return
+      held.set(seq, { seq, event })
+      void fetchEvents(sessionId, last).catch(() => {})
+    }
     // A repeat was already shown, counted as unread and chimed for.
     else if (!showLive(sessionId, event, seq)) return
     if (unread !== undefined) {

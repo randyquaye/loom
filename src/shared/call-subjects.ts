@@ -8,6 +8,12 @@ export type SubjectKind = 'workspace' | 'session' | 'terminal' | 'comment'
  * thing belongs to whoever is asking. A call that is not here is about no one thing.
  */
 export const CALL_SUBJECTS: Partial<Record<keyof IpcContract, readonly [SubjectKind, string]>> = {
+  'workspaces:power': ['workspace', 'workspaceId'],
+  'workspaces:start': ['workspace', 'workspaceId'],
+  'workspaces:stop': ['workspace', 'workspaceId'],
+  'ports:list': ['workspace', 'workspaceId'],
+  'ports:forward': ['workspace', 'workspaceId'],
+  'ports:unforward': ['workspace', 'workspaceId'],
   'workspaces:remove': ['workspace', 'id'],
   'workspaces:setArchived': ['workspace', 'id'],
   'workspaces:scripts': ['workspace', 'workspaceId'],

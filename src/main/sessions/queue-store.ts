@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3'
 import type { QueuedTurn, QueueStore } from './service'
+import { restorePendingDeliveries } from './deliveries'
 
 /**
  * Keeps each tab's waiting messages in the database, so they outlive the process that
@@ -17,6 +18,7 @@ export function sqliteQueueStore(db: Database.Database): QueueStore {
   return {
     save,
     load() {
+      restorePendingDeliveries(db, { save })
       const rows = db
         .prepare('SELECT session_id, payload FROM queued_messages ORDER BY session_id, position')
         .all() as Array<{ session_id: string; payload: string }>

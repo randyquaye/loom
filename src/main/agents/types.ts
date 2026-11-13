@@ -15,7 +15,7 @@ export interface NormalizedTool {
 export interface RunningSession {
   send(text: string, images?: PromptImage[]): Promise<void>
   /** Adds guidance to the active turn; resolves when the backend accepts it. */
-  steer?(text: string, images?: PromptImage[]): Promise<void>
+  steer?(text: string, images?: PromptImage[], messageId?: string): Promise<void>
   /** Answers a pending blocking question without starting another turn. */
   answerQuestion?(answer: QuestionAnswer): Promise<void>
   cancel(): Promise<void>

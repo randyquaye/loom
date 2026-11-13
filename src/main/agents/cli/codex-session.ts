@@ -89,7 +89,12 @@ export function startCodexSession(
     }
   }
 
-  function steer(text: string, images: PromptImage[] = [], receipt = text): Promise<void> {
+  function steer(
+    text: string,
+    images: PromptImage[] = [],
+    receipt = text,
+    messageId?: string
+  ): Promise<void> {
     const current = active
     if (current === undefined || closed) return Promise.reject(new Error('There is no active turn to steer'))
     const work = steering
@@ -103,7 +108,12 @@ export function startCodexSession(
           expectedTurnId: current.id,
           input: codexInput(text, images)
         })
-        queue.push({ type: 'user.steer', turnId: current.id, text: receipt })
+        queue.push({
+          type: 'user.steer',
+          turnId: current.id,
+          text: receipt,
+          ...(messageId === undefined ? {} : { messageId })
+        })
       })
     steering = work
     return work
@@ -232,7 +242,7 @@ export function startCodexSession(
   return {
     events: queue.iterable,
     providerSessionId: () => threadId || undefined,
-    steer,
+    steer: (text, images = [], messageId) => steer(text, images, text, messageId),
     async answerQuestion(input) {
       const { requestId, answers } = questionAnswer.parse(input)
       const pending = questions.get(requestId)

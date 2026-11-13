@@ -58,6 +58,10 @@ export function insertProject(db: Database.Database, project: ProjectRow): void 
   )
 }
 
+export function setProjectRemoteUrl(db: Database.Database, id: string, remoteUrl: string | null): void {
+  db.prepare('UPDATE projects SET remote_url = ? WHERE id = ?').run(remoteUrl, id)
+}
+
 export function setProjectPrompts(db: Database.Database, input: ProjectPromptsInput): void {
   const blankToNull = (value: string | null): string | null =>
     value === null || value.trim() === '' ? null : value

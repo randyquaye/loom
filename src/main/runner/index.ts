@@ -127,6 +127,10 @@ async function readConfig(env: NodeJS.ProcessEnv): Promise<RunnerConfig> {
   if (secretKey.length !== 32) throw new Error('LOOM_SECRET_KEY must decode to exactly 32 bytes')
   await mkdir(dataDir, { recursive: true })
   const signIn = readSignIn(env)
+  const idleMinutes = Number(env['LOOM_WORKSPACE_IDLE_MINUTES'] ?? 30)
+  if (!Number.isFinite(idleMinutes) || idleMinutes < 0 || idleMinutes > 10080) {
+    throw new Error('LOOM_WORKSPACE_IDLE_MINUTES must be between 0 and 10080')
+  }
   return {
     dataDir,
     secretKey,
@@ -140,6 +144,7 @@ async function readConfig(env: NodeJS.ProcessEnv): Promise<RunnerConfig> {
     port: Number(env['LOOM_RUNNER_PORT'] ?? DEFAULT_PORT),
     placement: workspacePlacement('container'),
     allowLocalRemotes: env['LOOM_RUNNER_ALLOW_LOCAL_REMOTES'] === '1',
+    idleMs: idleMinutes * 60_000,
     ...readLogins(env),
     ...readGithub(env)
   }

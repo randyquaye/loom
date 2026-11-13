@@ -347,11 +347,16 @@ export function createLoopBackend(backend: LoopBackendId, deps: LoopDeps): Agent
             if (running === work) running = undefined
           }
         },
-        async steer(text: string, images: PromptImage[] = []): Promise<void> {
+        async steer(text: string, images: PromptImage[] = [], messageId?: string): Promise<void> {
           if (closed || currentTurnId === undefined || cancelled)
             throw new Error('There is no active turn to steer')
           guidance.push({ text, images })
-          queue.push({ type: 'user.steer', turnId: currentTurnId, text })
+          queue.push({
+            type: 'user.steer',
+            turnId: currentTurnId,
+            text,
+            ...(messageId === undefined ? {} : { messageId })
+          })
         },
         async cancel(): Promise<void> {
           cancelled = true

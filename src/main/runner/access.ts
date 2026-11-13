@@ -17,6 +17,7 @@ const RUNNER_SUBJECTS: Record<string, readonly [SubjectKind, string]> = {
  */
 const OPEN_CALLS: ReadonlySet<string> = new Set([
   'app:ping',
+  'cloud:health',
   'projects:ensure',
   'git:branches',
   'workspaces:list',

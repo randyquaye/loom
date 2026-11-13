@@ -3,6 +3,7 @@ import { handle } from './registry'
 
 /** How this desktop follows a runner. These are the Mac's own settings; a runner has none of them. */
 export function registerCloudIpc(): void {
+  handle('cloud:health', () => null)
   handle('cloud:status', () => cloudStatus())
   handle('cloud:runner', () => cloudAccount().runner())
   handle('cloud:setRunner', ({ url }) => cloudAccount().setRunner(url))

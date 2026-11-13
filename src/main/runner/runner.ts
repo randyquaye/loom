@@ -10,7 +10,9 @@ import {
   SESSION_QUEUE_CHANNEL,
   SESSION_TITLE_CHANNEL,
   TERMINAL_EXIT_CHANNEL,
-  WORKSPACE_STATE_CHANNEL
+  WORKSPACE_STATE_CHANNEL,
+  WORKSPACE_POWER_CHANNEL,
+  type WorkspacePowerPush
 } from '../../shared/ipc-contract'
 import { registerBackends } from '../agents/wiring'
 import type { GoogleClient } from '../auth/google'
@@ -20,13 +22,16 @@ import { openDb } from '../db'
 import { ensureUser } from '../db/repos/users'
 import { setEnvSecretStore } from '../env/vars'
 import { call, parseInput } from '../ipc/registry'
-import { keepScrollback, setTerminalSink } from '../pty'
+import { destroyTerminalsForCwd, keepScrollback, setTerminalSink } from '../pty'
 import {
   discardRuntime,
+  containerName,
   homeFolder,
   HOMES_DIR,
   removeSignInContainers,
   setContainerLogins,
+  setRuntimePowerGate,
+  runtimeFor,
   signInRuntime,
   workspacesByAddress
 } from '../runtime'
@@ -37,15 +42,22 @@ import { aesGcmCipher, createSecretStore, type SecretStore } from '../secrets'
 import { sqliteQueueStore } from '../sessions/queue-store'
 import {
   closeInterruptedTurns,
+  closeAllSessions,
   persistQueues,
   setActivitySink,
   setLoomDataRoot,
   setQueueSink,
   setSessionSink,
-  setTitleSink
+  setTitleSink,
+  sessionActivity,
+  suspendWorkspaceSessions
 } from '../sessions/service'
 import { setRemoteAccess, setWorkspaceStateSink } from '../workspace/bootstrap'
 import type { WorkspacePlacement } from '../workspace/placement'
+import { createWorkspacePower } from '../workspace/power'
+import { getWorkspaceOrThrow } from '../db/repos/workspaces'
+import { openForwardTarget } from '../runtime/forward'
+import { containerIsRunning } from '../runtime/container'
 import { createAccess } from './access'
 import { registerRunnerHandlers } from './handlers'
 import { sameSecret, startRunnerServer } from './server'
@@ -89,11 +101,12 @@ export interface RunnerConfig {
    */
   logins?: { host: string; port: number; fronts: Record<LoginProvider, string> }
   github?: GithubAppConfig
+  idleMs?: number
 }
 
 export interface Runner {
   readonly port: number
-  /** Stops listening. Running turns are not touched; that is what a restart recovers from. */
+  /** Stops listening and retires this process's sessions. Persisted turns recover on restart. */
   close(): Promise<void>
 }
 
@@ -111,14 +124,28 @@ async function recover(db: Database.Database): Promise<void> {
   const stranded = db
     .prepare("UPDATE workspaces SET state = 'error' WHERE state IN ('initializing', 'setting_up')")
     .run().changes
-  db.prepare('DELETE FROM accepted_messages WHERE accepted_at < ?').run(Date.now() - ACCEPTED_MESSAGE_TTL_MS)
+  db.prepare(
+    `DELETE FROM accepted_messages WHERE accepted_at < ?
+    AND NOT EXISTS (SELECT 1 FROM pending_deliveries WHERE pending_deliveries.id = accepted_messages.id)
+    AND NOT EXISTS (SELECT 1 FROM queued_messages WHERE queued_messages.id = accepted_messages.id)`
+  ).run(Date.now() - ACCEPTED_MESSAGE_TTL_MS)
   const containers = db
     .prepare("SELECT id, runtime FROM workspaces WHERE runtime = 'container'")
     .all() as Array<{ id: string; runtime: 'container' }>
   for (const workspace of containers) {
-    await discardRuntime(workspace).catch((error: unknown) =>
-      console.warn(`[loom-runner] could not remove the container of workspace ${workspace.id}:`, error)
-    )
+    try {
+      await discardRuntime(workspace)
+      db.prepare("UPDATE workspaces SET power_state = 'stopped', power_error = NULL WHERE id = ?").run(
+        workspace.id
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      db.prepare("UPDATE workspaces SET power_state = 'error', power_error = ? WHERE id = ?").run(
+        message,
+        workspace.id
+      )
+      console.warn(`[loom-runner] could not remove the container of workspace ${workspace.id}:`, message)
+    }
   }
   if (interrupted > 0 || stranded > 0) {
     console.log(
@@ -257,9 +284,28 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
   }
   const access = createAccess(db)
   const logins = config.logins === undefined ? null : await keepLogins(db, secrets, config, config.logins)
+  let connectedUsers = (): string[] => []
+  let closeForwards = (_id: string): void => {}
+  let pushPower = (_push: WorkspacePowerPush): void => {}
+  const power = createWorkspacePower({
+    db,
+    start: (id) => runtimeFor(getWorkspaceOrThrow(db, id), config.dataDir).ensureRunning(),
+    inspect: (id) => containerIsRunning(containerName(id)),
+    stop: (id) => discardRuntime(getWorkspaceOrThrow(db, id)),
+    suspend(id) {
+      closeForwards(id)
+      suspendWorkspaceSessions(db, id)
+      destroyTerminalsForCwd(getWorkspaceOrThrow(db, id).worktreePath)
+    },
+    changed: (push) => pushPower(push),
+    connectedUsers: () => connectedUsers(),
+    busyWorkspaces: () => Object.values(sessionActivity().bySession),
+    idleMs: config.idleMs ?? 30 * 60_000
+  })
+  setRuntimePowerGate(power)
   registerRunnerHandlers(
     { db, secrets, dataRoot: config.dataDir },
-    { placement: config.placement, allowLocalRemotes: config.allowLocalRemotes, access, logins }
+    { placement: config.placement, allowLocalRemotes: config.allowLocalRemotes, access, logins, power }
   )
   keepScrollback(SCROLLBACK_CHARS)
   await recover(db)
@@ -293,6 +339,17 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
     },
     stillAllowed: (caller) =>
       caller.signInId === undefined || (signIn !== null && signInIsLive(signIn, caller.signInId)),
+    async forward(caller, workspaceId, port) {
+      access.assertMayCall(caller, 'workspaces:power', { workspaceId })
+      const workspace = getWorkspaceOrThrow(db, workspaceId)
+      if (
+        workspace.runtime !== 'container' ||
+        workspace.state !== 'ready' ||
+        power.status(workspaceId).state !== 'running'
+      )
+        throw new Error('Start the cloud workspace before forwarding a port')
+      return openForwardTarget(runtimeFor(workspace, config.dataDir), port)
+    },
     // The same input checks as the window's calls, then: is this the caller's to touch?
     async dispatch(caller, channel, input) {
       const parsed = parseInput(channel, input)
@@ -302,6 +359,12 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
       return result
     }
   })
+  connectedUsers = () => server.connectedUsers()
+  closeForwards = (id) => server.closeWorkspaceForwards(id)
+  pushPower = (push) =>
+    server.sendTo(access.ownerOf('workspace', push.workspaceId), WORKSPACE_POWER_CHANNEL, push)
+  const idleTimer = setInterval(() => void power.sweep(), 15_000)
+  idleTimer.unref()
   /** Signing out is not complete while a terminal or chat stream of that sign-in is still open. */
   function closeConnectionsOf(signInId: string): void {
     server.closeWhere((caller) => caller.signInId === signInId)
@@ -330,9 +393,13 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
   return {
     port: server.port,
     async close() {
+      clearInterval(idleTimer)
+      await power.close()
+      closeAllSessions(db)
       await server.close()
       await logins?.close()
       setContainerLogins(null)
+      setRuntimePowerGate(null)
       setRemoteAccess(null)
       db.close()
     }

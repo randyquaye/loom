@@ -29,7 +29,7 @@ import { resolveBaseRef } from '../git/baseref'
 import { envOverlay } from '../env/vars'
 import { git } from '../git/run'
 import { allocateSlug, slugify } from '../git/slug'
-import { discardRuntime, loginEnvironment, runtimeFor } from '../runtime'
+import { discardRuntime, loginEnvironment, removeRuntimeStorage, runtimeFor } from '../runtime'
 import {
   addWorktree,
   isValidBranchRef,
@@ -430,6 +430,7 @@ export async function removeWorkspace({
   await discardRuntime(workspace)
   if (workspace.checkout === 'clone') await removeClone(workspace.worktreePath, dataRoot)
   else await removeWorktree(repoPath, workspace.worktreePath, workspace.branch)
+  await removeRuntimeStorage(workspace, dataRoot)
   deleteWorkspace(db, workspace.id)
 }
 

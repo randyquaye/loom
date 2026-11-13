@@ -7,6 +7,7 @@ import { initialChoice, useDefaults } from '../../state/defaults'
 import { useFiles } from '../../state/files'
 import { useProjects } from '../../state/projects'
 import { isTurnRunning, useSessions } from '../../state/sessions'
+import { watchSessionQueue } from '../../state/session-queue'
 import { useAttachmentDrop } from '../../hooks/useAttachmentDrop'
 import { useUi } from '../../state/ui'
 import { useTalk } from '../../audio/talk'
@@ -404,25 +405,17 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
   useEffect(() => {
     const request = queueRequest.current
     request.active = true
-    let active = true
-    let pushed = false
-    const unsubscribe = window.loom.onSessionQueue((update) => {
-      if (update.sessionId !== sessionId) return
-      pushed = true
-      request.revision++
-      setQueue(update.items)
-    })
-    void window.loom.sessions.queue(sessionId).then(
+    const unsubscribe = watchSessionQueue(
+      sessionId,
       (items) => {
-        // A live push wins over an older snapshot that was already in flight.
-        if (active && !pushed) setQueue(items)
+        request.revision++
+        setQueue(items)
       },
       (err: unknown) => {
-        if (active && !pushed) push(`Could not load queue: ${String(err)}`, 'err')
+        push(`Could not load queue: ${String(err)}`, 'err')
       }
     )
     return () => {
-      active = false
       request.active = false
       unsubscribe()
     }

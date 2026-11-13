@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { rm } from 'node:fs/promises'
 import type { WorkspaceRow } from '../../shared/ipc-contract'
 import {
   containerAddresses,
@@ -51,6 +52,23 @@ export interface ContainerLogins {
 
 let logins: ContainerLogins | null = null
 
+/** The runner's power gate; the local desktop keeps its existing runtime behavior. */
+export interface RuntimePowerGate {
+  beforeStart(workspaceId: string): void
+  afterStart(workspaceId: string): void
+  assertRunning(workspaceId: string): void
+  failed(workspaceId: string, error: unknown): void
+}
+let powerGate: RuntimePowerGate | null = null
+
+export function setRuntimePowerGate(next: RuntimePowerGate | null): void {
+  powerGate = next
+}
+
+export function assertRuntimeRunning(workspace: Pick<WorkspaceRow, 'id' | 'runtime'>): void {
+  if (workspace.runtime === 'container') powerGate?.assertRunning(workspace.id)
+}
+
 /** Wired by such a runner before any container starts. Elsewhere logins stay in the home folder. */
 export function setContainerLogins(next: ContainerLogins | null): void {
   logins = next
@@ -96,6 +114,20 @@ export function signInRuntime(dataRoot: string, id: string, homePath: string): W
 /** One runtime per container workspace, so concurrent starts share a single queue. */
 const containers = new Map<string, WorkspaceRuntime>()
 
+function dockerStoragePath(dataRoot: string, workspaceId: string): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(workspaceId)) throw new Error('Invalid workspace id for Docker storage')
+  return path.join(dataRoot, 'docker', workspaceId)
+}
+
+/** Only workspace deletion removes Docker data; stopping or replacing compute keeps it. */
+export async function removeRuntimeStorage(
+  workspace: Pick<WorkspaceRow, 'id' | 'runtime'>,
+  dataRoot: string | undefined
+): Promise<void> {
+  if (workspace.runtime !== 'container' || dataRoot === undefined) return
+  await rm(dockerStoragePath(dataRoot, workspace.id), { recursive: true, force: true })
+}
+
 /** The runtime a workspace's agents, terminals and setup script start through. */
 export function runtimeFor(
   workspace: Pick<WorkspaceRow, 'id' | 'runtime' | 'worktreePath' | 'ownerId'>,
@@ -106,27 +138,72 @@ export function runtimeFor(
   if (existing !== undefined) return existing
   if (dataRoot === null) throw new Error('a container workspace needs the data root to place its home folder')
   const apparmorProfile = process.env['LOOM_WORKSPACE_APPARMOR']
+  const engine = process.env['LOOM_WORKSPACE_CONTAINER_RUNTIME'] ?? 'runc'
+  if (engine !== 'runc' && engine !== 'kata') {
+    throw new Error('LOOM_WORKSPACE_CONTAINER_RUNTIME must be runc or kata')
+  }
   const kept = logins
   const owner = workspace.ownerId
   const runtime = createContainerRuntime({
     name: containerName(workspace.id),
-    image: process.env['LOOM_WORKSPACE_IMAGE'] ?? 'loom-workspace:latest',
+    image:
+      engine === 'kata'
+        ? (process.env['LOOM_WORKSPACE_KATA_IMAGE'] ?? 'loom-workspace-kata:latest')
+        : (process.env['LOOM_WORKSPACE_IMAGE'] ?? 'loom-workspace:latest'),
     checkoutPath: workspace.worktreePath,
     homePath: homeFolder(dataRoot, workspace.ownerId),
     seccompProfilePath: path.join(dataRoot, 'workspace-seccomp.json'),
     memory: process.env['LOOM_WORKSPACE_MEMORY'] ?? '4g',
     cpus: process.env['LOOM_WORKSPACE_CPUS'] ?? '2',
+    pids: Number(process.env['LOOM_WORKSPACE_PIDS'] ?? 512),
+    ...(engine === 'kata'
+      ? {
+          kata: {
+            runtime: 'kata' as const,
+            storagePath: dockerStoragePath(dataRoot, workspace.id),
+            diskGb: Number(process.env['LOOM_WORKSPACE_DOCKER_DISK_GB'] ?? 16)
+          }
+        }
+      : {}),
     ...(apparmorProfile === undefined || apparmorProfile === '' ? {} : { apparmorProfile }),
     ...(kept === null || owner === null
       ? {}
       : {
           hosts: kept.hosts,
-          loginFilesPath: path.join(dataRoot, 'login-files', owner),
+          // Kata's own read-only mounts do not hold against root in a workspace, so a Kata
+          // workspace takes login files from the view the host has already made read-only.
+          loginFilesPath: path.join(dataRoot, engine === 'kata' ? 'login-files-view' : 'login-files', owner),
           secureHome: (homePath: string) => kept.secureHome(owner, homePath)
         })
   })
-  containers.set(workspace.id, runtime)
-  return runtime
+  const gate = powerGate
+  const guarded: WorkspaceRuntime = {
+    async ensureRunning() {
+      gate?.beforeStart(workspace.id)
+      try {
+        await runtime.ensureRunning()
+        gate?.afterStart(workspace.id)
+      } catch (error) {
+        gate?.failed(workspace.id, error)
+        throw error
+      }
+    },
+    exec(file, args, opts) {
+      gate?.assertRunning(workspace.id)
+      return runtime.exec(file, args, opts)
+    },
+    spawn(file, args, opts) {
+      gate?.assertRunning(workspace.id)
+      return runtime.spawn(file, args, opts)
+    },
+    openTerminal(opts) {
+      gate?.assertRunning(workspace.id)
+      return runtime.openTerminal(opts)
+    },
+    stop: () => runtime.stop()
+  }
+  containers.set(workspace.id, guarded)
+  return guarded
 }
 
 /** Removes a workspace's container whether or not this process is the one that started it. */

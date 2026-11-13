@@ -17,7 +17,14 @@ export function setTerminalSink(fn: Sink): void {
 }
 
 const sessions = new Map<string, RuntimeTerminal>()
-const scrollback = new Map<string, string>()
+interface Scrollback {
+  chunks: string[]
+  head: number
+  offset: number
+  length: number
+  lineStart: boolean
+}
+const scrollback = new Map<string, Scrollback>()
 let scrollbackLimit = 0
 
 /**
@@ -29,16 +36,45 @@ export function keepScrollback(limit: number): void {
 }
 
 function remember(id: string, data: string): void {
-  if (scrollbackLimit === 0) return
-  const next = (scrollback.get(id) ?? '') + data
-  scrollback.set(id, next.length > scrollbackLimit ? next.slice(-scrollbackLimit) : next)
+  if (scrollbackLimit === 0 || data === '') return
+  const buffer = scrollback.get(id) ?? { chunks: [], head: 0, offset: 0, length: 0, lineStart: true }
+  buffer.chunks.push(data)
+  buffer.length += data.length
+  while (buffer.length > scrollbackLimit) {
+    const chunk = buffer.chunks[buffer.head]!
+    const removed = Math.min(buffer.length - scrollbackLimit, chunk.length - buffer.offset)
+    buffer.offset += removed
+    buffer.length -= removed
+    buffer.lineStart = chunk[buffer.offset - 1] === '\n'
+    if (buffer.offset === chunk.length) {
+      buffer.chunks[buffer.head++] = ''
+      buffer.offset = 0
+    }
+  }
+  if (buffer.head > 64 && buffer.head * 2 > buffer.chunks.length) {
+    buffer.chunks.splice(0, buffer.head)
+    buffer.head = 0
+  }
+  scrollback.set(id, buffer)
+}
+
+/** Join only when attaching; prefer a complete first line after the buffer was trimmed. */
+function replay(id: string): string {
+  const buffer = scrollback.get(id)
+  if (buffer === undefined) return ''
+  const chunks = buffer.chunks.slice(buffer.head)
+  chunks[0] = (chunks[0] ?? '').slice(buffer.offset)
+  let text = chunks.join('')
+  if (!buffer.lineStart && text.includes('\n')) text = text.slice(text.indexOf('\n') + 1)
+  const first = text.charCodeAt(0)
+  return first >= 0xdc00 && first <= 0xdfff ? text.slice(1) : text
 }
 
 /** The live terminals of one working directory, oldest first, with what they last printed. */
 export function listTerminals(cwd: string): Array<{ id: string; scrollback: string }> {
   const live: Array<{ id: string; scrollback: string }> = []
   for (const [id, terminalCwd] of cwdById) {
-    if (terminalCwd === cwd && sessions.has(id)) live.push({ id, scrollback: scrollback.get(id) ?? '' })
+    if (terminalCwd === cwd && sessions.has(id)) live.push({ id, scrollback: replay(id) })
   }
   return live
 }
@@ -111,4 +147,13 @@ export function destroyTerminal(id: string): void {
 
 export function destroyAllTerminals(): void {
   for (const id of [...sessions.keys()]) destroyTerminal(id)
+}
+
+/** A workspace stop destroys its terminal processes, while other workspaces stay attached. */
+export function destroyTerminalsForCwd(cwd: string): void {
+  for (const [id, directory] of cwdById) {
+    if (directory !== cwd) continue
+    destroyTerminal(id)
+    sink?.(TERMINAL_EXIT_CHANNEL, { id, code: 0 })
+  }
 }

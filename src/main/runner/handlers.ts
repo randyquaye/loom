@@ -31,8 +31,11 @@ import {
   steerTurn
 } from '../sessions/service'
 import { unreadSessions } from '../sessions/unread'
-import { createWorkspace } from '../workspace/bootstrap'
+import { rejectDelivery } from '../sessions/deliveries'
+import { createWorkspace, removeWorkspace } from '../workspace/bootstrap'
 import type { WorkspacePlacement } from '../workspace/placement'
+import type { WorkspacePowerService } from '../workspace/power'
+import { cloudHealth } from './health'
 import type { AccessRules } from './access'
 
 export interface RunnerHandlerOptions {
@@ -45,6 +48,7 @@ export interface RunnerHandlerOptions {
   access: AccessRules
   /** Present on a runner that keeps its users' agent logins itself. */
   logins: Logins | null
+  power?: WorkspacePowerService
 }
 
 /** A runner always knows who is calling; the desktop's window is the only caller that has no name. */
@@ -113,12 +117,41 @@ async function instructionSnapshot(
   })
 }
 
-/** True the first time an ID is seen, including by a runner that has since restarted. */
-function acceptOnce(db: Database.Database, messageId: string): boolean {
-  const inserted = db
-    .prepare('INSERT OR IGNORE INTO accepted_messages (id, accepted_at) VALUES (?, ?)')
-    .run(messageId, Date.now())
-  return inserted.changes === 1
+type Delivery = (messageId: string, deliver: () => Promise<void>) => Promise<void>
+
+/**
+ * Delivers a message once under its ID, however many times it arrives: a desktop sends a
+ * message again, under the same ID, when its connection drops before the answer comes.
+ *
+ * - While the first arrival is still being delivered, a later one gets that delivery's
+ *   outcome. It is not answered sooner: the message may yet be turned away.
+ * - After a delivery that worked, a later arrival does nothing, also on a runner that has
+ *   restarted since.
+ * - A failure before the input is recorded frees the ID for a later attempt. An input
+ *   already in its transcript or queue keeps its identity even if later work fails.
+ */
+function deliverOnce(db: Database.Database): Delivery {
+  const underWay = new Map<string, Promise<void>>()
+  return (messageId, deliver) => {
+    const earlier = underWay.get(messageId)
+    if (earlier !== undefined) return earlier
+    if (db.prepare('SELECT 1 FROM accepted_messages WHERE id = ?').get(messageId) !== undefined)
+      return Promise.resolve()
+    const delivery = Promise.resolve()
+      .then(deliver)
+      .catch((error: unknown) => {
+        if (
+          db.open &&
+          !rejectDelivery(db, messageId) &&
+          db.prepare('SELECT 1 FROM accepted_messages WHERE id = ?').get(messageId) !== undefined
+        )
+          return
+        throw error
+      })
+      .finally(() => underWay.delete(messageId))
+    underWay.set(messageId, delivery)
+    return delivery
+  }
 }
 
 /**
@@ -147,6 +180,21 @@ export function registerRunnerHandlers(deps: IpcDeps, options: RunnerHandlerOpti
   registerSessionsIpc(deps)
   registerCommentsIpc(deps)
   registerHistoryIpc(deps)
+  handle('cloud:health', () => cloudHealth(deps.dataRoot))
+  if (options.power !== undefined) {
+    const { power } = options
+    handle('workspaces:power', ({ workspaceId }) => power.refresh(workspaceId))
+    handle('workspaces:start', ({ workspaceId }) => power.start(workspaceId))
+    handle('workspaces:stop', ({ workspaceId }) => power.stop(workspaceId))
+    handle('workspaces:remove', ({ id }) => {
+      const remove = async () => {
+        const workspace = getWorkspaceOrThrow(db, id)
+        const project = getProjectOrThrow(db, workspace.projectId)
+        await removeWorkspace({ db, repoPath: project.repoPath, workspace, dataRoot: deps.dataRoot })
+      }
+      return getWorkspaceOrThrow(db, id).runtime === 'container' ? power.remove(id, remove) : remove()
+    })
+  }
 
   // The window's handlers answer for the one user of a Mac. These answer for the caller alone.
   handle('workspaces:list', ({ projectId }, caller) =>
@@ -234,18 +282,17 @@ export function registerRunnerHandlers(deps: IpcDeps, options: RunnerHandlerOpti
     forkSession(db, input, await instructionSnapshot(db, input.workspaceId, instructions))
   )
 
-  handleRunner('sessions:send', ({ sessionId, text, attachments, messageId }) => {
-    assertWorkspaceRelative(attachments)
-    if (acceptOnce(db, messageId)) return sendTurn(db, sessionId, text, attachments)
-  })
-
-  handleRunner('sessions:steer', ({ sessionId, text, attachments, messageId }) => {
-    assertWorkspaceRelative(attachments)
-    if (acceptOnce(db, messageId)) return steerTurn(db, sessionId, text, attachments)
-  })
-
-  handleRunner('sessions:sendNow', ({ sessionId, text, attachments, messageId }) => {
-    assertWorkspaceRelative(attachments)
-    if (acceptOnce(db, messageId)) return sendNow(db, sessionId, text, attachments)
-  })
+  // The three ways a message reaches a tab. Each is delivered once under its ID.
+  const once = deliverOnce(db)
+  const messages = {
+    'sessions:send': sendTurn,
+    'sessions:steer': steerTurn,
+    'sessions:sendNow': sendNow
+  } as const
+  for (const channel of Object.keys(messages) as Array<keyof typeof messages>) {
+    handleRunner(channel, ({ sessionId, text, attachments, messageId }) => {
+      assertWorkspaceRelative(attachments)
+      return once(messageId, () => messages[channel](db, sessionId, text, attachments, [], messageId))
+    })
+  }
 }

@@ -58,7 +58,7 @@ export function startClaudeSession(
   let sessionState: string | undefined
   let steering = Promise.resolve()
   const controls = new Map<string, Pending>()
-  const guidance = new Map<string, Pending & { turn: Turn; text: string }>()
+  const guidance = new Map<string, Pending & { turn: Turn; text: string; messageId?: string }>()
   const questions = new Map<
     string,
     { event: QuestionRequest; input: Rec; nativeId: string; sending: boolean }
@@ -227,7 +227,12 @@ export function startClaudeSession(
       const pending = guidance.get(id)
       if (pending !== undefined) {
         guidance.delete(id)
-        queue.push({ type: 'user.steer', turnId: pending.turn.id, text: pending.text })
+        queue.push({
+          type: 'user.steer',
+          turnId: pending.turn.id,
+          text: pending.text,
+          ...(pending.messageId === undefined ? {} : { messageId: pending.messageId })
+        })
         pending.resolve()
       }
     }
@@ -339,7 +344,7 @@ export function startClaudeSession(
         fail(error instanceof Error ? error : new Error(String(error)))
       }
     },
-    steer(text, images = []) {
+    steer(text, images = [], messageId) {
       const turn = active
       if (turn === undefined || closed) return Promise.reject(new Error('There is no active turn to steer'))
       const work = steering
@@ -349,7 +354,13 @@ export function startClaudeSession(
           if (active !== turn || closed) throw new Error('The turn ended before guidance was delivered')
           const id = randomUUID()
           await new Promise<void>((resolve, reject) => {
-            guidance.set(id, { turn, text, resolve, reject })
+            guidance.set(id, {
+              turn,
+              text,
+              resolve,
+              reject,
+              ...(messageId === undefined ? {} : { messageId })
+            })
             void write(user(text, images, id)).catch((error: Error) => {
               guidance.delete(id)
               reject(error)

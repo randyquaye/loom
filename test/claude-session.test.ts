@@ -203,7 +203,7 @@ describe('Claude streaming session', () => {
     const f = await fixture()
     try {
       const { sending } = await f.begin()
-      const steering = f.session.steer!('focus on ordering')
+      const steering = f.session.steer!('focus on ordering', [], 'guidance-1')
       let acknowledged = false
       void steering.then(() => {
         acknowledged = true
@@ -225,6 +225,7 @@ describe('Claude streaming session', () => {
       const guidance = f.events.find((e) => e.type === 'user.steer')!
       expect(guidance).toMatchObject({
         turnId: f.events.find((e) => e.type === 'turn.started')!.turnId,
+        messageId: 'guidance-1',
         text: 'focus on ordering'
       })
       expect(f.sent.filter((frame) => frame.type === 'control_request')).toHaveLength(1)

@@ -169,8 +169,8 @@ describe('Persistent Codex session', () => {
           accept = resolve
         })
     )
-    const first = h.session.steer!('first guidance')
-    const second = h.session.steer!('second guidance')
+    const first = h.session.steer!('first guidance', [], 'first-message')
+    const second = h.session.steer!('second guidance', [], 'second-message')
     await vi.waitFor(() => expect(h.rpc.request).toHaveBeenCalledTimes(2))
     expect(h.rpc.request).toHaveBeenLastCalledWith('turn/steer', {
       threadId: 'thread',
@@ -187,8 +187,15 @@ describe('Persistent Codex session', () => {
     })
     h.emit('turn/completed', { id: 'turn', status: 'completed' })
     await sending
-    await expect(h.session.steer!('too late')).rejects.toThrow()
     expect(h.close).not.toHaveBeenCalled()
+    await h.session.close()
+    const events: AgentEvent[] = []
+    for await (const event of h.session.events) if (event.type === 'user.steer') events.push(event)
+    expect(events).toMatchObject([
+      { text: 'first guidance', messageId: 'first-message' },
+      { text: 'second guidance', messageId: 'second-message' }
+    ])
+    await expect(h.session.steer!('too late')).rejects.toThrow()
   })
 
   it.each(['Allow', 'Deny'])('limits permission %s to the scope displayed for this turn', async (choice) => {

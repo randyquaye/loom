@@ -1,5 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import type { NumberedSessionEventPush, SequencedEvent, SessionRow } from '../../shared/ipc-contract'
+import type { AgentEvent } from '../../shared/events'
+import { isTurnRunning } from './sessions'
 
 const TAB: SessionRow = {
   id: 's1',
@@ -52,6 +54,30 @@ async function boot(history: (sessionId: string, afterSeq: number) => Promise<Se
 
 afterEach(() => {
   vi.unstubAllGlobals()
+})
+
+it('shows a completed legacy startup failure as finished despite its different provider ID', () => {
+  expect(
+    isTurnRunning([
+      { type: 'user.text', turnId: 'prompt', text: 'hello' },
+      { type: 'error', turnId: 'startup', code: 'start', message: 'failed', retryable: false },
+      { type: 'turn.done', turnId: 'startup', stopReason: 'error' }
+    ])
+  ).toBe(false)
+})
+
+it('shows the recovered prompt as finished despite a repeated announcement of its predecessor', () => {
+  const before: AgentEvent[] = [
+    { type: 'user.text', turnId: 'first', text: 'first' },
+    { type: 'turn.started', turnId: 'old', at: 1 },
+    { type: 'turn.done', turnId: 'old', stopReason: 'end' },
+    { type: 'user.text', turnId: 'second', text: 'second' },
+    { type: 'turn.started', turnId: 'old', at: 2 }
+  ]
+  expect(isTurnRunning(before)).toBe(true)
+  expect(isTurnRunning([...before, { type: 'turn.done', turnId: 'second', stopReason: 'interrupted' }])).toBe(
+    false
+  )
 })
 
 it('shows the whole history of a tab whose events started arriving before it was opened', async () => {

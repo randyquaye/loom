@@ -114,6 +114,12 @@ resource "aws_iam_role_policy" "host" {
         Effect   = "Allow"
         Action   = "ssm:GetParameter"
         Resource = "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/loom/*"
+      },
+      {
+        Effect    = "Allow"
+        Action    = "ssm:PutParameter"
+        Resource  = "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/loom/secret-key"
+        Condition = { StringEquals = { "ssm:Overwrite" = "false" } }
       }
     ]
   })
@@ -165,6 +171,13 @@ resource "aws_instance" "host" {
   vpc_security_group_ids = [aws_security_group.host.id]
   iam_instance_profile   = aws_iam_instance_profile.host.name
 
+  dynamic "cpu_options" {
+    for_each = var.enable_kata_workspaces ? [true] : []
+    content {
+      nested_virtualization = "enabled"
+    }
+  }
+
   # A hop limit of 1 keeps the machine's own AWS credentials out of reach of workspace
   # containers, which sit one network hop further in and run code nobody has reviewed.
   metadata_options {
@@ -194,7 +207,7 @@ resource "aws_ebs_volume" "data" {
   size              = var.data_gb
   encrypted         = true
 
-  tags = { Name = "loom-pilot-data" }
+  tags = { Name = "loom-pilot-data", LoomBackup = "pilot-data" }
 
   lifecycle {
     prevent_destroy = true

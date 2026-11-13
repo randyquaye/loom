@@ -7,7 +7,8 @@ import {
   deleteProject,
   insertProject,
   listProjects,
-  repoPathTaken
+  repoPathTaken,
+  setProjectRemoteUrl
 } from '../db/repos/projects'
 import { listWorkspaces } from '../db/repos/workspaces'
 import {
@@ -16,7 +17,8 @@ import {
   cloneToLocation,
   deleteOwnedRepo,
   initEmptyRepo,
-  isAppOwnedRepo
+  isAppOwnedRepo,
+  originUrl
 } from '../git/projects'
 import { slugify } from '../git/slug'
 import { migrateProjectInstructions, saveProjectPrompts } from '../instructions/migrate-general'
@@ -26,6 +28,12 @@ import { handle, type IpcDeps } from './registry'
 export function registerProjectsIpc(deps: IpcDeps): void {
   handle('projects:list', async () => {
     for (const project of listProjects(deps.db)) {
+      try {
+        const remoteUrl = await originUrl(project.repoPath)
+        if (remoteUrl !== project.remoteUrl) setProjectRemoteUrl(deps.db, project.id, remoteUrl)
+      } catch (error) {
+        console.warn(`[loom] Could not refresh Git remote for ${project.name}:`, error)
+      }
       await migrateProjectInstructions(deps.db, deps.dataRoot, project.id).catch((error: unknown) =>
         console.warn(`[loom] General instructions need recovery for ${project.name}:`, error)
       )

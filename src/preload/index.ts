@@ -8,6 +8,7 @@ import {
   TERMINAL_DATA_CHANNEL,
   TERMINAL_EXIT_CHANNEL,
   WORKSPACE_STATE_CHANNEL,
+  WORKSPACE_POWER_CHANNEL,
   type CloudStatus,
   type IpcContract,
   type LoomApi,
@@ -17,7 +18,8 @@ import {
   type SessionTitlePush,
   type TerminalDataPush,
   type TerminalExitPush,
-  type WorkspaceStatePush
+  type WorkspaceStatePush,
+  type WorkspacePowerPush
 } from '../shared/ipc-contract'
 
 function invoke<K extends keyof IpcContract>(
@@ -85,6 +87,9 @@ const api: LoomApi = {
     openExternal: (url) => invoke('shell:openExternal', { url })
   },
   workspaces: {
+    power: (workspaceId) => invoke('workspaces:power', { workspaceId }),
+    start: (workspaceId) => invoke('workspaces:start', { workspaceId }),
+    stop: (workspaceId) => invoke('workspaces:stop', { workspaceId }),
     list: (projectId) => invoke('workspaces:list', { projectId }),
     add: (projectId, name, baseRef, cloud) =>
       invoke('workspaces:add', { projectId, name, baseRef: baseRef ?? null, cloud: cloud ?? false }),
@@ -165,6 +170,7 @@ const api: LoomApi = {
     search: (query, projectId) => invoke('history:search', { query, projectId })
   },
   cloud: {
+    health: () => invoke('cloud:health', undefined),
     status: () => invoke('cloud:status', undefined),
     runner: () => invoke('cloud:runner', undefined),
     setRunner: (url) => invoke('cloud:setRunner', { url }),
@@ -180,6 +186,17 @@ const api: LoomApi = {
     disconnect: (provider) => invoke('logins:disconnect', { provider })
   },
   onCloudStatus: (cb) => subscribe<CloudStatus>(CLOUD_STATUS_CHANNEL, cb),
+  ports: {
+    list: (workspaceId) => invoke('ports:list', { workspaceId }),
+    forward: (workspaceId, port, localPort) =>
+      invoke('ports:forward', {
+        workspaceId,
+        port,
+        ...(localPort === undefined ? {} : { localPort })
+      }),
+    unforward: (workspaceId, port) => invoke('ports:unforward', { workspaceId, port })
+  },
+  onWorkspacePower: (cb) => subscribe<WorkspacePowerPush>(WORKSPACE_POWER_CHANNEL, cb),
   onSessionEvent: (cb) => subscribe<SessionEventPush>(SESSION_EVENT_CHANNEL, cb),
   onSessionActivity: (cb) => subscribe<SessionActivity>(SESSION_ACTIVITY_CHANNEL, cb),
   onTerminalData: (cb) => subscribe<TerminalDataPush>(TERMINAL_DATA_CHANNEL, cb),

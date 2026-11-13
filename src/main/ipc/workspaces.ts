@@ -8,6 +8,15 @@ import type { WorkspacePlacement } from '../workspace/placement'
 import { handle, type IpcDeps } from './registry'
 
 export function registerWorkspacesIpc(deps: IpcDeps, placement: WorkspacePlacement): void {
+  const cloudOnly = (): never => {
+    throw new Error('This action requires a connected cloud workspace')
+  }
+  handle('workspaces:power', cloudOnly)
+  handle('workspaces:start', cloudOnly)
+  handle('workspaces:stop', cloudOnly)
+  handle('ports:list', cloudOnly)
+  handle('ports:forward', cloudOnly)
+  handle('ports:unforward', cloudOnly)
   handle('workspaces:list', ({ projectId }) => listWorkspaces(deps.db, projectId))
 
   handle('workspaces:add', ({ projectId, name, baseRef, cloud }) => {

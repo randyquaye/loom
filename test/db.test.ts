@@ -27,23 +27,16 @@ describe('db', () => {
 
   it('is idempotent across re-open of the same file', async () => {
     const file = path.join(await mkdtemp(path.join(tmpdir(), 'loom-db-')), 'loom.db')
-    openDb(file).close()
+    const first = openDb(file)
+    const applied = first.prepare('SELECT name FROM _migrations ORDER BY rowid').all() as Array<{
+      name: string
+    }>
+    first.close()
     const second = openDb(file)
-    const rows = second.prepare('SELECT name FROM _migrations').all() as Array<{ name: string }>
-    expect(rows.map((r) => r.name)).toEqual([
-      '001_init',
-      '002_cascade_search_and_terminals',
-      '003_workspace_runtime',
-      '004_project_prompts',
-      '005_diff_comments',
-      '006_workspace_auto_named',
-      '007_session_instructions',
-      '008_session_read',
-      '009_workspace_placement',
-      '010_session_durability',
-      '011_owners',
-      '012_sign_in'
-    ])
+    const rows = second.prepare('SELECT name FROM _migrations ORDER BY rowid').all() as Array<{
+      name: string
+    }>
+    expect(rows).toEqual(applied)
     second.close()
   })
 

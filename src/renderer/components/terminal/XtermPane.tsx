@@ -123,7 +123,10 @@ function TerminalTabs({ workspaceId }: { workspaceId: string }) {
     if (tabs.length <= 1) return
     // The runner keeps a cloud terminal until it is told to end it; closing its tab is that.
     const ptyId = ptyIds.current.get(key)
-    if (cloud && ptyId !== undefined) void window.loom.terminal.destroy(ptyId)
+    if (cloud && ptyId !== undefined)
+      void window.loom.terminal
+        .destroy(ptyId)
+        .catch((error: unknown) => push(`Could not close terminal: ${String(error)}`, 'err'))
     const index = tabs.findIndex((t) => t.key === key)
     const remaining = tabs.filter((t) => t.key !== key)
     if (key === activeKey) {
@@ -433,9 +436,11 @@ function ShellHost(props: ShellHostProps) {
     // A hidden host measures 0x0 and FitAddon would shrink the terminal to its minimum; skip
     // until it is visible again (the observer fires on show, and so does the active effect).
     const refit = () => {
-      if (host.clientWidth === 0 || host.clientHeight === 0) return
+      if (disposed || host.clientWidth === 0 || host.clientHeight === 0) return
       fit.fit()
-      if (terminalId !== null) void window.loom.terminal.resize(terminalId, term.cols, term.rows)
+      // Connection changes can overtake this passive resize; the next attachment refits.
+      if (terminalId !== null)
+        void window.loom.terminal.resize(terminalId, term.cols, term.rows).catch(() => {})
     }
     fitRef.current = refit
     refit()
@@ -457,7 +462,7 @@ function ShellHost(props: ShellHostProps) {
         }
         // Never shown, so nothing is left running for it, here or on a runner.
         if (disposed) {
-          void window.loom.terminal.destroy(id)
+          void window.loom.terminal.destroy(id).catch(() => {})
           return
         }
       }
@@ -474,7 +479,9 @@ function ShellHost(props: ShellHostProps) {
         })
       )
       const input = term.onData((data) => {
-        void window.loom.terminal.write(id, data)
+        void window.loom.terminal.write(id, data).catch((error: unknown) => {
+          if (!disposed) push(`Could not write to terminal: ${String(error)}`, 'err')
+        })
       })
       cleanups.push(() => input.dispose())
       refit()
@@ -484,7 +491,7 @@ function ShellHost(props: ShellHostProps) {
     return () => {
       disposed = true
       for (const cleanup of cleanups) cleanup()
-      if (terminalId !== null && !detached) void window.loom.terminal.destroy(terminalId)
+      if (terminalId !== null && !detached) void window.loom.terminal.destroy(terminalId).catch(() => {})
       onPty(tabKey, null)
       fitRef.current = null
       onTerminal(tabKey, null)

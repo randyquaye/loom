@@ -21,6 +21,12 @@ variable "instance_type" {
   default     = "m7i-flex.large"
 }
 
+variable "enable_kata_workspaces" {
+  description = "Opt in to Kata workspace VMs and nested virtualization. Activation may stop the host."
+  type        = bool
+  default     = false
+}
+
 variable "root_gb" {
   description = "Operating system, Docker images and the runner itself. Rebuildable."
   type        = number
@@ -28,7 +34,27 @@ variable "root_gb" {
 }
 
 variable "data_gb" {
-  description = "Everything Loom writes: checkouts, user homes, database, logs. The only copy."
+  description = "Everything Loom writes: checkouts, user homes, database, logs. Backed up daily."
   type        = number
   default     = 50
+}
+
+variable "snapshot_time_utc" {
+  description = "Daily snapshot time, in UTC."
+  type        = string
+  default     = "02:00"
+  validation {
+    condition     = can(regex("^([01][0-9]|2[0-3]):[0-5][0-9]$", var.snapshot_time_utc))
+    error_message = "Use a UTC time in HH:MM format."
+  }
+}
+
+variable "snapshot_retention" {
+  description = "Number of daily data-disk snapshots to retain."
+  type        = number
+  default     = 7
+  validation {
+    condition     = var.snapshot_retention >= 1 && var.snapshot_retention <= 365 && floor(var.snapshot_retention) == var.snapshot_retention
+    error_message = "Retain between 1 and 365 daily snapshots."
+  }
 }

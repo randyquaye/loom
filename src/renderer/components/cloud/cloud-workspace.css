@@ -1,0 +1,46 @@
+.cloud-workspace {
+  flex: none;
+  border-bottom: 1px solid var(--hairline);
+  padding: 6px 16px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.cloud-workspace-status,
+.cloud-port-mapping,
+.cloud-port-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cloud-workspace[data-state='error'],
+.cloud-workspace[data-state='unreachable'],
+.cloud-disk-warning {
+  color: var(--warn, #c7a46a);
+}
+.cloud-ports summary {
+  cursor: pointer;
+  width: fit-content;
+  padding: 4px 0;
+}
+.cloud-ports p {
+  margin: 4px 0 8px;
+}
+.cloud-ports[open] {
+  max-height: 240px;
+  overflow-y: auto;
+}
+.cloud-port-form {
+  flex-wrap: wrap;
+  padding: 8px 0;
+  align-items: flex-end;
+}
+.cloud-port-form label {
+  display: grid;
+  gap: 4px;
+}
+.cloud-port-form input {
+  width: 120px;
+}
+.cloud-disk-warning {
+  padding: 6px 0;
+}

@@ -8,10 +8,12 @@ import {
   CLOSE_SIGNED_OUT,
   CLOSE_UPDATE_REQUIRED,
   RUNNER_PATH,
+  RUNNER_FORWARD_PATH,
   RUNNER_PROTOCOL,
   type RunnerFrame
 } from '../../shared/runner-contract'
 import type { Caller } from '../ipc/registry'
+import { createForwardingServer, type ForwardTarget } from './forwarding'
 
 export interface RunnerServerOptions {
   host: string
@@ -24,6 +26,7 @@ export interface RunnerServerOptions {
   stillAllowed(caller: Caller): boolean
   /** Answers one call on behalf of the connection's user. */
   dispatch(caller: Caller, channel: string, input: unknown): unknown
+  forward?: (caller: Caller, workspaceId: string, port: number) => Promise<ForwardTarget>
 }
 
 export interface RunnerServer {
@@ -34,6 +37,7 @@ export interface RunnerServer {
   connectedUsers(): string[]
   /** Ends the connections of whoever matches: their sign-in is over. */
   closeWhere(matches: (caller: Caller) => boolean): void
+  closeWorkspaceForwards(workspaceId: string): void
   close(): Promise<void>
 }
 
@@ -57,7 +61,6 @@ type Admission = { caller: Caller } | { status: number; reason: string }
  * none. After that, the bearer token says who is connecting.
  */
 function admit(request: IncomingMessage, authenticate: RunnerServerOptions['authenticate']): Admission {
-  if (request.url !== RUNNER_PATH) return { status: 404, reason: 'Not Found' }
   if (request.headers.origin !== undefined) return { status: 403, reason: 'Forbidden' }
   const header = request.headers.authorization ?? ''
   const caller = header.startsWith('Bearer ') ? authenticate(header.slice('Bearer '.length)) : null
@@ -88,10 +91,17 @@ export function startRunnerServer(options: RunnerServerOptions): Promise<RunnerS
   /** Connections that have completed their hello, each with the user it belongs to. */
   const greeted = new Map<WebSocket, Caller>()
   const alive = new WeakSet<WebSocket>()
+  const forwarding = createForwardingServer({ open: options.forward, stillAllowed: options.stillAllowed })
 
   http.on('upgrade', (request, socket, head) => {
+    const forward = request.url?.startsWith(`${RUNNER_FORWARD_PATH}/`) ?? false
+    if (request.url !== RUNNER_PATH && !forward) return reject(socket, 404, 'Not Found')
     const admission = admit(request, options.authenticate)
     if ('status' in admission) return reject(socket, admission.status, admission.reason)
+    if (forward) {
+      void forwarding.upgrade(request, socket, head, admission.caller).catch(() => socket.destroy())
+      return
+    }
     sockets.handleUpgrade(request, socket, head, (ws) => sockets.emit('connection', ws, admission.caller))
   })
 
@@ -177,15 +187,20 @@ export function startRunnerServer(options: RunnerServerOptions): Promise<RunnerS
           }
         },
         connectedUsers() {
-          return [...new Set([...greeted.values()].map((owner) => owner.userId))]
+          return [
+            ...new Set([...greeted.values()].map((owner) => owner.userId).concat(forwarding.connectedUsers()))
+          ]
         },
         closeWhere(matches) {
+          forwarding.closeWhere(matches)
           for (const [socket, owner] of greeted) {
             if (matches(owner)) socket.close(CLOSE_SIGNED_OUT, 'signed out')
           }
         },
+        closeWorkspaceForwards: (workspaceId) => forwarding.closeWorkspace(workspaceId),
         close() {
           clearInterval(heartbeat)
+          forwarding.close()
           for (const socket of sockets.clients) socket.terminate()
           return new Promise((done) => http.close(() => done()))
         }

@@ -13,6 +13,9 @@ import { RIGHT_DEFAULT, RIGHT_MIN, rightMax, usePanels } from '../state/panels'
 import { useProjects } from '../state/projects'
 import { useSessions } from '../state/sessions'
 import { useUi } from '../state/ui'
+import { useCloud } from '../state/cloud'
+import { useWorkspacePower } from '../state/workspace-power'
+import { CloudWorkspaceBar } from '../components/cloud/CloudWorkspaceBar'
 import { MAX_SESSIONS_PER_WORKSPACE } from '../../shared/limits'
 import type { RepoScriptsInfo, WorkspaceState } from '../../shared/ipc-contract'
 
@@ -71,7 +74,12 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
   } | null>(null)
 
   const workspaceState = workspace?.state ?? 'initializing'
-  const ready = workspaceState === 'ready'
+  const cloudState = useCloud((state) => state.status.state)
+  const power = useWorkspacePower((state) => state.byWorkspace[workspaceId])
+  const cloudContainer = workspace?.cloud && workspace.runtime === 'container'
+  const ready =
+    workspaceState === 'ready' &&
+    (!workspace?.cloud || (cloudState === 'connected' && (!cloudContainer || power?.state === 'running')))
   const actions = scripts?.workspaceId === workspaceId ? scripts.actions : []
   const projectId = workspace?.projectId
 
@@ -186,7 +194,13 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
                     className="btn btn-ghost workspace-run-action"
                     data-default={action.isDefault}
                     disabled={!ready}
-                    title={ready ? `Run ${action.id} in the terminal` : RUN_DISABLED_TITLES[workspaceState]}
+                    title={
+                      ready
+                        ? `Run ${action.id} in the terminal`
+                        : workspaceState === 'ready'
+                          ? 'Start the cloud workspace to run actions'
+                          : RUN_DISABLED_TITLES[workspaceState]
+                    }
                     onClick={() => {
                       window.loom.workspaces
                         .runAction(workspaceId, action.id)
@@ -215,7 +229,14 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
             ◨
           </button>
         </div>
-        {!ready && (
+        {cloudContainer && (
+          <CloudWorkspaceBar
+            workspaceId={workspaceId}
+            setupReady={workspaceState === 'ready'}
+            setupFailed={workspaceState === 'error'}
+          />
+        )}
+        {workspaceState !== 'ready' && (
           <div
             className="workspace-bootstrap-status"
             data-state={workspaceState}
@@ -223,10 +244,14 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
             title={workspaceState === 'error' ? 'Workspace setup failed — see the setup log' : undefined}
           >
             {workspaceState === 'initializing' ? (
-              'Creating worktree…'
+              'Creating workspace…'
             ) : (
               <>
-                <span className="workspace-bootstrap-label">Setting up workspace… setup log:</span>
+                <span className="workspace-bootstrap-label">
+                  {workspaceState === 'error'
+                    ? 'Workspace setup failed. Setup log:'
+                    : 'Setting up workspace… setup log:'}
+                </span>
                 {workspace?.setupLogPath ? (
                   <span className="workspace-setup-log" title={workspace.setupLogPath}>
                     {workspace.setupLogPath}

@@ -43,15 +43,25 @@ export interface RunnerClient {
 }
 
 export class RunnerUnreachableError extends Error {
-  constructor() {
-    super('The cloud runner is unreachable')
+  constructor(message = 'The cloud runner is unreachable') {
+    super(message)
     this.name = 'RunnerUnreachableError'
+  }
+}
+
+/** Out of reach for want of a sign-in: waiting will not bring the runner back, signing in will. */
+export class SignedOutError extends RunnerUnreachableError {
+  constructor() {
+    super('Signed out of cloud. Sign in under Settings, Cloud, and try again.')
+    this.name = 'SignedOutError'
   }
 }
 
 interface Pending {
   frame: ClientFrame
   identified: boolean
+  /** True once it has gone out on some connection, so the runner may already be acting on it. */
+  sent: boolean
   resolve(value: unknown): void
   reject(error: Error): void
 }
@@ -79,12 +89,15 @@ export function connectRunner(options: RunnerClientOptions): RunnerClient {
   let retryTimer: NodeJS.Timeout | undefined
   /** True once a token has been turned away with no good connection since. */
   let refused = false
+  /** True while there is no sign-in to connect with: nothing more is tried until `reconnect`. */
+  let signedOut = false
   /** Counts attempts, so one overtaken while it waited for its token gives way to the newer. */
   let attempts = 0
   let silenceTimer: NodeJS.Timeout | undefined
 
-  function send(frame: ClientFrame): void {
-    socket?.send(JSON.stringify(frame))
+  function send(call: Pending): void {
+    call.sent = true
+    socket?.send(JSON.stringify(call.frame))
   }
 
   function heard(): void {
@@ -120,7 +133,7 @@ export function connectRunner(options: RunnerClientOptions): RunnerClient {
       refused = false
       retryMs = RETRY_FIRST_MS
       // Whatever was waiting for a connection goes out again, under the identity it had.
-      for (const call of pending.values()) send(call.frame)
+      for (const call of pending.values()) send(call)
       return options.onState({ state: 'connected' })
     }
     if (frame.type === 'push') return options.onPush(frame.channel, frame.payload)
@@ -138,12 +151,29 @@ export function connectRunner(options: RunnerClientOptions): RunnerClient {
   }
 
   /**
+   * Only a sign-in ends this, and nobody knows when that will be, so nothing may wait for
+   * it unseen. A call that never went out fails here and now, and its message goes back to
+   * whoever wrote it. One that did go out is kept: the runner may be running it, and calling
+   * it failed would invite a second copy. It goes out again, under its identity, after the
+   * sign-in.
+   */
+  function awaitSignIn(): void {
+    signedOut = true
+    for (const [id, call] of pending) {
+      if (call.sent) continue
+      pending.delete(id)
+      call.reject(new SignedOutError())
+    }
+    options.onState({ state: 'signed-out' })
+  }
+
+  /**
    * One fresh token is worth trying, since an access token may simply have expired. Two
    * refusals in a row mean there is no sign-in the runner accepts, and asking again would
    * only loop; it waits for `reconnect`.
    */
   function turnedAway(): void {
-    if (refused) return options.onState({ state: 'signed-out' })
+    if (refused) return awaitSignIn()
     refused = true
     options.onRefused?.()
     void connect()
@@ -153,6 +183,7 @@ export function connectRunner(options: RunnerClientOptions): RunnerClient {
     const attempt = ++attempts
     const overtaken = (): boolean => closed || attempt !== attempts
     clearTimeout(retryTimer)
+    signedOut = false
     options.onState({ state: 'connecting' })
     let bearer: string | null
     try {
@@ -162,7 +193,7 @@ export function connectRunner(options: RunnerClientOptions): RunnerClient {
       return overtaken() ? undefined : retryLater()
     }
     if (overtaken()) return
-    if (bearer === null) return options.onState({ state: 'signed-out' })
+    if (bearer === null) return awaitSignIn()
     let unauthorized = false
     const ws = new WebSocket(`${options.url}${RUNNER_PATH}`, {
       headers: { authorization: `Bearer ${bearer}` }
@@ -170,7 +201,7 @@ export function connectRunner(options: RunnerClientOptions): RunnerClient {
     socket = ws
     ws.on('open', () => {
       heard()
-      send({ type: 'hello', protocol })
+      ws.send(JSON.stringify({ type: 'hello', protocol } satisfies ClientFrame))
     })
     ws.on('ping', heard)
     ws.on('message', (data) => {
@@ -194,12 +225,19 @@ export function connectRunner(options: RunnerClientOptions): RunnerClient {
   }
 
   function request(channel: string, input: unknown, identified: boolean): Promise<unknown> {
+    if (signedOut) return Promise.reject(new SignedOutError())
     if (closed || (!ready && !identified)) return Promise.reject(new RunnerUnreachableError())
     const id = nextId++
-    const frame: ClientFrame = { type: 'call', id, channel, input }
     return new Promise((resolve, reject) => {
-      pending.set(id, { frame, identified, resolve, reject })
-      if (ready) send(frame)
+      const call: Pending = {
+        frame: { type: 'call', id, channel, input },
+        identified,
+        sent: false,
+        resolve,
+        reject
+      }
+      pending.set(id, call)
+      if (ready) send(call)
     })
   }
 

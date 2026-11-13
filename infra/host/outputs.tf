@@ -15,10 +15,26 @@ output "instance_id" {
   value = aws_instance.host.id
 }
 
+output "workspace_container_runtime" {
+  value = var.enable_kata_workspaces ? "kata" : "runc"
+}
+
 output "data_volume_id" {
   value = aws_ebs_volume.data.id
 }
 
 output "artifact_bucket" {
   value = aws_s3_bucket.artifacts.bucket
+}
+
+output "backup_policy_id" {
+  value = aws_dlm_lifecycle_policy.data.id
+}
+
+output "recovery_key_parameter" {
+  value = "/loom/secret-key"
+}
+
+output "restore_instance_profile_arn" {
+  value = aws_iam_instance_profile.restore.arn
 }

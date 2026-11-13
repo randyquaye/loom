@@ -49,6 +49,25 @@ export type WorkspaceCheckout = 'worktree' | 'clone'
 /** Where a workspace's agents, terminals and setup script run. A container needs a clone checkout. */
 export type WorkspaceRuntimeKind = 'machine' | 'container'
 
+/** Container power is independent of whether its checkout and setup succeeded. */
+export interface WorkspacePower {
+  state: 'stopped' | 'starting' | 'running' | 'stopping' | 'error'
+  error: string | null
+}
+
+export interface WorkspacePowerPush extends WorkspacePower {
+  workspaceId: string
+}
+
+export interface PortForward {
+  port: number
+  localPort: number
+}
+
+export interface CloudHealth {
+  disk: { total: number; available: number; warning: boolean }
+}
+
 /** Run actions a repo's .loom/settings.toml exposes to the workspace topbar. */
 export interface RepoScriptsInfo {
   runMode: 'concurrent' | 'nonconcurrent'
@@ -374,6 +393,16 @@ export interface IpcContract {
   }
 
   'workspaces:list': { in: { projectId: string }; out: WorkspaceRow[] }
+  'workspaces:power': { in: { workspaceId: string }; out: WorkspacePower }
+  'workspaces:start': { in: { workspaceId: string }; out: WorkspacePower }
+  'workspaces:stop': { in: { workspaceId: string }; out: WorkspacePower }
+  'ports:list': { in: { workspaceId: string }; out: PortForward[] }
+  'ports:forward': {
+    in: { workspaceId: string; port: number; localPort?: number | undefined }
+    out: PortForward
+  }
+  'ports:unforward': { in: { workspaceId: string; port: number }; out: void }
+  'cloud:health': { in: void; out: CloudHealth | null }
   'workspaces:add': {
     in: { projectId: string; name: string; baseRef: string | null; cloud: boolean }
     out: WorkspaceRow
@@ -561,6 +590,17 @@ export const ipcSchemas = {
       path: ['text']
     }),
   'workspaces:list': z.object({ projectId: id }),
+  'workspaces:power': z.object({ workspaceId: id }),
+  'workspaces:start': z.object({ workspaceId: id }),
+  'workspaces:stop': z.object({ workspaceId: id }),
+  'ports:list': z.object({ workspaceId: id }),
+  'ports:forward': z.object({
+    workspaceId: id,
+    port: z.number().int().min(1024).max(65535),
+    localPort: z.number().int().min(0).max(65535).optional()
+  }),
+  'ports:unforward': z.object({ workspaceId: id, port: z.number().int().min(1024).max(65535) }),
+  'cloud:health': z.undefined(),
   'workspaces:add': z.object({
     projectId: id,
     name: workspaceName,
@@ -676,6 +716,7 @@ export interface SequencedEvent {
 }
 
 export const CLOUD_STATUS_CHANNEL = 'cloud:status'
+export const WORKSPACE_POWER_CHANNEL = 'workspaces:powerChanged'
 
 export const TERMINAL_DATA_CHANNEL = 'terminal:data'
 export interface TerminalDataPush {
@@ -796,6 +837,9 @@ export interface LoomApi {
     set(scope: InstructionScope, projectId: string | null, text: string): Promise<void>
   }
   workspaces: {
+    power(workspaceId: string): Promise<WorkspacePower>
+    start(workspaceId: string): Promise<WorkspacePower>
+    stop(workspaceId: string): Promise<WorkspacePower>
     list(projectId: string): Promise<WorkspaceRow[]>
     /** `cloud` creates the workspace on the runner this desktop follows. */
     add(projectId: string, name: string, baseRef?: string | null, cloud?: boolean): Promise<WorkspaceRow>
@@ -871,6 +915,7 @@ export interface LoomApi {
     search(query: string, projectId: string | null): Promise<HistoryHit[]>
   }
   cloud: {
+    health(): Promise<CloudHealth | null>
     status(): Promise<CloudStatus>
     runner(): Promise<CloudRunner>
     /** Null stops following a runner. Answers with the address as it was kept. */
@@ -889,6 +934,12 @@ export interface LoomApi {
     disconnect(provider: AgentLoginProvider): Promise<void>
   }
   onCloudStatus(cb: (status: CloudStatus) => void): () => void
+  ports: {
+    list(workspaceId: string): Promise<PortForward[]>
+    forward(workspaceId: string, port: number, localPort?: number): Promise<PortForward>
+    unforward(workspaceId: string, port: number): Promise<void>
+  }
+  onWorkspacePower(cb: (push: WorkspacePowerPush) => void): () => void
   onSessionEvent(cb: (push: SessionEventPush) => void): () => void
   onSessionActivity(cb: (push: SessionActivity) => void): () => void
   onTerminalData(cb: (push: TerminalDataPush) => void): () => void

@@ -7,7 +7,13 @@ export default defineConfig({
     build: {
       outDir: 'out/main',
       // The runner is the same services with no window; it runs under plain Node.
-      rollupOptions: { input: { index: 'src/main/index.ts', runner: 'src/main/runner/index.ts' } }
+      rollupOptions: {
+        input: {
+          index: 'src/main/index.ts',
+          runner: 'src/main/runner/index.ts',
+          'restore-check': 'src/main/runner/restore-check.ts'
+        }
+      }
     }
   },
   preload: {

@@ -5,13 +5,21 @@ import path from 'node:path'
 import type Database from 'better-sqlite3'
 import {
   CLOUD_STATUS_CHANNEL,
+  WORKSPACE_POWER_CHANNEL,
   SESSION_ACTIVITY_CHANNEL,
+  TERMINAL_DATA_CHANNEL,
+  TERMINAL_EXIT_CHANNEL,
   type HistoryHit,
   type IpcContract,
   type ProjectRow,
   type SessionActivity,
   type SessionUnread,
-  type WorkspaceRow
+  type TerminalDataPush,
+  type TerminalExitPush,
+  type TerminalInfo,
+  type WorkspaceRow,
+  type WorkspacePowerPush,
+  type WorkspacePower
 } from '../../shared/ipc-contract'
 import { CALL_SUBJECTS, type SubjectKind } from '../../shared/call-subjects'
 import { MAX_IMAGE_ATTACHMENT_BYTES } from '../../shared/limits'
@@ -26,6 +34,7 @@ import { sessionActivity } from '../sessions/service'
 import { connectRunner, RunnerUnreachableError, type ClientState, type RunnerAuth } from './client'
 import { listenForBrowser, type BrowserReturn } from './sign-in'
 import { setCloudStatus } from './status'
+import { createPortForwards } from './port-forwards'
 
 export interface CloudRouteOptions extends RunnerAuth {
   db: Database.Database
@@ -67,11 +76,22 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
   const localProjects = new Map<string, string>()
   /** Cloud workspace rows as last shown to the window, under their local project id. */
   const cloudWorkspaces = new Map<string, WorkspaceRow>()
+  /** Keep exits too: a late create/list reply must not revive an ended terminal. */
+  const cloudTerminals = new Map<string, 'live' | 'exited'>()
   let localActivity = sessionActivity()
   let cloudActivity: Record<string, string> = {}
   let activityRevision = localActivity.revision
   /** Counts connection changes, so an answer that arrives after the next change is dropped. */
   let connection = 0
+  const forwards = createPortForwards({
+    url: options.url,
+    token: options.token,
+    isConnected: () => state === 'connected',
+    async check(workspaceId) {
+      const power = await runner<WorkspacePower>('workspaces:power', { workspaceId })
+      if (power.state !== 'running') throw new Error('Start the workspace before forwarding a port')
+    }
+  })
 
   const client = connectRunner({
     url: options.url,
@@ -82,14 +102,27 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
     onState: changed
   })
 
-  function runner<T>(channel: string, input: unknown): Promise<T> {
-    return client.call(channel, input) as Promise<T>
+  function rememberTerminal(id: string): void {
+    if (!cloudTerminals.has(id)) cloudTerminals.set(id, 'live')
+  }
+
+  async function runner<T>(channel: string, input: unknown): Promise<T> {
+    const result = await client.call(channel, input)
+    if (channel === 'terminal:create' || channel === 'workspaces:runAction') {
+      rememberTerminal(result as string)
+    } else if (channel === 'terminal:list') {
+      for (const terminal of result as TerminalInfo[]) rememberTerminal(terminal.id)
+    } else if (channel === 'terminal:destroy') {
+      cloudTerminals.set((input as In<'terminal:destroy'>).id, 'exited')
+    }
+    return result as T
   }
 
   const isLocal: Record<SubjectKind, (id: string) => boolean> = {
     workspace: (id) => getWorkspace(db, id) !== null,
     session: (id) => db.prepare('SELECT 1 FROM sessions WHERE id = ?').get(id) !== undefined,
-    terminal: (id) => hasTerminal(id),
+    // Unknown and exited terminals use the local handlers' existing no-op behavior.
+    terminal: (id) => hasTerminal(id) || cloudTerminals.get(id) !== 'live',
     comment: (id) => db.prepare('SELECT 1 FROM diff_comments WHERE id = ?').get(id) !== undefined
   }
 
@@ -104,6 +137,13 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
   }
 
   function fromRunner(channel: string, payload: unknown): void {
+    if (channel === WORKSPACE_POWER_CHANNEL) {
+      const push = payload as WorkspacePowerPush
+      if (push.state !== 'running' && push.state !== 'starting')
+        void forwards.closeWorkspace(push.workspaceId)
+    }
+    if (channel === TERMINAL_DATA_CHANNEL) rememberTerminal((payload as TerminalDataPush).id)
+    if (channel === TERMINAL_EXIT_CHANNEL) cloudTerminals.set((payload as TerminalExitPush).id, 'exited')
     if (channel !== SESSION_ACTIVITY_CHANNEL) return toWindow(channel, payload)
     cloudActivity = (payload as SessionActivity).bySession
     pushActivity()
@@ -111,6 +151,8 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
 
   function changed(next: ClientState): void {
     state = next.state
+    if (next.state !== 'connected') forwards.disconnect()
+    if (next.state === 'signed-out' || next.state === 'update') void forwards.clear()
     connection += 1
     // A runner that came back may be a fresh one; ask again rather than trust old ids.
     runnerProjects.clear()
@@ -155,15 +197,20 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
   async function listWorkspaces(input: In<'workspaces:list'>): Promise<WorkspaceRow[]> {
     const local = (await call('workspaces:list', input)) as WorkspaceRow[]
     const project = getProject(db, input.projectId)
-    if (state !== 'connected' || project === null || project.remoteUrl === null) return local
+    const cached = [...cloudWorkspaces.values()].filter(
+      (workspace) => workspace.projectId === input.projectId
+    )
+    if (state !== 'connected') return [...local, ...cached]
+    if (project === null || project.remoteUrl === null) return local
     try {
       const remote = await runner<WorkspaceRow[]>('workspaces:list', {
         projectId: await runnerProject(project)
       })
+      for (const old of cached) cloudWorkspaces.delete(old.id)
       return [...local, ...remote.map((row) => asCloud(row, project.id))]
     } catch (error) {
       // Local workspaces must still list when the runner drops mid-call.
-      if (error instanceof RunnerUnreachableError) return local
+      if (error instanceof RunnerUnreachableError) return [...local, ...cached]
       throw error
     }
   }
@@ -300,6 +347,19 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
         return listWorkspaces(parsed as In<'workspaces:list'>)
       case 'workspaces:add':
         return addWorkspace(parsed as In<'workspaces:add'>)
+      case 'cloud:health':
+        return state === 'connected' ? runner(channel, parsed) : null
+      case 'ports:list':
+        return forwards.list((parsed as In<'ports:list'>).workspaceId)
+      case 'ports:forward': {
+        const input = parsed as In<'ports:forward'>
+        if (aboutThisMac(channel, parsed)) return call(channel, parsed)
+        return forwards.forward(input.workspaceId, input.port, input.localPort)
+      }
+      case 'ports:unforward': {
+        const input = parsed as In<'ports:unforward'>
+        return forwards.unforward(input.workspaceId, input.port)
+      }
       case 'sessions:activity':
         return activity()
       case 'sessions:unread':
@@ -337,6 +397,7 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
       case 'sessions:sendNow':
         return sendMessage(channel, parsed as In<'sessions:send'>)
       case 'workspaces:remove':
+        void forwards.closeWorkspace((parsed as In<'workspaces:remove'>).id)
         cloudWorkspaces.delete((parsed as In<'workspaces:remove'>).id)
         return runner(channel, parsed)
       default:
@@ -354,6 +415,7 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
     reconnect: () => client.reconnect(),
     close() {
       githubReturn?.close()
+      void forwards.close()
       client.close()
     }
   }
