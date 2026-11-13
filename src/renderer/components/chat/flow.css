@@ -232,6 +232,32 @@ body[data-modality='keyboard'] .tab-pin:focus-within .tab-close {
   background: url('../../assets/claude-ai.png') center / contain no-repeat;
 }
 
+.tab-backend-mark[data-backend='claude'][data-running='true'] {
+  animation: tab-claude-spin 4s linear infinite;
+}
+
+.tab-backend-mark[data-backend='codex'][data-running='true'] {
+  animation: tab-codex-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes tab-claude-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes tab-codex-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.88);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .tab-backend-mark[data-backend='gemini'] {
   background: var(--provider-gemini);
 }
@@ -823,11 +849,6 @@ body:not([data-modality='keyboard']) .tab-history:focus-visible,
   stroke-width: 1.8;
 }
 
-/* Removed, not hidden: they sit after the spacer, so appearing only shrinks the gap. */
-.composer-sendnow[data-visible='false'] {
-  display: none;
-}
-
 body:not([data-modality='keyboard']) .composer :focus-visible {
   outline: none;
   box-shadow: none;
@@ -838,6 +859,7 @@ body[data-modality='keyboard'] .composer :focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .session-tabs .tab-backend-mark[data-running='true'],
   .composer-queue-chip,
   .composer-attach-chip,
   .composer-attach-picker {

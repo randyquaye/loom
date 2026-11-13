@@ -46,13 +46,13 @@
 }
 
 .sidebar .project-block {
-  padding: 0 var(--s-2) var(--s-1);
+  padding: 0 var(--s-2) var(--s-2);
 }
 
 .sidebar .project-row {
   gap: var(--s-2);
-  padding: 6px var(--s-2);
-  font-size: var(--fs-md);
+  padding: var(--s-2);
+  font-size: var(--fs-sm);
   color: var(--text);
   transition: background var(--dur-1) var(--ease);
 }
@@ -72,6 +72,7 @@
 .project-name {
   flex: 1;
   min-width: 0;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -197,8 +198,8 @@ body[data-modality='keyboard'] .side-foot-btn:focus-visible {
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  padding: 6px var(--s-2) 6px var(--s-5);
-  font-size: var(--fs-md);
+  padding: var(--s-2) var(--s-2) var(--s-2) var(--s-5);
+  font-size: var(--fs-sm);
   transition:
     background var(--dur-1) var(--ease),
     color var(--dur-1) var(--ease);
@@ -227,6 +228,7 @@ body[data-modality='keyboard'] .side-foot-btn:focus-visible {
 .ws-name {
   flex: 1;
   min-width: 0;
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -276,6 +278,10 @@ body[data-modality='keyboard'] .side-foot-btn:focus-visible {
 .sidebar .ws-item {
   position: relative;
   display: flex;
+}
+
+.sidebar .ws-item + .ws-item {
+  margin-top: 2px;
 }
 
 /* Lift the row with an open menu above later rows (each row is positioned). */
@@ -507,6 +513,16 @@ body[data-modality='keyboard'] .project-remove button:focus-visible {
   background: var(--surface-2);
 }
 
+.settings-nav-glyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-muted);
+}
+
+.settings-nav-row[data-active='true'] .settings-nav-glyph {
+  color: var(--text);
+}
+
 .settings-nav-row[data-active='true'] .project-glyph {
   background: var(--accent-fill);
   color: var(--text);
@@ -597,37 +613,26 @@ body[data-modality='keyboard'] .settings-nav-row:focus-visible {
 
 /* Footer: the Settings row on the same 8px inset as project rows; provider detail lives in Settings. */
 /* One line saying how the connection to the runner is doing; absent when no runner is followed. */
-.cloud-status {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  padding: var(--s-2) var(--s-4);
-  color: var(--text-muted);
-  font-size: var(--fs-sm);
-}
-
-.cloud-status-dot {
-  flex: none;
+/* The runner connection, as a dot right after the "Cloud" settings label. */
+.cloud-dot {
+  display: inline-block;
   width: 6px;
   height: 6px;
+  margin-left: var(--s-2);
   border-radius: 50%;
-  background: var(--text-muted);
+  background: var(--text-faint);
+  vertical-align: middle;
 }
 
-.cloud-status[data-state='connected'] .cloud-status-dot {
+.cloud-dot[data-tone='ok'] {
   background: var(--ok);
 }
 
-.cloud-status[data-state='unreachable'] .cloud-status-dot,
-.cloud-status[data-state='signed-out'] .cloud-status-dot {
+.cloud-dot[data-tone='warn'] {
   background: var(--warn);
 }
 
-.cloud-status[data-state='update'] {
-  color: var(--danger);
-}
-
-.cloud-status[data-state='update'] .cloud-status-dot {
+.cloud-dot[data-tone='danger'] {
   background: var(--danger);
 }
 
@@ -641,7 +646,7 @@ body[data-modality='keyboard'] .settings-nav-row:focus-visible {
   align-items: center;
   gap: var(--s-2);
   width: 100%;
-  padding: 6px var(--s-2);
+  padding: var(--s-2);
   border-radius: var(--r-2);
   color: var(--text-muted);
   font-size: var(--fs-md);
@@ -656,9 +661,19 @@ body[data-modality='keyboard'] .settings-nav-row:focus-visible {
 .side-foot-glyph {
   display: inline-flex;
   justify-content: center;
+}
+
+/* 18px matches the project tiles, so every label in the sidebar starts on one line. */
+.side-foot-glyph .icon,
+.settings-nav-glyph .icon,
+.sidebar .icon-btn .icon {
   width: 18px;
-  font-size: var(--fs-lg);
-  line-height: 1;
+  height: 18px;
+}
+
+.side-foot .side-foot-glyph .icon {
+  width: 22px;
+  height: 22px;
 }
 
 .side-foot-dot {

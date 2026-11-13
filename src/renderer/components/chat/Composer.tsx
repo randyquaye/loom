@@ -5,6 +5,7 @@ import { EFFORTS, type BackendId, type Effort } from '../../../shared/models'
 import { FIX_ERRORS_PROMPT, REVIEW_DIFF_PROMPT } from '../../../shared/prompts/flows'
 import { initialChoice, useDefaults } from '../../state/defaults'
 import { useFiles } from '../../state/files'
+import { usePreferences } from '../../state/preferences'
 import { useProjects } from '../../state/projects'
 import { isTurnRunning, useSessions } from '../../state/sessions'
 import { watchSessionQueue } from '../../state/session-queue'
@@ -320,6 +321,7 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
   // Derived from the event stream, so a turn started elsewhere (e.g. the first turn sent by the
   // start composer just before this one mounted) still shows Cancel.
   const running = useSessions((s) => isTurnRunning(s.eventsBySession[sessionId] ?? []))
+  const steerByDefault = usePreferences((s) => s.steerByDefault)
   const push = useToasts((s) => s.push)
   const { text, setText, ref } = useComposeText(sessionId)
   const talk = useTalk(sessionId, (utterance, handsFree) => {
@@ -484,7 +486,7 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
   }
 
   function submit() {
-    return deliver('queue')
+    return deliver(running && canSteer && steerByDefault ? 'steer' : 'queue')
   }
 
   async function sendSpoken(utterance: string, interrupt: boolean) {
@@ -582,8 +584,7 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
           onKeyDown={(e) => {
             if (e.key !== 'Enter' || e.shiftKey) return
             e.preventDefault()
-            if ((e.metaKey || e.ctrlKey) && running && canSteer) void deliver('steer')
-            else void submit()
+            void submit()
           }}
         />
         <div className="composer-footer">
@@ -600,26 +601,6 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
             </>
           )}
           <span className="grow" />
-          {busy && canSteer && (
-            <button
-              type="button"
-              className="btn btn-ghost composer-tool"
-              disabled={disabled || (text.trim() === '' && attached.length === 0)}
-              title="Guide the running turn without stopping it (⌘Enter)"
-              onClick={() => void deliver('steer')}
-            >
-              Steer now
-            </button>
-          )}
-          <button
-            className="btn btn-ghost composer-tool composer-sendnow"
-            data-visible={busy}
-            disabled={disabled || !busy || (text.trim() === '' && attached.length === 0)}
-            title="Interrupt the running turn and send this message now"
-            onClick={() => void submitNow()}
-          >
-            Interrupt &amp; send
-          </button>
           <AttachPicker
             workspaceId={session?.workspaceId ?? ''}
             sessionId={sessionId}

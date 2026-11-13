@@ -1,25 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import type { CloudRunner, CloudStatus } from '../../../shared/ipc-contract'
-import { cloudStatusLabel } from '../../components/sidebar/CloudStatusLine'
+import type { CloudRunner } from '../../../shared/ipc-contract'
+import { cloudStatusLabel, cloudTone } from '../../components/sidebar/CloudStatusDot'
 import { Field } from '../../components/ui/Field'
 import { useToasts } from '../../components/ui/Toast'
 import { useCloud } from '../../state/cloud'
 import { useUi } from '../../state/ui'
-
-function tone(status: CloudStatus): 'ok' | 'warn' | 'danger' | 'idle' {
-  switch (status.state) {
-    case 'connected':
-      return 'ok'
-    case 'signed-out':
-    case 'unreachable':
-      return 'warn'
-    case 'update':
-      return 'danger'
-    case 'connecting':
-    case 'off':
-      return 'idle'
-  }
-}
 
 /** Settings "Cloud": which runner this Loom follows, and the sign-in to it. */
 export function CloudPage() {
@@ -84,7 +69,7 @@ export function CloudPage() {
         <div className="settings-label">Runner</div>
         <div className="settings-list">
           <div className="settings-row">
-            <span className="settings-dot" data-tone={tone(status)} aria-hidden="true" />
+            <span className="settings-dot" data-tone={cloudTone(status)} aria-hidden="true" />
             <div className="settings-provider">
               <span className="settings-name">cloud</span>
               <span className="settings-state">

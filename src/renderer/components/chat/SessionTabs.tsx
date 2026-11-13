@@ -89,6 +89,8 @@ export function SessionTabs({
     <div ref={tabsRef} className="tabs session-tabs" role="tablist" aria-label="Sessions">
       {sessions.map((session) => {
         const on = chatShown && session.id === activeId
+        const isRunning = running[session.id] !== undefined
+        const hasLogo = session.backend === 'claude' || session.backend === 'codex'
         return (
           // The wrapper carries the tab chrome so the close button is a sibling, not a nested button.
           <div
@@ -120,10 +122,18 @@ export function SessionTabs({
                 setMenu({ session, x: rect.left, y: rect.bottom })
               }}
             >
-              {running[session.id] === undefined ? (
-                <span className="tab-backend-mark" data-backend={session.backend} aria-hidden="true" />
-              ) : (
+              {isRunning && !hasLogo ? (
                 <SessionActivityIndicator />
+              ) : (
+                <span
+                  className="tab-backend-mark"
+                  data-backend={session.backend}
+                  data-running={isRunning}
+                  role={isRunning ? 'img' : undefined}
+                  aria-label={isRunning ? 'Session running' : undefined}
+                  aria-hidden={isRunning ? undefined : true}
+                  title={isRunning ? 'Session running' : undefined}
+                />
               )}
               <span className="tab-label">{session.title}</span>
             </button>

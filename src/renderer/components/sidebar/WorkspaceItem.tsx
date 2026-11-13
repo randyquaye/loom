@@ -6,7 +6,7 @@ import { useProjects } from '../../state/projects'
 import { useSessions } from '../../state/sessions'
 import { useUi } from '../../state/ui'
 import { clampInWindow, topBelowOrAbove, useCloseOnAnchorMove } from '../ui/anchor'
-import { BranchIcon, CloudIcon, MergedIcon, PullRequestIcon } from '../ui/icons'
+import { BranchIcon, CloudIcon, MergedIcon, MoreIcon, PullRequestIcon } from '../ui/icons'
 import { SessionActivityIndicator } from '../ui/SessionActivityIndicator'
 import { Popover } from '../ui/Popover'
 import { useToasts } from '../ui/Toast'
@@ -181,7 +181,7 @@ export function WorkspaceItem({
             else setMenu(true)
           }}
         >
-          ⋯
+          <MoreIcon />
         </button>
         {menu && !checkpointsOpen && (
           <RowMenu anchorRef={triggerRef} onClose={closeMenu} className="ws-menu">

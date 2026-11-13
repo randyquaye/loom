@@ -5,7 +5,7 @@ import { MAX_WORKSPACES_PER_PROJECT } from '../../../shared/limits'
 import { useProjects } from '../../state/projects'
 import { useUi } from '../../state/ui'
 import { RemoveProjectModal } from '../modals/RemoveProjectModal'
-import { CloudStatusLine } from './CloudStatusLine'
+import { HomeIcon, MoreIcon, PlusIcon, SearchIcon, SettingsIcon } from '../ui/icons'
 import { DeleteWorkspaceModal } from './DeleteWorkspaceModal'
 import { SettingsNav } from './SettingsNav'
 import { RowMenu, WorkspaceItem } from './WorkspaceItem'
@@ -38,7 +38,7 @@ function ProjectActions({ project, onRemove }: { project: ProjectRow; onRemove: 
           else setOpen(true)
         }}
       >
-        ⋯
+        <MoreIcon />
       </button>
       {open && (
         <RowMenu anchorRef={triggerRef} onClose={close} className="ws-menu">
@@ -172,8 +172,8 @@ export function Sidebar() {
             title={selectedAtCap ? 'Workspace limit reached' : 'New workspace'}
             onClick={() => openAddWorkspace(selectedProjectId)}
           >
-            <span className="side-foot-glyph" aria-hidden="true">
-              +
+            <span className="side-foot-glyph">
+              <PlusIcon />
             </span>
             <span className="grow">New</span>
           </button>
@@ -184,14 +184,14 @@ export function Sidebar() {
             aria-current={route.name === 'home' ? 'page' : undefined}
             onClick={() => navigate({ name: 'home' })}
           >
-            <span className="side-foot-glyph" aria-hidden="true">
-              ⌂
+            <span className="side-foot-glyph">
+              <HomeIcon />
             </span>
             <span className="grow">Home</span>
           </button>
           <button type="button" className="side-foot-btn" title="Search" onClick={openPalette}>
-            <span className="side-foot-glyph" aria-hidden="true">
-              ⌕
+            <span className="side-foot-glyph">
+              <SearchIcon />
             </span>
             <span className="grow">Search</span>
           </button>
@@ -210,7 +210,7 @@ export function Sidebar() {
                   aria-label="New project"
                   onClick={openAddProject}
                 >
-                  +
+                  <PlusIcon />
                 </button>
               </div>
               {projects.map((project) => {
@@ -243,7 +243,7 @@ export function Sidebar() {
                         disabled={atCap}
                         onClick={() => openAddWorkspace(project.id)}
                       >
-                        +
+                        <PlusIcon />
                       </button>
                       <ProjectActions project={project} onRemove={() => setRemoving(project)} />
                     </div>
@@ -293,7 +293,6 @@ export function Sidebar() {
           )}
         </div>
 
-        <CloudStatusLine />
         <div className="side-foot">
           <button
             className="side-foot-btn"
@@ -302,8 +301,8 @@ export function Sidebar() {
             title={settingsHint}
             onClick={() => (route.name === 'settings' ? leaveSettings() : navigate({ name: 'settings' }))}
           >
-            <span className="side-foot-glyph" aria-hidden="true">
-              ⚙
+            <span className="side-foot-glyph">
+              <SettingsIcon />
             </span>
             <span className="grow">Settings</span>
             {needsSetup > 0 && <span className="side-foot-dot" aria-hidden="true" />}
