@@ -16,6 +16,7 @@ import {
 import { registerBackends } from './agents/wiring'
 import { destroyAllTerminals, setTerminalSink } from './pty'
 import { createSecretStore, safeStorageCipher, type SecretStore } from './secrets'
+import { adoptLoginPath } from './env/login-path'
 import { setEnvSecretStore } from './env/vars'
 import {
   setSessionSink,
@@ -151,6 +152,9 @@ app.on('web-contents-created', (_event, contents) => {
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
+  // Started before ready so the shell runs while Electron boots; awaited before anything spawns.
+  const loginPath = adoptLoginPath()
+
   app.on('second-instance', () => {
     const [win] = BrowserWindow.getAllWindows()
     if (win) {
@@ -162,6 +166,9 @@ if (!app.requestSingleInstanceLock()) {
   app
     .whenReady()
     .then(async () => {
+      // Agent CLIs, gh and git are spawned by name, so PATH must be the user's before any
+      // backend, IPC handler or runtime can start one.
+      await loginPath
       // LOOM_DATA_DIR lets e2e/screenshot runs target a known profile instead of
       // the unpackaged Electron default userData directory.
       const dataDir = process.env.LOOM_DATA_DIR ?? app.getPath('userData')
