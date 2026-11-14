@@ -11,7 +11,8 @@ export default defineConfig({
         input: {
           index: 'src/main/index.ts',
           runner: 'src/main/runner/index.ts',
-          'restore-check': 'src/main/runner/restore-check.ts'
+          'restore-check': 'src/main/runner/restore-check.ts',
+          'transport-proof': 'src/main/runner/transport-proof-cli.ts'
         }
       }
     }

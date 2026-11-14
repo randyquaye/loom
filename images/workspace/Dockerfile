@@ -12,7 +12,7 @@ RUN apt-get update \
     ca-certificates curl gh git less openssh-client procps ripgrep util-linux zsh \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @anthropic-ai/claude-code @openai/codex && npm cache clean --force
+RUN npm install -g @anthropic-ai/claude-code@2.1.325 @openai/codex@0.166.0 && npm cache clean --force
 
 # The base image's own user would otherwise share the common first number, 1000.
 RUN userdel --remove node \

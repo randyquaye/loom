@@ -35,6 +35,7 @@ import {
   sessionQueue as queuedMessages,
   setLoomDataRoot,
   setSessionSink,
+  setTurnStartGuard,
   setTitleSink
 } from '../src/main/sessions/service'
 import type { AgentEvent } from '../src/shared/events'
@@ -557,6 +558,44 @@ describe('session service', () => {
 })
 
 describe('turn queue', () => {
+  it('lets a running turn finish during maintenance without consuming its waiting messages', async () => {
+    const db = seedWorkspace()
+    const h = fakeBackend([], true)
+    const stream = createEventQueue()
+    const backend = getBackend('qwen')!
+    const start = backend.startSession.bind(backend)
+    backend.startSession = async (opts) => {
+      const session = await start(opts)
+      session.events = stream.iterable
+      return session
+    }
+    const row = createSession(db, {
+      workspaceId: 'w1',
+      backend: 'qwen',
+      model: 'qwen3-max',
+      effort: 'medium',
+      title: 'drain'
+    })
+    try {
+      await sendTurn(db, row.id, 'running')
+      await sendTurn(db, row.id, 'waiting')
+      setTurnStartGuard(() => {
+        throw new Error('The cloud runner is draining')
+      })
+      stream.push({ type: 'turn.done', turnId: 'running', stopReason: 'end' })
+      await vi.waitFor(() => expect(sessionActivity().bySession[row.id]).toBeUndefined())
+      expect(h.sent).toEqual(['running'])
+      expect(sessionQueue(row.id)).toEqual(['waiting'])
+      await expect(sendTurn(db, row.id, 'new')).rejects.toThrow('draining')
+      expect(sessionQueue(row.id)).toEqual(['waiting'])
+    } finally {
+      setTurnStartGuard(null)
+      closeSessionRow(db, row.id)
+      stream.end()
+      db.close()
+    }
+  })
+
   it('queues sends during a turn and drains them in order', async () => {
     const db = seedWorkspace()
     const { sent } = fakeBackend([

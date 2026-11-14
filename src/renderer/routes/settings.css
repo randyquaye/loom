@@ -50,10 +50,26 @@
   max-width: 760px;
 }
 
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-3);
+}
+
+.settings-form > .field {
+  align-self: stretch;
+}
+
 .preferences-toggle {
   accent-color: var(--accent-1);
   width: 16px;
   height: 16px;
+}
+
+/* One width for both lists, so neither changes size with the choice made in it. */
+.preferences-mode .dropdown {
+  width: 280px;
 }
 
 /* Label and notes indent one row-pad so their text lines up with row content, not the hover fill. */

@@ -4,6 +4,7 @@ import type { BranchPrState, CloudStatus, WorkspaceRow } from '../../../shared/i
 import { useCloud } from '../../state/cloud'
 import { useProjects } from '../../state/projects'
 import { useSessions } from '../../state/sessions'
+import { useWorkspacePower } from '../../state/workspace-power'
 import { useUi } from '../../state/ui'
 import { clampInWindow, topBelowOrAbove, useCloseOnAnchorMove } from '../ui/anchor'
 import { BranchIcon, CloudIcon, MergedIcon, MoreIcon, PullRequestIcon } from '../ui/icons'
@@ -95,7 +96,17 @@ export function WorkspaceItem({
   // A cloud workspace lives on the runner: with the connection down it cannot be asked anything.
   const cloudState = useCloud((s) => (workspace.cloud === true ? s.status.state : null))
   const unreachable = cloudState !== null && cloudState !== 'connected'
-  const cloudTitle = CLOUD_TITLES[cloudState ?? 'connected']
+  const power = useWorkspacePower((s) => s.byWorkspace[workspace.id]?.state)
+  const cloudBusy =
+    !unreachable &&
+    (workspace.state === 'initializing' ||
+      workspace.state === 'setting_up' ||
+      power === 'starting' ||
+      power === 'stopping')
+  const cloudRunning =
+    !unreachable && workspace.state === 'ready' && (workspace.runtime === 'machine' || power === 'running')
+  const cloudTitle =
+    !unreachable && power ? `Cloud workspace: ${power}` : CLOUD_TITLES[cloudState ?? 'connected']
   const setArchived = useProjects((s) => s.setArchived)
   const push = useToasts((s) => s.push)
   const [menu, setMenu] = useState(false)
@@ -153,7 +164,7 @@ export function WorkspaceItem({
           <span className="ws-unread-dot" role="img" aria-label="Unread messages" title="Unread messages" />
         )}
         <span className="ws-state-slot">
-          {statusTitle !== null && (
+          {statusTitle !== null && workspace.cloud !== true && (
             <span
               className={`ws-state-glyph${workspace.state === 'error' ? ' ws-state-error' : ' ws-state-spinner'}`}
               role="img"
@@ -163,7 +174,15 @@ export function WorkspaceItem({
           )}
         </span>
         {workspace.cloud === true && (
-          <span className="ws-cloud" role="img" aria-label={cloudTitle} title={cloudTitle}>
+          <span
+            className="ws-cloud"
+            data-loading={cloudBusy}
+            data-running={cloudRunning}
+            data-error={workspace.state === 'error' || power === 'error'}
+            role="img"
+            aria-label={statusTitle ?? cloudTitle}
+            title={statusTitle ?? cloudTitle}
+          >
             <CloudIcon />
           </span>
         )}

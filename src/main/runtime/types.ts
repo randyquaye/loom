@@ -46,6 +46,8 @@ export interface WorkspaceRuntime {
   exec(file: string, args: readonly string[], opts?: ExecOpts): Promise<ExecResult>
   spawn(file: string, args: readonly string[], opts?: ProcessOpts): RuntimeProcess
   openTerminal(opts?: ProcessOpts): RuntimeTerminal
+  /** Whether the shell of a terminal opened here has a child process: a command is running. */
+  runningCommand(): Promise<boolean>
   /** Removes the container and every process in it; files stay. A no-op on this machine. */
   stop(): Promise<void>
 }

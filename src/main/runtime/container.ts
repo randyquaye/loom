@@ -101,6 +101,18 @@ const STOP = [
 ].join('\n')
 
 /**
+ * Exits 0 when the shell of an open terminal has a child process. Each argument is the
+ * record a terminal's launcher wrote; the shell took the launcher's place and so its id.
+ */
+const SHELL_HAS_CHILD = [
+  'for record in "$@"; do',
+  '  read -r shell _ 2>/dev/null < "$record" || continue',
+  '  pgrep -P "$shell" >/dev/null 2>&1 && exit 0',
+  'done',
+  'exit 1'
+].join('\n')
+
+/**
  * Codex confines the commands it runs with a sandbox it builds from Linux namespaces, and
  * Docker's default syscall filter refuses the calls that takes. Without them the sandbox
  * cannot start and Codex has to ask the user before every command. These five are the
@@ -346,6 +358,8 @@ export function createContainerRuntime(spec: ContainerSpec): WorkspaceRuntime {
   /** Starts and stops take turns, so a stop can never be overtaken by the start before it. */
   let lifecycle: Promise<void> = Promise.resolve()
   const user = spec.kata === undefined ? undefined : 'loom'
+  /** The launcher records of the terminals that are open. */
+  const shells = new Set<string>()
 
   function inTurn(step: () => Promise<void>): Promise<void> {
     const next = lifecycle.catch(() => undefined).then(step)
@@ -462,7 +476,22 @@ export function createContainerRuntime(spec: ContainerSpec): WorkspaceRuntime {
         containerArgs.exec(spec.name, { ...opts, env }, idFile, ['zsh'], true, user),
         { name: TERMINAL_NAME, cols: 80, rows: 24, env: clientEnvironment(env) }
       )
+      shells.add(idFile)
+      terminal.onExit(() => shells.delete(idFile))
       return { pty: terminal, terminate: () => stopInside(idFile, 'HUP') }
+    },
+
+    async runningCommand() {
+      if (shells.size === 0) return false
+      const asUser = user === undefined ? [] : ['--user', user]
+      // A non-zero exit rejects: no shell has a child, or the container is not there to ask.
+      return docker(
+        ['exec', ...asUser, spec.name, 'sh', '-c', SHELL_HAS_CHILD, 'sh', ...shells],
+        10_000
+      ).then(
+        () => true,
+        () => false
+      )
     },
 
     stop() {

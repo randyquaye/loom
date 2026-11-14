@@ -11,6 +11,7 @@ import type {
   WorkspaceState
 } from '../../shared/ipc-contract'
 import { MAX_WORKSPACES_PER_PROJECT } from '../../shared/limits'
+import type { AgentModes } from '../../shared/models'
 import { readRepoSettings } from '../config/repo-settings'
 import { getProjectOrThrow } from '../db/repos/projects'
 import {
@@ -130,6 +131,8 @@ export interface CreateWorkspaceInput {
   runtime?: WorkspaceRuntimeKind
   /** Who the workspace belongs to on a runner; this Mac has one user and leaves it out. */
   ownerId?: string | null
+  /** The permission modes a runner stamps on the workspace; this Mac stamps none. */
+  modes?: AgentModes | null
 }
 
 export interface RemoveWorkspaceInput {
@@ -234,7 +237,8 @@ export async function createWorkspace({
   baseRef = null,
   checkout = 'worktree',
   runtime = 'machine',
-  ownerId = null
+  ownerId = null,
+  modes = null
 }: CreateWorkspaceInput): Promise<WorkspaceRow> {
   const project = getProjectOrThrow(db, projectId)
   assertValidWorkspaceName(name)
@@ -274,7 +278,7 @@ export async function createWorkspace({
       if (countWorkspaces(db, projectId, ownerId) >= MAX_WORKSPACES_PER_PROJECT) {
         throw new WorkspaceLimitError(project.name, MAX_WORKSPACES_PER_PROJECT)
       }
-      insertWorkspace(db, workspace)
+      insertWorkspace(db, workspace, modes)
     })()
   } catch (err) {
     if (isUniqueViolation(err)) throw new WorkspaceNameTakenError(project.name, name)

@@ -31,7 +31,12 @@ import {
 } from '../context/materialize'
 import { CheckpointBusyError, CheckpointRootError, saveCheckpoint } from '../git/checkpoint'
 import { GitError } from '../git/run'
-import { getWorkspace, getWorkspaceOrThrow, renameWorkspaceIfAuto } from '../db/repos/workspaces'
+import {
+  getWorkspace,
+  getWorkspaceOrThrow,
+  renameWorkspaceIfAuto,
+  workspaceModes
+} from '../db/repos/workspaces'
 import { readInstructionOverlay } from '../instructions/files'
 import { composeInstructions, composeLegacyInstructions } from '../instructions/compose'
 import { migrateProjectInstructions } from '../instructions/migrate-general'
@@ -49,6 +54,12 @@ import { eventsToMarkdown } from '../export/markdown'
 type Sink = (push: NumberedSessionEventPush) => void
 
 let sink: Sink | null = null
+let turnStartGuard: ((workspaceId: string) => void) | null = null
+
+/** The runner pauses new turns for maintenance; already running turns keep their stream. */
+export function setTurnStartGuard(guard: ((workspaceId: string) => void) | null): void {
+  turnStartGuard = guard
+}
 
 /** Wired by main once the window exists; session events push through it. */
 export function setSessionSink(fn: Sink): void {
@@ -600,6 +611,16 @@ export function dequeue(sessionId: string, index: number): QueuedMessage[] {
 }
 
 function drainQueue(db: Database.Database, sessionId: string): void {
+  if (turnStartGuard !== null) {
+    const workspace = db.prepare('SELECT workspace_id FROM sessions WHERE id = ?').get(sessionId) as
+      { workspace_id: string } | undefined
+    if (workspace === undefined) return
+    try {
+      turnStartGuard(workspace.workspace_id)
+    } catch {
+      return
+    }
+  }
   // Wait for steering acknowledgement before a queued message can start another turn.
   const promotion = promotions.get(sessionId)
   if (promotion !== undefined) {
@@ -702,6 +723,7 @@ async function sendPreparedTurn(
       return
   }
   assertRuntimeRunning(gate)
+  turnStartGuard?.(gate.id)
 
   // Inlined before the busy check so a message queued behind a running turn keeps its files.
   // No await on the attachment-free path: an extra tick here lets a settling turn clear the
@@ -839,7 +861,8 @@ async function sendPreparedTurn(
           effort: row.effort as Effort,
           systemPromptAppend,
           resumeId: row.provider_session_id ?? undefined,
-          env
+          env,
+          modes: workspaceModes(db, row.workspace_id)
         },
         runtime
       )

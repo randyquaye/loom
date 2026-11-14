@@ -1,5 +1,5 @@
 import path from 'node:path'
-import type { Effort, SessionOpts } from '../../../shared/models'
+import type { ClaudeMode, Effort, SessionOpts } from '../../../shared/models'
 import { MAX_SESSION_INSTRUCTION_CHARS } from '../../../shared/limits'
 import { findModel } from './catalog'
 
@@ -99,6 +99,9 @@ export function buildCodexArgs(opts: SessionOpts): string[] {
   ]
 }
 
+/** Claude's own name for each mode Loom stamps on a cloud workspace. */
+const CLAUDE_PERMISSION_MODE: Record<ClaudeMode, string> = { auto: 'auto', bypass: 'bypassPermissions' }
+
 export function buildClaudeArgs(opts: SessionOpts): string[] {
   assertSessionOpts('claude', opts)
   return [
@@ -109,6 +112,7 @@ export function buildClaudeArgs(opts: SessionOpts): string[] {
     `--model=${opts.model}`,
     `--effort=${opts.effort}`,
     `--append-system-prompt=${opts.systemPromptAppend}`,
+    ...(opts.modes === undefined ? [] : [`--permission-mode=${CLAUDE_PERMISSION_MODE[opts.modes.claude]}`]),
     ...(opts.pluginDir === undefined ? [] : [`--plugin-dir=${opts.pluginDir}`])
   ]
 }

@@ -32,7 +32,15 @@ output "backup_policy_id" {
 }
 
 output "recovery_key_parameter" {
-  value = "/loom/secret-key"
+  value = "${local.parameter_path}/secret-key"
+}
+
+output "parameter_prefix" {
+  value = local.parameter_path
+}
+
+output "runner_key_parameter" {
+  value = "${local.parameter_path}/runner-signing-key"
 }
 
 output "restore_instance_profile_arn" {

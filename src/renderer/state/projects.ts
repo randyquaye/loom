@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { ProjectAddInput, ProjectRow, WorkspaceRow, WorkspaceState } from '../../shared/ipc-contract'
+import { usePreferences } from './preferences'
 
 interface ProjectsState {
   projects: ProjectRow[]
@@ -67,7 +68,9 @@ export const useProjects = create<ProjectsState>((set, get) => ({
   },
 
   async addWorkspace(projectId, name, baseRef = null, cloud = false) {
-    const workspace = await window.loom.workspaces.add(projectId, name, baseRef, cloud)
+    // A cloud workspace is stamped with the agent modes chosen in Preferences at this moment.
+    const modes = cloud ? usePreferences.getState().agentModes : undefined
+    const workspace = await window.loom.workspaces.add(projectId, name, baseRef, cloud, modes)
     set({
       workspacesByProject: {
         ...get().workspacesByProject,

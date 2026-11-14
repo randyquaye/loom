@@ -1,6 +1,6 @@
 # A rehearsal must never inherit the pilot host's OAuth settings or write its vault key.
 resource "aws_iam_role" "restore" {
-  name = "loom-pilot-restore-check"
+  name = "${local.global_prefix}-restore-check"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -30,13 +30,13 @@ resource "aws_iam_role_policy" "restore" {
       {
         Effect   = "Allow"
         Action   = "ssm:GetParameter"
-        Resource = "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/loom/secret-key"
+        Resource = ["${local.parameter_arn}/secret-key", "${local.parameter_arn}/runner-signing-key"]
       },
       # SSM's managed core policy otherwise grants GetParameter(s) on every parameter.
       {
         Effect      = "Deny"
         Action      = "ssm:GetParameter*"
-        NotResource = "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/loom/secret-key"
+        NotResource = ["${local.parameter_arn}/secret-key", "${local.parameter_arn}/runner-signing-key"]
       },
       {
         Effect   = "Deny"
@@ -48,6 +48,6 @@ resource "aws_iam_role_policy" "restore" {
 }
 
 resource "aws_iam_instance_profile" "restore" {
-  name = "loom-pilot-restore-check"
+  name = "${local.global_prefix}-restore-check"
   role = aws_iam_role.restore.name
 }

@@ -60,7 +60,26 @@ export interface SessionOpts {
   pluginDir?: string | undefined
   /** Reserved input; providers do not retrieve or load this source yet. */
   knowledgeSource?: KnowledgeSource | undefined
+  /** The modes stamped on a cloud workspace; absent, each CLI's own settings decide. */
+  modes?: AgentModes | undefined
 }
+
+/**
+ * How much an agent may do unasked in a cloud workspace. Claude: `auto` has a second model
+ * review each action; Codex: `sandbox` confines commands to the checkout and asks before
+ * going further. `bypass` never asks.
+ */
+export const CLAUDE_MODES = ['auto', 'bypass'] as const
+export const CODEX_MODES = ['sandbox', 'bypass'] as const
+export type ClaudeMode = (typeof CLAUDE_MODES)[number]
+export type CodexMode = (typeof CODEX_MODES)[number]
+
+export interface AgentModes {
+  claude: ClaudeMode
+  codex: CodexMode
+}
+
+export const DEFAULT_AGENT_MODES: AgentModes = { claude: 'auto', codex: 'sandbox' }
 
 /** Image bytes captured when a prompt is accepted; queued turns do not reread the path. */
 export interface PromptImage {

@@ -1,4 +1,7 @@
 import WebSocket from 'ws'
+import type { Agent } from 'node:https'
+import type { RunnerTransport } from './transport'
+import { HostProofError } from './host-proof'
 import {
   CLOSE_SIGNED_OUT,
   CLOSE_UPDATE_REQUIRED,
@@ -13,6 +16,7 @@ export type ClientState =
 
 /** How the desktop proves itself to a runner. */
 export interface RunnerAuth {
+  transport?: RunnerTransport
   /** The token to present on each connection; null when there is no sign-in to present. */
   token(): Promise<string | null>
   /** The runner turned the token away: whatever supplies tokens should renew before the next ask. */
@@ -186,17 +190,28 @@ export function connectRunner(options: RunnerClientOptions): RunnerClient {
     signedOut = false
     options.onState({ state: 'connecting' })
     let bearer: string | null
+    let agent: Agent | undefined
     try {
       bearer = await options.token()
+      if (bearer !== null) {
+        if (options.transport !== undefined) agent = await options.transport.websocketAgent()
+        else if (options.url.startsWith('wss:'))
+          throw new HostProofError('Sign in again to verify the runner transport')
+      }
     } catch {
       // Renewing needs the runner too; if it cannot be reached, neither can a connection.
       return overtaken() ? undefined : retryLater()
     }
-    if (overtaken()) return
+    if (overtaken()) {
+      agent?.destroy()
+      return
+    }
     if (bearer === null) return awaitSignIn()
     let unauthorized = false
     const ws = new WebSocket(`${options.url}${RUNNER_PATH}`, {
-      headers: { authorization: `Bearer ${bearer}` }
+      headers: { authorization: `Bearer ${bearer}` },
+      agent,
+      handshakeTimeout: 15000
     })
     socket = ws
     ws.on('open', () => {
@@ -213,6 +228,7 @@ export function connectRunner(options: RunnerClientOptions): RunnerClient {
       unauthorized = error.message.includes('401')
     })
     ws.on('close', (code) => {
+      agent?.destroy()
       if (socket !== ws || closed) return
       socket = null
       if (code === CLOSE_UPDATE_REQUIRED) {

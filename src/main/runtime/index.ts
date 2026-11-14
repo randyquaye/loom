@@ -200,6 +200,7 @@ export function runtimeFor(
       gate?.assertRunning(workspace.id)
       return runtime.openTerminal(opts)
     },
+    runningCommand: () => runtime.runningCommand(),
     stop: () => runtime.stop()
   }
   containers.set(workspace.id, guarded)

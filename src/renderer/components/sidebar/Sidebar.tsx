@@ -2,10 +2,11 @@ import { useCloud } from '../../state/cloud'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { BranchPrState, ProjectRow, WorkspaceRow } from '../../../shared/ipc-contract'
 import { MAX_WORKSPACES_PER_PROJECT } from '../../../shared/limits'
+import { unreadCount, useNotifications } from '../../state/notifications'
 import { useProjects } from '../../state/projects'
 import { useUi } from '../../state/ui'
 import { RemoveProjectModal } from '../modals/RemoveProjectModal'
-import { HomeIcon, MoreIcon, PlusIcon, SearchIcon, SettingsIcon } from '../ui/icons'
+import { BellIcon, HomeIcon, MoreIcon, PlusIcon, SearchIcon, SettingsIcon } from '../ui/icons'
 import { DeleteWorkspaceModal } from './DeleteWorkspaceModal'
 import { SettingsNav } from './SettingsNav'
 import { RowMenu, WorkspaceItem } from './WorkspaceItem'
@@ -109,6 +110,7 @@ export function Sidebar() {
   const needsSetup = useProjects((s) => Object.values(s.statusByProvider).filter((v) => v !== 'ready').length)
   const settingsHint =
     needsSetup > 0 ? `${needsSetup} provider(s) need setup` : 'Providers, keys and default models'
+  const unread = useNotifications(unreadCount)
   const route = useUi((s) => s.route)
   const navigate = useUi((s) => s.navigate)
   const leaveSettings = useUi((s) => s.leaveSettings)
@@ -294,6 +296,22 @@ export function Sidebar() {
         </div>
 
         <div className="side-foot">
+          <button
+            className="side-foot-btn"
+            data-active={route.name === 'notifications'}
+            aria-current={route.name === 'notifications' ? 'page' : undefined}
+            onClick={() => navigate({ name: 'notifications' })}
+          >
+            <span className="side-foot-glyph">
+              <BellIcon />
+            </span>
+            <span className="grow">Notifications</span>
+            {unread > 0 && (
+              <span className="side-foot-count" aria-label={`${unread} unread`}>
+                {unread}
+              </span>
+            )}
+          </button>
           <button
             className="side-foot-btn"
             data-active={route.name === 'settings'}

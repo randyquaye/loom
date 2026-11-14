@@ -1,24 +1,27 @@
 #!/usr/bin/env bash
-# Points Terraform at the host's state, which is kept in a bucket of the project's own, and
-# makes that bucket the first time. Run once in each checkout, before plan, apply or deploy.
-# Anything after the script's name is passed on to `terraform init`.
-#
-#   infra/host/init.sh
+# Initialise one stack's remote state. Extra arguments go to terraform init.
 set -euo pipefail
-cd "$(dirname "$0")"
-
-export AWS_PROFILE="${AWS_PROFILE:-loom}" AWS_PAGER=""
-REGION="${AWS_REGION:-eu-north-1}"
-BUCKET="loom-pilot-tfstate-$(aws sts get-caller-identity --query Account --output text)"
-
-if ! aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
-  aws s3api create-bucket --bucket "$BUCKET" --region "$REGION" \
-    --create-bucket-configuration "LocationConstraint=$REGION" >/dev/null
-  aws s3api put-public-access-block --bucket "$BUCKET" --public-access-block-configuration \
+source "$(dirname "$0")/stack.sh"
+load_stack "${1:?Usage: init.sh STACK [TERRAFORM_INIT_ARGS]}"
+shift
+ERROR=$(mktemp)
+trap 'rm -f "$ERROR"' EXIT
+if ! aws s3api head-bucket --bucket "$LOOM_STATE_BUCKET" 2>"$ERROR"; then
+  if ! grep -Eq '404|Not Found|NoSuchBucket' "$ERROR"; then
+    cat "$ERROR" >&2
+    exit 1
+  fi
+  if [ "$AWS_REGION" = us-east-1 ]; then
+    aws s3api create-bucket --bucket "$LOOM_STATE_BUCKET" --region "$AWS_REGION" >/dev/null
+  else
+    aws s3api create-bucket --bucket "$LOOM_STATE_BUCKET" --region "$AWS_REGION" \
+      --create-bucket-configuration "LocationConstraint=$AWS_REGION" >/dev/null
+  fi
+  aws s3api put-public-access-block --bucket "$LOOM_STATE_BUCKET" --public-access-block-configuration \
     BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
-  # Every earlier state is kept, so a bad apply can be looked back from.
-  aws s3api put-bucket-versioning --bucket "$BUCKET" --versioning-configuration Status=Enabled
-  echo "Made $BUCKET for the host's Terraform state."
+  aws s3api put-bucket-versioning --bucket "$LOOM_STATE_BUCKET" --versioning-configuration Status=Enabled
+  echo "Made $LOOM_STATE_BUCKET for the stack's Terraform state."
 fi
-
-terraform init -input=false -backend-config="bucket=$BUCKET" -backend-config="region=$REGION" "$@"
+terraform -chdir="$LOOM_INFRA_DIR" init -input=false \
+  -backend-config="bucket=$LOOM_STATE_BUCKET" -backend-config="region=$AWS_REGION" \
+  -backend-config="key=$LOOM_STATE_KEY" "$@"

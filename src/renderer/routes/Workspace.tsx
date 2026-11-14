@@ -217,6 +217,15 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
               </div>
             )}
             <PrStatus workspaceId={workspaceId} ready={ready} />
+            {cloudContainer && (
+              <CloudWorkspaceBar
+                key={workspaceId}
+                workspaceId={workspaceId}
+                setupReady={workspaceState === 'ready'}
+                setupFailed={workspaceState === 'error'}
+                setupLogPath={workspace?.setupLogPath}
+              />
+            )}
           </div>
           <button
             type="button"
@@ -229,14 +238,7 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
             ◨
           </button>
         </div>
-        {cloudContainer && (
-          <CloudWorkspaceBar
-            workspaceId={workspaceId}
-            setupReady={workspaceState === 'ready'}
-            setupFailed={workspaceState === 'error'}
-          />
-        )}
-        {workspaceState !== 'ready' && (
+        {workspaceState !== 'ready' && !cloudContainer && (
           <div
             className="workspace-bootstrap-status"
             data-state={workspaceState}

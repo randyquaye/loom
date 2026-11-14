@@ -261,6 +261,27 @@ body[data-modality='keyboard'] .side-foot-btn:focus-visible {
   height: 20px;
 }
 
+.ws-cloud[data-running='true'],
+.ws-cloud[data-loading='true'] {
+  color: var(--on-accent);
+}
+
+.ws-cloud[data-loading='true'] path {
+  stroke-dasharray: 28 72;
+  stroke-linecap: round;
+  animation: cloud-outline-flow 1.4s linear infinite;
+}
+
+.ws-cloud[data-error='true'] {
+  color: var(--danger);
+}
+
+@keyframes cloud-outline-flow {
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+
 .ws-item[data-unreachable='true'] .ws-row {
   opacity: 0.55;
 }
@@ -344,6 +365,11 @@ body[data-modality='keyboard'] .side-foot-btn:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .ws-cloud[data-loading='true'] path {
+    animation: none;
+    stroke-dasharray: none;
+  }
+
   .ws-state-spinner {
     animation: none;
   }
@@ -674,6 +700,19 @@ body[data-modality='keyboard'] .settings-nav-row:focus-visible {
 .side-foot .side-foot-glyph .icon {
   width: 22px;
   height: 22px;
+}
+
+.side-foot-count {
+  flex: none;
+  min-width: 18px;
+  padding: 0 var(--s-1);
+  border-radius: var(--r-pill);
+  background: var(--info);
+  color: var(--bg-0);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
 }
 
 .side-foot-dot {

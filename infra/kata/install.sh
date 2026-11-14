@@ -38,8 +38,14 @@ fi
 jq --arg config "$CONFIG" \
   '.runtimes.kata = {runtimeType:"/opt/kata/runtime-rs/bin/containerd-shim-kata-v2",options:{ConfigPath:$config}}' \
   "$STAGING/daemon.json" >"$STAGING/next.json"
-dockerd --validate --config-file "$STAGING/next.json"
-install -m 0644 "$STAGING/next.json" /etc/docker/daemon.json
-systemctl reload docker
-docker info --format '{{json .Runtimes}}' | jq -e 'has("kata")' >/dev/null
+registered() { docker info --format '{{json .Runtimes}}' | jq -e 'has("kata")' >/dev/null; }
+# A reload makes Docker 29 forget its host-gateway address: every container started after it
+# gets "invalid IP" for the host's name and cannot reach the login proxy. So Docker is
+# restarted, which stops running workspaces, and only when its settings really change.
+if ! cmp -s "$STAGING/next.json" /etc/docker/daemon.json || ! registered; then
+  dockerd --validate --config-file "$STAGING/next.json"
+  install -m 0644 "$STAGING/next.json" /etc/docker/daemon.json
+  systemctl restart docker
+  registered
+fi
 printf 'Kata 4.3.1 with runtime-rs/QEMU registered; default runtime unchanged\n'

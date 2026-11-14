@@ -115,8 +115,9 @@ export function createForwardingServer(options: ForwardingOptions) {
         socket.destroy()
       }
     },
-    connectedUsers(): string[] {
-      return [...live.values()].map(({ caller }) => caller.userId)
+    /** The workspaces with a connection live through a forward right now. */
+    workspaces(): string[] {
+      return [...live.values()].map(({ workspaceId }) => workspaceId)
     },
     closeWhere(matches: (caller: Caller) => boolean): void {
       for (const [socket, { caller }] of pending) if (matches(caller)) socket.destroy()

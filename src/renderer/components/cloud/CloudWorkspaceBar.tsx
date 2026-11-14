@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type { CloudHealth, PortForward, WorkspacePower } from '../../../shared/ipc-contract'
 import { useCloud } from '../../state/cloud'
 import { subscribeWorkspacePower, useWorkspacePower } from '../../state/workspace-power'
@@ -16,11 +16,13 @@ const POWER_LABELS: Record<WorkspacePower['state'], string> = {
 export function CloudWorkspaceBar({
   workspaceId,
   setupReady,
-  setupFailed
+  setupFailed,
+  setupLogPath
 }: {
   workspaceId: string
   setupReady: boolean
   setupFailed: boolean
+  setupLogPath?: string | null
 }) {
   const status = useCloud((state) => state.status)
   const power = useWorkspacePower((state) => state.byWorkspace[workspaceId])
@@ -29,7 +31,8 @@ export function CloudWorkspaceBar({
   const opened = useRef<string | null>(null)
   const [forwards, setForwards] = useState<PortForward[]>([])
   const [port, setPort] = useState('')
-  const [localPort, setLocalPort] = useState('')
+  const portsId = useId()
+  const portInput = useRef<HTMLInputElement>(null)
   const [working, setWorking] = useState(false)
   const [health, setHealth] = useState<CloudHealth | null>(null)
 
@@ -103,7 +106,7 @@ export function CloudWorkspaceBar({
     : !setupReady
       ? setupFailed
         ? (power?.error ?? 'Workspace setup failed. See the setup log.')
-        : 'Workspace setup must finish before starting.'
+        : 'Setting up cloud workspace…'
       : power === undefined
         ? 'Checking cloud workspace…'
         : (power.error ?? POWER_LABELS[power.state])
@@ -124,10 +127,9 @@ export function CloudWorkspaceBar({
   const forward = async () => {
     setWorking(true)
     try {
-      await window.loom.ports.forward(workspaceId, Number(port), localPort === '' ? 0 : Number(localPort))
+      await window.loom.ports.forward(workspaceId, Number(port))
       setForwards(await window.loom.ports.list(workspaceId))
       setPort('')
-      setLocalPort('')
     } catch (error) {
       push(String(error), 'err')
     } finally {
@@ -137,35 +139,59 @@ export function CloudWorkspaceBar({
 
   return (
     <div className="cloud-workspace" data-state={connected ? power?.state : status.state}>
-      <div className="cloud-workspace-status">
-        <span role="status" className="grow">
-          {message}
-        </span>
-        <button
-          className="btn btn-ghost"
-          type="button"
-          disabled={!connected || (!setupReady && !(setupFailed && stopping)) || working || transition}
-          title={
-            stopping
-              ? 'Stop running turns and terminals; keep files and queued messages'
-              : 'Start the workspace without sending a message'
-          }
-          onClick={() => void toggle()}
-        >
-          {stopping ? 'Stop' : 'Start'}
-        </button>
-      </div>
-      {health?.disk.warning && (
-        <div className="cloud-disk-warning" role="alert">
-          Cloud data disk is nearly full: {(health.disk.available / 1024 ** 3).toFixed(1)} GB available.
+      <button
+        className="btn btn-ghost cloud-ports-trigger"
+        type="button"
+        popoverTarget={portsId}
+        aria-haspopup="dialog"
+        aria-label="Forwarded ports"
+        title={`Forwarded ports. ${message}`}
+        data-warning={health?.disk.warning || setupFailed || power?.state === 'error' || !connected}
+      >
+        <svg className="icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" aria-hidden="true">
+          <path d="M3 6h14m-4-4 4 4-4 4M17 14H3m4-4-4 4 4 4" />
+        </svg>
+        {forwards.length > 0 && <span>{forwards.length}</span>}
+      </button>
+      <button
+        className="icon-btn"
+        type="button"
+        disabled={!connected || (!setupReady && !(setupFailed && stopping)) || working || transition}
+        aria-label={stopping ? 'Stop cloud workspace' : 'Start cloud workspace'}
+        aria-busy={working || transition}
+        title={`${stopping ? 'Stop' : 'Start'} cloud workspace. ${message}`}
+        onClick={() => void toggle()}
+      >
+        <svg className="icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path d={stopping ? 'M6 6h8v8H6z' : 'M6 3l11 7-11 7z'} />
+        </svg>
+      </button>
+      <div
+        className="cloud-ports"
+        id={portsId}
+        popover="auto"
+        role="dialog"
+        aria-labelledby={`${portsId}-title`}
+        onToggle={(event) => {
+          if (event.newState === 'open') portInput.current?.focus()
+        }}
+      >
+        <div className="row">
+          <strong className="grow" id={`${portsId}-title`}>
+            Forwarded ports
+          </strong>
+          <span>{forwards.length}/10</span>
         </div>
-      )}
-      <details className="cloud-ports">
-        <summary>Ports{forwards.length > 0 ? ` (${forwards.length})` : ''}</summary>
-        <p>Reach a workspace dev server in this Mac’s browser.</p>
+        <p role="status">{message}</p>
+        {setupFailed && setupLogPath && <p className="mono">Setup log: {setupLogPath}</p>}
+        {health?.disk.warning && (
+          <div className="cloud-disk-warning" role="alert">
+            Cloud data disk is nearly full: {(health.disk.available / 1024 ** 3).toFixed(1)} GB available.
+          </div>
+        )}
         {forwards.map((mapping) => (
           <div className="cloud-port-mapping" key={mapping.port}>
-            <span>Workspace :{mapping.port} →</span>
+            <span>:{mapping.port} →</span>
             <button
               className="btn btn-ghost"
               type="button"
@@ -175,18 +201,21 @@ export function CloudWorkspaceBar({
               localhost:{mapping.localPort} ↗
             </button>
             <button
-              className="btn btn-ghost"
+              className="icon-btn"
               type="button"
               aria-label={`Stop forwarding port ${mapping.port}`}
               onClick={() => {
                 void window.loom.ports
                   .unforward(workspaceId, mapping.port)
                   .then(() => window.loom.ports.list(workspaceId))
-                  .then(setForwards)
+                  .then((ports) => {
+                    setForwards(ports)
+                    portInput.current?.focus()
+                  })
                   .catch((error: unknown) => push(String(error), 'err'))
               }}
             >
-              Remove
+              ×
             </button>
           </div>
         ))}
@@ -200,6 +229,7 @@ export function CloudWorkspaceBar({
           <label>
             Workspace port
             <input
+              ref={portInput}
               className="input mono"
               type="number"
               min={1024}
@@ -210,27 +240,19 @@ export function CloudWorkspaceBar({
               placeholder="4100"
             />
           </label>
-          <label>
-            Local port
-            <input
-              className="input mono"
-              type="number"
-              min={1024}
-              max={65535}
-              value={localPort}
-              onChange={(event) => setLocalPort(event.target.value)}
-              placeholder="Automatic"
-            />
-          </label>
           <button
-            className="btn btn-ghost"
+            className="icon-btn"
             type="submit"
-            disabled={!connected || power?.state !== 'running' || working || port === ''}
+            aria-label="Forward port"
+            title="Forward port"
+            disabled={
+              !connected || power?.state !== 'running' || working || port === '' || forwards.length >= 10
+            }
           >
-            Forward
+            +
           </button>
         </form>
-      </details>
+      </div>
     </div>
   )
 }

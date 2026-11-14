@@ -9,6 +9,10 @@ import { IntegrationsPage } from './settings/IntegrationsPage'
 import { ProjectPage } from './settings/ProjectPage'
 import { PreferencesPage } from './settings/PreferencesPage'
 import { ShortcutsPage } from './settings/ShortcutsPage'
+import { OrgOverviewPage } from './settings/OrgOverviewPage'
+import { OrgMembersPage } from './settings/OrgMembersPage'
+import { OrgAdminLogPage } from './settings/OrgAdminLogPage'
+import { useOrganization } from '../state/organization'
 import './settings.css'
 
 const PAGE_HEAD: Record<
@@ -19,6 +23,12 @@ const PAGE_HEAD: Record<
   shortcuts: { title: 'Shortcuts', description: 'Keyboard shortcuts available across Loom.' },
   integrations: { title: 'Integrations', description: 'Connect GitHub and configure services used by Loom.' },
   cloud: { title: 'Cloud', description: 'The runner your cloud workspaces live on, and your sign-in to it.' },
+  'org-overview': { title: 'Organization', description: 'Your organization, membership, and cloud host.' },
+  'org-members': {
+    title: 'Members and invites',
+    description: 'Invite colleagues and manage organization membership.'
+  },
+  'org-log': { title: 'Admin log', description: 'Changes made by your organization’s owners.' },
   env: { title: 'Environment', description: 'Variables passed to agents, terminals and run actions.' },
   instructions: { title: 'Instructions', description: 'Markdown appended to every agent session.' },
   models: { title: 'Default models', description: 'The models and effort new sessions start on.' },
@@ -35,6 +45,10 @@ export function Settings() {
   const leaveSettings = useUi((s) => s.leaveSettings)
   const page = (route.name === 'settings' ? route.page : undefined) ?? DEFAULT_SETTINGS_PAGE
   const projectId = isProjectPage(page) ? page.slice('project:'.length) : null
+  const organization = useOrganization((state) => state.overview)
+  const organizationError = useOrganization((state) => state.error)
+  const organizationLoading = useOrganization((state) => state.loading)
+  const orgPage = page === 'org-overview' || page === 'org-members' || page === 'org-log'
   const projectName = useProjects((s) =>
     projectId === null ? undefined : s.projects.find((p) => p.id === projectId)?.name
   )
@@ -58,6 +72,17 @@ export function Settings() {
         {page === 'shortcuts' && <ShortcutsPage />}
         {page === 'integrations' && <IntegrationsPage />}
         {page === 'cloud' && <CloudPage />}
+        {orgPage && organization === null && (
+          <p className="settings-note" role={organizationError === null ? 'status' : 'alert'}>
+            {organizationError ??
+              (organizationLoading
+                ? 'Loading organization…'
+                : 'Connect to your organization under Cloud settings.')}
+          </p>
+        )}
+        {organization !== null && page === 'org-overview' && <OrgOverviewPage />}
+        {organization !== null && page === 'org-members' && <OrgMembersPage />}
+        {organization !== null && page === 'org-log' && <OrgAdminLogPage />}
         {page === 'env' && <EnvPage />}
         {page === 'instructions' && <InstructionsPage />}
         {page === 'models' && <Loadout />}

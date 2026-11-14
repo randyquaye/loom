@@ -1,10 +1,16 @@
 import { version } from '../../../../package.json'
-import type { SessionOpts } from '../../../shared/models'
+import type { CodexMode, SessionOpts } from '../../../shared/models'
 import { assertSessionOpts } from './args'
 import { isRec, str, sub } from './record'
 import { createRpcTransport, type RpcCall } from './rpc'
 import { machineRuntime, type WorkspaceRuntime } from '../../runtime'
 import { captureStderr } from './spawn'
+
+/** Codex's own sandbox and approval settings for each mode Loom stamps on a cloud workspace. */
+const CODEX_SECURITY: Record<CodexMode, { sandbox: string; approvalPolicy: string }> = {
+  sandbox: { sandbox: 'workspace-write', approvalPolicy: 'on-request' },
+  bypass: { sandbox: 'danger-full-access', approvalPolicy: 'never' }
+}
 
 /** Opens a persistent connection without starting a turn; the owner must close it. */
 export async function openCodexThread(
@@ -60,12 +66,13 @@ export async function openCodexThread(
   try {
     await rpc.request('initialize', { clientInfo: { name: 'loom', title: 'Loom', version } })
     await rpc.notify('initialized')
-    // Omitted security and auth settings continue to come from the user's Codex config.
+    // Without a stamped mode, security settings continue to come from the user's Codex config.
     const params = {
       cwd: opts.worktreePath,
       model: opts.model,
       developerInstructions: opts.systemPromptAppend,
-      config: { model_reasoning_effort: opts.effort }
+      config: { model_reasoning_effort: opts.effort },
+      ...(opts.modes === undefined ? {} : CODEX_SECURITY[opts.modes.codex])
     }
     const result =
       opts.resumeId === undefined

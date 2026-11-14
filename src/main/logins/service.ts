@@ -48,6 +48,8 @@ export interface Logins {
   checkGithub(userId: string): Promise<void>
   connectCodex(userId: string): Promise<CodexSignIn>
   disconnect(userId: string, provider: LoginProvider): Promise<void>
+  revokeAccess(userId: string): void
+  forget(userId: string): Promise<void>
   environment(userId: string): Promise<Record<string, string>>
   hostGitAccess(userId: string): Promise<Record<string, string>>
   githubExec(userId: string): Promise<GhExec>
@@ -87,11 +89,20 @@ export async function startLogins(options: LoginsOptions): Promise<Logins> {
   const kept = renewingVault(createLoginVault(options.store), github === undefined ? {} : { github })
   const securing = new Map<string, Promise<void>>()
   function secure(userId: string, homePath: string): Promise<void> {
+    if (!options.isAdmitted(userId)) return Promise.resolve()
     const next = (securing.get(homePath) ?? Promise.resolve())
       .catch(() => {})
-      .then(() =>
-        secureHome({ key, vault: kept, codexUrl: fronts.codex, githubUrl: fronts.github, userId, homePath })
-      )
+      .then(() => {
+        if (!options.isAdmitted(userId)) return
+        return secureHome({
+          key,
+          vault: kept,
+          codexUrl: fronts.codex,
+          githubUrl: fronts.github,
+          userId,
+          homePath
+        })
+      })
     securing.set(homePath, next)
     void next
       .finally(() => {
@@ -247,6 +258,21 @@ export async function startLogins(options: LoginsOptions): Promise<Logins> {
       if (provider === 'github') githubFlow?.cancel(userId)
       await kept.remove(userId, provider)
       await secure(userId, options.homeOf(userId))
+    },
+    revokeAccess(userId) {
+      cancel(userId)
+      githubFlow?.cancel(userId)
+      proxy.closeFor(userId)
+    },
+    async forget(userId) {
+      cancel(userId)
+      githubFlow?.cancel(userId)
+      proxy.closeFor(userId)
+      await Promise.all(
+        (['claude', 'codex', 'github'] as const).map((provider) => kept.remove(userId, provider))
+      )
+      // A credential-file update already underway must finish before the caller deletes homes.
+      await securing.get(options.homeOf(userId))?.catch(() => {})
     },
     async environment(userId) {
       return {
