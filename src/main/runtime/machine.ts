@@ -27,5 +27,10 @@ export const machineRuntime: WorkspaceRuntime = {
     return { pty: terminal, terminate: () => terminal.kill() }
   },
 
+  // Only a container is ever stopped for being idle, so nothing asks this of the machine.
+  async runningCommand() {
+    return false
+  },
+
   async stop() {}
 }

@@ -1,12 +1,23 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import { Hono, type Context } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
-import { userForEmail } from '../db/repos/users'
+import { userForGoogle } from '../db/repos/users'
+import { OrgError, type OrgService } from '../org/service'
+import type { HostProof, TransportProof } from '../../shared/org'
 import { isDesktopCallback } from './callback'
 import type { GoogleClient } from './google'
 import { challengeOf, newVerifier } from './pkce'
-import { exchangeCode, refreshTokens, revokeToken, SignInError, startSignIn, type TokenPair } from './tokens'
+import {
+  exchangeCode,
+  refreshTokens,
+  revokeToken,
+  SignInError,
+  signInProof,
+  startSignIn,
+  type TokenPair
+} from './tokens'
 
 // Ported from Sentinel (google-auth.ts, oauth/authorize.ts, oauth/token.ts and
 // oauth/revoke.ts at bee6e80). Sentinel signs a person into its own web app and has a consent
@@ -15,8 +26,11 @@ import { exchangeCode, refreshTokens, revokeToken, SignInError, startSignIn, typ
 export interface SignInRouteDeps {
   db: Database.Database
   google: GoogleClient
-  /** The pilot list. Being in the company is not enough. */
-  isAdmitted(email: string): boolean
+  /** Active membership, checked by durable user id. */
+  isAdmitted(userId: string): boolean
+  org?: OrgService | undefined
+  hostProof?: ((nonce: string) => HostProof) | undefined
+  transportProof?: (() => TransportProof | null) | undefined
   /** Google Workspace domains whose accounts may sign in at all. */
   domains: readonly string[]
   /** The runner's own https address, as the browser and Google see it. */
@@ -45,6 +59,7 @@ interface PendingSignIn {
   redirectUri: string
   codeChallenge: string
   desktopState: string
+  nonce: string
   startedAt: number
 }
 
@@ -52,6 +67,7 @@ type OAuthError = 'invalid_request' | 'invalid_grant' | 'unsupported_grant_type'
 
 export function signInRoutes(deps: SignInRouteDeps): Hono {
   const app = new Hono()
+  app.use('/auth/proof', bodyLimit({ maxSize: 4096 }))
   const googleCallback = `${deps.publicUrl.replace(/\/$/, '')}/auth/google/callback`
   const cookieOptions = {
     httpOnly: true,
@@ -106,10 +122,12 @@ export function signInRoutes(deps: SignInRouteDeps): Hono {
     const redirectUri = c.req.query('redirect_uri') ?? ''
     const codeChallenge = c.req.query('code_challenge') ?? ''
     const desktopState = c.req.query('state') ?? ''
+    const nonce = c.req.query('nonce') ?? ''
     if (!isDesktopCallback(redirectUri))
       return refuse(c, 'the sign-in can only return to the Loom app on this computer')
     if (
       !S256_CHALLENGE.test(codeChallenge) ||
+      !/^[A-Za-z0-9_-]{32,128}$/.test(nonce) ||
       desktopState === '' ||
       desktopState.length > MAX_DESKTOP_STATE
     ) {
@@ -121,6 +139,7 @@ export function signInRoutes(deps: SignInRouteDeps): Hono {
       redirectUri,
       codeChallenge,
       desktopState,
+      nonce,
       startedAt: Date.now()
     }
     const encoded = Buffer.from(JSON.stringify(pending), 'utf8').toString('base64url')
@@ -132,7 +151,8 @@ export function signInRoutes(deps: SignInRouteDeps): Hono {
       deps.google.authorizeUrl({
         state: pending.googleState,
         codeChallenge: challengeOf(pending.googleVerifier),
-        redirectUri: googleCallback
+        redirectUri: googleCallback,
+        nonce
       })
     )
   })
@@ -153,20 +173,33 @@ export function signInRoutes(deps: SignInRouteDeps): Hono {
     const person = await deps.google.identify({
       code,
       codeVerifier: pending.googleVerifier,
-      redirectUri: googleCallback
+      redirectUri: googleCallback,
+      nonce: pending.nonce
     })
     const allowed =
       person !== null &&
       person.emailVerified &&
       person.hostedDomain !== null &&
-      deps.domains.includes(person.hostedDomain) &&
-      deps.isAdmitted(person.email)
+      deps.domains.includes(person.hostedDomain)
     if (!allowed) return toDesktop(c, pending, { error: 'access_denied' })
-    const loomCode = startSignIn(deps.db, {
-      userId: userForEmail(deps.db, person.email),
-      redirectUri: pending.redirectUri,
-      codeChallenge: pending.codeChallenge
-    })
+    let loomCode: string
+    try {
+      loomCode = deps.db.transaction(() => {
+        const userId = userForGoogle(deps.db, person)
+        const inviteId = deps.org?.admitGoogle(userId, person.email, pending.codeChallenge) ?? null
+        if (inviteId === null && !deps.isAdmitted(userId)) throw new OrgError('This account is not admitted')
+        return startSignIn(deps.db, {
+          userId,
+          redirectUri: pending.redirectUri,
+          codeChallenge: pending.codeChallenge,
+          inviteId,
+          identityToken: person.identityToken,
+          nonce: pending.nonce
+        })
+      })()
+    } catch {
+      return toDesktop(c, pending, { error: 'access_denied' })
+    }
     return toDesktop(c, pending, { code: loomCode })
   })
 
@@ -190,9 +223,45 @@ export function signInRoutes(deps: SignInRouteDeps): Hono {
       access_token: pair.accessToken,
       refresh_token: pair.refreshToken,
       token_type: 'Bearer',
-      expires_in: pair.expiresIn
+      expires_in: pair.expiresIn,
+      ...(pair.identityToken === undefined
+        ? {}
+        : {
+            id_token: pair.identityToken,
+            host_proof: pair.nonce === undefined ? undefined : deps.hostProof?.(pair.nonce)
+          })
     })
   }
+
+  app.get('/auth/transport', (c) => {
+    c.header('Cache-Control', 'no-store')
+    const proof = deps.transportProof?.() ?? null
+    return proof === null ? c.json({ error: 'Host verification is not ready' }, 503) : c.json(proof)
+  })
+
+  // The browser code alone reveals identity evidence, never a reusable Loom credential.
+  app.post('/auth/proof', async (c) => {
+    c.header('Cache-Control', 'no-store')
+    const field = await formOf(c)
+    const code = field?.('code')
+    const redirectUri = field?.('redirect_uri')
+    if (
+      !code ||
+      code.length > 128 ||
+      !redirectUri ||
+      redirectUri.length > 2048 ||
+      field?.('code_verifier') !== undefined
+    )
+      return oauthError(c, 'invalid_request', 'A code and callback are required without a verifier')
+    if (deps.hostProof === undefined) return c.json({ error: 'Host verification is not ready' }, 503)
+    try {
+      const proof = signInProof(deps.db, { code, redirectUri })
+      return c.json({ id_token: proof.identityToken, host_proof: deps.hostProof(proof.nonce) })
+    } catch (error) {
+      if (error instanceof SignInError) return oauthError(c, 'invalid_grant', error.message)
+      throw error
+    }
+  })
 
   // The desktop swaps its one-time code, and later its refresh token, for tokens.
   app.post('/auth/token', async (c) => {
@@ -201,7 +270,7 @@ export function signInRoutes(deps: SignInRouteDeps): Hono {
     if (field === null)
       return oauthError(c, 'invalid_request', 'Body must be application/x-www-form-urlencoded')
     const grantType = field('grant_type')
-    const signIn = { db: deps.db, isAdmitted: deps.isAdmitted }
+    const signIn = { db: deps.db, isAdmitted: deps.isAdmitted, org: deps.org }
     try {
       if (grantType === 'authorization_code') {
         const code = field('code')
@@ -222,12 +291,30 @@ export function signInRoutes(deps: SignInRouteDeps): Hono {
         return tokenResponse(c, refreshTokens(signIn, refreshToken))
       }
     } catch (error) {
-      if (error instanceof SignInError) return oauthError(c, 'invalid_grant', error.message)
+      if (error instanceof SignInError || error instanceof OrgError)
+        return oauthError(c, 'invalid_grant', error.message)
       throw error
     }
     return grantType
       ? oauthError(c, 'unsupported_grant_type', 'Only authorization_code and refresh_token are supported')
       : oauthError(c, 'invalid_request', 'grant_type is required once')
+  })
+
+  // The secret travels directly from desktop to runner, never through the browser.
+  app.post('/auth/invite', async (c) => {
+    c.header('Cache-Control', 'no-store')
+    const field = await formOf(c)
+    const secret = field?.('invite_secret')
+    const challenge = field?.('code_challenge')
+    if (!secret || !challenge || deps.org === undefined)
+      return oauthError(c, 'invalid_request', 'An invite secret and challenge are required once each')
+    try {
+      deps.org.noteInvite(secret, challenge)
+      return c.json({ ok: true })
+    } catch (error) {
+      if (error instanceof OrgError) return oauthError(c, 'invalid_grant', error.message)
+      throw error
+    }
   })
 
   // Signing out. Unknown tokens get the same answer, so this never says whether a token exists.

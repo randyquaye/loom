@@ -1,8 +1,8 @@
 # The Loom pilot host: one always-on machine, one data disk, one open port.
 #
-#   infra/host/init.sh                                  (once in each checkout)
-#   terraform -chdir=infra/host plan  -var hostname=<name>
-#   terraform -chdir=infra/host apply -var hostname=<name>
+#   infra/host/init.sh NAME
+#   infra/host/tf.sh NAME plan -out=NAME.tfplan
+#   infra/host/tf.sh NAME apply NAME.tfplan
 #
 # This only makes the machine. infra/host/deploy.sh puts Loom on it.
 
@@ -27,25 +27,44 @@ terraform {
 }
 
 provider "aws" {
-  region  = var.region
-  profile = var.profile
+  region              = var.region
+  allowed_account_ids = [var.expected_account_id]
 
   default_tags {
-    tags = { Project = "loom-pilot" }
+    tags = { Project = local.prefix }
   }
 }
 
 data "aws_caller_identity" "current" {}
 
+locals {
+  legacy         = var.stack_name == "loom"
+  prefix         = local.legacy ? "loom-pilot" : "loom-${var.stack_name}"
+  global_prefix  = local.legacy ? local.prefix : "${local.prefix}-${data.aws_caller_identity.current.account_id}-${var.region}"
+  parameter_path = "/${var.stack_name}"
+  parameter_arn  = "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.parameter_path}"
+  backup_tag     = local.legacy ? "pilot-data" : "${local.prefix}-${data.aws_caller_identity.current.account_id}-${var.region}-data"
+}
+
 data "aws_vpc" "default" {
+  count   = var.subnet_id == null ? 1 : 0
   default = true
 }
 
 # The data disk can only attach to a machine in its own zone, so both follow this subnet.
 data "aws_subnet" "host" {
-  vpc_id            = data.aws_vpc.default.id
-  availability_zone = "${var.region}a"
-  default_for_az    = true
+  id = var.subnet_id
+  dynamic "filter" {
+    for_each = var.subnet_id == null ? {
+      vpc-id            = data.aws_vpc.default[0].id
+      availability-zone = "${var.region}a"
+      default-for-az    = "true"
+    } : {}
+    content {
+      name   = filter.key
+      values = [filter.value]
+    }
+  }
 }
 
 data "aws_ssm_parameter" "ubuntu" {
@@ -56,9 +75,9 @@ data "aws_ssm_parameter" "ubuntu" {
 # administration goes through AWS Systems Manager, which the machine calls out to.
 
 resource "aws_security_group" "host" {
-  name        = "loom-pilot-host"
+  name        = "${local.prefix}-host"
   description = "Loom pilot host: HTTPS in, anything out"
-  vpc_id      = data.aws_vpc.default.id
+  vpc_id      = data.aws_subnet.host.vpc_id
 }
 
 resource "aws_vpc_security_group_ingress_rule" "https" {
@@ -81,7 +100,7 @@ resource "aws_vpc_security_group_egress_rule" "all" {
 # read its own settings. Nothing else.
 
 resource "aws_iam_role" "host" {
-  name = "loom-pilot-host"
+  name = "${local.global_prefix}-host"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -113,12 +132,22 @@ resource "aws_iam_role_policy" "host" {
       {
         Effect   = "Allow"
         Action   = "ssm:GetParameter"
-        Resource = "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/loom/*"
+        Resource = "${local.parameter_arn}/*"
+      },
+      {
+        Effect      = "Deny"
+        Action      = "ssm:GetParameter*"
+        NotResource = "${local.parameter_arn}/*"
+      },
+      {
+        Effect   = "Deny"
+        Action   = ["ssm:GetParametersByPath", "ssm:GetParameterHistory", "ssm:DeleteParameter", "ssm:DeleteParameters"]
+        Resource = "*"
       },
       {
         Effect    = "Allow"
         Action    = "ssm:PutParameter"
-        Resource  = "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/loom/secret-key"
+        Resource  = ["${local.parameter_arn}/secret-key", "${local.parameter_arn}/runner-signing-key"]
         Condition = { StringEquals = { "ssm:Overwrite" = "false" } }
       }
     ]
@@ -126,14 +155,14 @@ resource "aws_iam_role_policy" "host" {
 }
 
 resource "aws_iam_instance_profile" "host" {
-  name = "loom-pilot-host"
+  name = "${local.global_prefix}-host"
   role = aws_iam_role.host.name
 }
 
 # --- Releases travel through this bucket, since nothing can be copied to the machine directly.
 
 resource "aws_s3_bucket" "artifacts" {
-  bucket        = "loom-pilot-artifacts-${data.aws_caller_identity.current.account_id}"
+  bucket        = local.legacy ? "loom-pilot-artifacts-${data.aws_caller_identity.current.account_id}" : "${local.global_prefix}-artifacts"
   force_destroy = true
 }
 
@@ -192,7 +221,7 @@ resource "aws_instance" "host" {
     encrypted   = true
   }
 
-  tags = { Name = "loom-pilot" }
+  tags = { Name = local.prefix }
 
   lifecycle {
     # "current" moves whenever Ubuntu publishes an image; that must not replace a running host.
@@ -207,7 +236,7 @@ resource "aws_ebs_volume" "data" {
   size              = var.data_gb
   encrypted         = true
 
-  tags = { Name = "loom-pilot-data", LoomBackup = "pilot-data" }
+  tags = { Name = "${local.prefix}-data", LoomBackup = local.backup_tag }
 
   lifecycle {
     prevent_destroy = true
@@ -224,7 +253,7 @@ resource "aws_volume_attachment" "data" {
 # A fixed address, so the DNS record survives a stop, a start or a new machine.
 resource "aws_eip" "host" {
   domain = "vpc"
-  tags   = { Name = "loom-pilot" }
+  tags   = { Name = local.prefix }
 }
 
 resource "aws_eip_association" "host" {

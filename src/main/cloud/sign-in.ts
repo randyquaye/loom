@@ -2,12 +2,18 @@ import { randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { challengeOf, newVerifier } from '../auth/pkce'
+import type { HostProof, RunnerTrust } from '../../shared/org'
+import { verifyHostProof } from './host-proof'
+import { createRunnerTransport, readRunnerJson, type RunnerTransport } from './transport'
+import { HostProofError } from './host-proof'
+import { isLoopbackHost } from '../auth/callback'
 
 export interface Tokens {
   accessToken: string
   refreshToken: string
   /** Seconds until the access token stops working. */
   expiresIn: number
+  trust?: RunnerTrust | null
 }
 
 /** The runner said no: the code, token or account is not accepted. Trying again will not help. */
@@ -29,13 +35,19 @@ export function httpBase(runnerUrl: string): string {
 }
 
 /** Asks the runner's token endpoint. A refusal and an unreachable runner are different errors. */
-export async function requestTokens(base: string, fields: Record<string, string>): Promise<Tokens> {
-  const response = await fetch(`${base}/auth/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(fields)
-  })
-  const body = (await response.json().catch(() => ({}))) as Record<string, unknown>
+export async function requestTokens(
+  _base: string,
+  fields: Record<string, string>,
+  transport?: RunnerTransport,
+  signal?: AbortSignal
+): Promise<Tokens> {
+  if (transport === undefined) throw new HostProofError('The runner needs a verified TLS transport')
+  const response = await transport.post('/auth/token', fields, signal)
+  const value: unknown = await response.json().catch(() => null)
+  const body =
+    value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {}
   // A refusal is the runner's own answer: it names an error. Anything else that is not a
   // success, such as the TLS front answering while the runner restarts, means it was never
   // asked, and a sign-in must not be thrown away over that.
@@ -47,20 +59,93 @@ export async function requestTokens(base: string, fields: Record<string, string>
     )
   }
   if (!response.ok) throw new Error(`The runner could not be reached (it answered ${response.status})`)
+  if (
+    typeof body['access_token'] !== 'string' ||
+    body['access_token'] === '' ||
+    typeof body['refresh_token'] !== 'string' ||
+    body['refresh_token'] === '' ||
+    typeof body['expires_in'] !== 'number' ||
+    !Number.isFinite(body['expires_in']) ||
+    body['expires_in'] <= 0
+  ) {
+    throw new Error('The runner returned an incomplete sign-in')
+  }
   return {
-    accessToken: String(body['access_token']),
-    refreshToken: String(body['refresh_token']),
-    expiresIn: Number(body['expires_in'])
+    accessToken: body['access_token'],
+    refreshToken: body['refresh_token'],
+    expiresIn: body['expires_in']
   }
 }
 
 /** Signing out. The runner answers the same whether or not it knew the token. */
-export async function revokeRefreshToken(base: string, refreshToken: string): Promise<void> {
-  await fetch(`${base}/auth/revoke`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ token: refreshToken })
+export async function revokeRefreshToken(
+  _base: string,
+  refreshToken: string,
+  transport?: RunnerTransport
+): Promise<void> {
+  if (transport === undefined) throw new HostProofError('The runner needs a verified TLS transport')
+  await transport.post('/auth/revoke', { token: refreshToken })
+}
+
+interface CodeExchange {
+  base: string
+  code: string
+  redirectUri: string
+  codeVerifier: string
+  nonce: string
+  expectedEmail: string
+  development?: boolean
+  signal?: AbortSignal
+}
+
+/** The verifier stays here until independent identity and TLS-key checks have both passed. */
+export async function exchangeSignInCode(input: CodeExchange): Promise<Tokens> {
+  input.signal?.throwIfAborted()
+  let trust: RunnerTrust | null = null
+  if (!(input.development === true && isLoopbackHost(new URL(input.base).hostname))) {
+    const reply = await fetch(`${input.base}/auth/proof`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ code: input.code, redirect_uri: input.redirectUri }),
+      redirect: 'error',
+      signal: AbortSignal.any([input.signal ?? AbortSignal.timeout(15000), AbortSignal.timeout(15000)])
+    })
+    if (!reply.ok) throw new SignInRefusedError('The runner refused the sign-in proof')
+    const value = await readRunnerJson(reply)
+    if (value === null || typeof value !== 'object' || Array.isArray(value))
+      throw new HostProofError('The runner returned an invalid sign-in proof')
+    const body = value as { id_token?: unknown; host_proof?: unknown }
+    trust = await verifyHostProof({
+      base: input.base,
+      nonce: input.nonce,
+      expectedEmail: input.expectedEmail,
+      idToken: typeof body.id_token === 'string' ? body.id_token : undefined,
+      proof: body.host_proof as HostProof | undefined
+    })
+  }
+  input.signal?.throwIfAborted()
+  const transport = createRunnerTransport({
+    base: input.base,
+    trust: async () => trust,
+    ...(input.development === undefined ? {} : { development: input.development })
   })
+  try {
+    const tokens = await requestTokens(
+      input.base,
+      {
+        grant_type: 'authorization_code',
+        code: input.code,
+        redirect_uri: input.redirectUri,
+        code_verifier: input.codeVerifier
+      },
+      transport,
+      input.signal
+    )
+    input.signal?.throwIfAborted()
+    return { ...tokens, trust }
+  } finally {
+    transport.close()
+  }
 }
 
 function page(message: string): string {
@@ -127,21 +212,27 @@ export function listenForBrowser(input: {
  */
 export function signInThroughBrowser(input: {
   base: string
+  expectedEmail: string
   openBrowser(url: string): void
   timeoutMs?: number
   /** Abandons the attempt: the port closes and the promise rejects with the signal's reason. */
   signal?: AbortSignal
+  inviteSecret?: string
+  development?: boolean
 }): Promise<Tokens> {
   const verifier = newVerifier()
   const state = randomBytes(32).toString('base64url')
+  const nonce = randomBytes(32).toString('base64url')
   return new Promise((resolve, reject) => {
     let redirectUri = ''
     let finished = false
+    let exchanging = false
     const finish = (outcome: () => void): void => {
       if (finished) return
       finished = true
       clearTimeout(timer)
       listener.close()
+      input.signal?.removeEventListener('abort', abort)
       outcome()
     }
     const listener = createServer((request, response) => {
@@ -152,44 +243,76 @@ export function signInThroughBrowser(input: {
       if (url.pathname !== CALLBACK_PATH || url.searchParams.get('state') !== state) {
         return answer(400, 'This is not a sign-in that Loom started.')
       }
+      if (finished || exchanging) return answer(409, 'Loom is already finishing this sign-in.')
       const code = url.searchParams.get('code')
       if (code === null) {
         answer(403, 'Loom could not sign you in with this account. You can close this tab.')
         return finish(() => reject(new SignInRefusedError('This account is not allowed to sign in')))
       }
-      requestTokens(input.base, {
-        grant_type: 'authorization_code',
+      exchanging = true
+      exchangeSignInCode({
+        base: input.base,
         code,
-        redirect_uri: redirectUri,
-        code_verifier: verifier
-      }).then(
-        (tokens) => {
-          answer(200, 'You are signed in to Loom. You can close this tab.')
-          finish(() => resolve(tokens))
-        },
-        (error: unknown) => {
-          answer(502, 'Loom could not finish signing you in. You can close this tab.')
-          finish(() => reject(error instanceof Error ? error : new Error(String(error))))
-        }
-      )
+        redirectUri,
+        codeVerifier: verifier,
+        nonce,
+        expectedEmail: input.expectedEmail,
+        ...(input.development === undefined ? {} : { development: input.development }),
+        ...(input.signal === undefined ? {} : { signal: input.signal })
+      })
+        .then(async (tokens) => {
+          if (finished) throw new Error('This sign-in was abandoned')
+          return tokens
+        })
+        .then(
+          (tokens) => {
+            answer(200, 'You are signed in to Loom. You can close this tab.')
+            finish(() => resolve(tokens))
+          },
+          (error: unknown) => {
+            answer(502, 'Loom could not finish signing you in. You can close this tab.')
+            finish(() => reject(error instanceof Error ? error : new Error(String(error))))
+          }
+        )
     })
     const timer = setTimeout(
       () => finish(() => reject(new Error('Signing in took too long and was abandoned'))),
       input.timeoutMs ?? SIGN_IN_TIMEOUT_MS
     )
     listener.once('error', (error) => finish(() => reject(error)))
-    input.signal?.addEventListener('abort', () => finish(() => reject(input.signal?.reason as Error)), {
-      once: true
-    })
+    const abort = (): void => finish(() => reject(input.signal?.reason as Error))
+    input.signal?.addEventListener('abort', abort, { once: true })
+    if (input.signal?.aborted) return abort()
     // Port 0: any free port. The loopback address, never a name that could resolve elsewhere.
-    listener.listen(0, '127.0.0.1', () => {
+    listener.listen(0, '127.0.0.1', async () => {
       redirectUri = `http://127.0.0.1:${(listener.address() as AddressInfo).port}${CALLBACK_PATH}`
       const query = new URLSearchParams({
         redirect_uri: redirectUri,
         code_challenge: challengeOf(verifier),
-        state
+        state,
+        nonce
       })
-      input.openBrowser(`${input.base}/auth/start?${query.toString()}`)
+      try {
+        if (input.inviteSecret !== undefined) {
+          const response = await fetch(`${input.base}/auth/invite`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              invite_secret: input.inviteSecret,
+              code_challenge: challengeOf(verifier)
+            }),
+            redirect: 'error',
+            signal:
+              input.signal === undefined
+                ? AbortSignal.timeout(15000)
+                : AbortSignal.any([input.signal, AbortSignal.timeout(15000)])
+          })
+          if (!response.ok) throw new SignInRefusedError('This invite is expired, revoked, or already used')
+        }
+        if (!finished) input.openBrowser(`${input.base}/auth/start?${query.toString()}`)
+      } catch (error) {
+        finish(() => reject(error))
+      }
     })
   })
 }

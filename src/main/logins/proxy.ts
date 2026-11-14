@@ -31,6 +31,7 @@ export interface LoginProxyOptions {
 
 export interface LoginProxy {
   port: number
+  closeFor(userId: string): void
   close(): Promise<void>
 }
 
@@ -59,7 +60,14 @@ const NOT_FORWARDED = new Set([
 const KEPT_FOR_UPGRADE = new Set(['connection', 'upgrade'])
 
 /** `login` is null for a call that goes on as anybody, to a server that allows it. */
-type Admitted = { rules: ProviderRules; login: Login | null; target: URL; path: string }
+type Admitted = {
+  userId: string
+  revision: number
+  rules: ProviderRules
+  login: Login | null
+  target: URL
+  path: string
+}
 type Refused = { status: number; message: string }
 
 function isLoopback(address: string | undefined): boolean {
@@ -95,6 +103,35 @@ function forwardable(headers: IncomingHttpHeaders, upgrade: boolean): IncomingHt
  * and never on behalf of anyone but the person it belongs to.
  */
 export async function startLoginProxy(options: LoginProxyOptions): Promise<LoginProxy> {
+  const revisions = new Map<string, number>()
+  const live = new Map<string, Set<() => void>>()
+  let closed = false
+
+  function watch(userId: string, close: () => void): () => void {
+    const streams = live.get(userId) ?? new Set<() => void>()
+    streams.add(close)
+    live.set(userId, streams)
+    return () => {
+      streams.delete(close)
+      if (streams.size === 0) live.delete(userId)
+    }
+  }
+
+  function closeFor(userId: string): void {
+    revisions.set(userId, (revisions.get(userId) ?? 0) + 1)
+    for (const close of live.get(userId) ?? []) close()
+    live.delete(userId)
+  }
+
+  function current(userId: string, revision: number): boolean {
+    return !closed && options.isAdmitted(userId) && (revisions.get(userId) ?? 0) === revision
+  }
+
+  async function allowed(request: IncomingMessage, userId: string, revision: number): Promise<boolean> {
+    const owner = await options.ownerAt(callerAddress(request))
+    return owner === userId && current(userId, revision)
+  }
+
   async function admit(request: IncomingMessage): Promise<Admitted | Refused> {
     const url = new URL(request.url ?? '/', 'http://proxy')
     const [, name = '', ...rest] = url.pathname.split('/')
@@ -104,10 +141,10 @@ export async function startLoginProxy(options: LoginProxyOptions): Promise<Login
 
     // gh presents its token under GitHub's own word for it; everything else says Bearer.
     const bearer = /^(?:Bearer|token) (.+)$/.exec(request.headers.authorization ?? '')?.[1] ?? ''
-    const owner = await options.ownerAt(callerAddress(request))
     const userId = standInUser(options.key, name, bearer)
     if (userId === null) return { status: 401, message: `This is not a ${rules.label} login Loom issued` }
-    if (!options.isAdmitted(userId) || userId !== owner) {
+    const revision = revisions.get(userId) ?? 0
+    if (!(await allowed(request, userId, revision))) {
       return { status: 403, message: 'This login cannot be used from here' }
     }
     // Encoded dots and slashes could mean one path here and another at the server.
@@ -117,6 +154,8 @@ export async function startLoginProxy(options: LoginProxyOptions): Promise<Login
       return { status: 403, message: `Loom does not pass ${path} on to ${rules.label}` }
     }
     const login = await options.vault.get(userId, name)
+    if (!(await allowed(request, userId, revision)))
+      return { status: 403, message: 'This login cannot be used from here' }
     if (login === null && rules.openToAnybody !== true) {
       return {
         status: 401,
@@ -124,7 +163,7 @@ export async function startLoginProxy(options: LoginProxyOptions): Promise<Login
       }
     }
     const target = new URL(`${route.path}${url.search}`, options.upstreams?.[name] ?? route.origin)
-    return { rules, login, target, path }
+    return { userId, revision, rules, login, target, path }
   }
 
   function outgoing(request: IncomingMessage, admitted: Admitted, upgrade: boolean): IncomingHttpHeaders {
@@ -150,6 +189,13 @@ export async function startLoginProxy(options: LoginProxyOptions): Promise<Login
       response.writeHead(admitted.status, { 'content-type': 'application/json' }).end(refusal(admitted))
       return
     }
+    if (!current(admitted.userId, admitted.revision)) {
+      request.resume()
+      response
+        .writeHead(403, { 'content-type': 'application/json' })
+        .end(refusal({ status: 403, message: 'This login cannot be used from here' }))
+      return
+    }
     const send = admitted.target.protocol === 'https:' ? httpsRequest : httpRequest
     const upstream = send(
       admitted.target,
@@ -159,11 +205,19 @@ export async function startLoginProxy(options: LoginProxyOptions): Promise<Login
         answer.pipe(response)
       }
     )
+    const unwatch = watch(admitted.userId, () => {
+      upstream.destroy()
+      response.destroy()
+    })
     upstream.on('error', () => {
+      if (response.destroyed) return
       if (!response.headersSent) response.writeHead(502, { 'content-type': 'application/json' })
       response.end(refusal({ status: 502, message: `${admitted.rules.label} could not be reached` }))
     })
-    response.on('close', () => upstream.destroy())
+    response.on('close', () => {
+      unwatch()
+      upstream.destroy()
+    })
     request.pipe(upstream)
   }
 
@@ -184,18 +238,37 @@ export async function startLoginProxy(options: LoginProxyOptions): Promise<Login
     const upstream: Socket = secure
       ? connectTls({ host: target.hostname, port, servername: target.hostname })
       : connectPlain({ host: target.hostname, port })
+    const close = (): void => {
+      upstream.destroy()
+      socket.destroy()
+    }
+    const unwatch = watch(admitted.userId, close)
     upstream.once(secure ? 'secureConnect' : 'connect', () => {
-      const lines = Object.entries(outgoing(request, admitted, true)).flatMap(([name, value]) =>
-        (Array.isArray(value) ? value : [value ?? '']).map((one) => `${name}: ${one}`)
-      )
-      upstream.write(`GET ${target.pathname}${target.search} HTTP/1.1\r\n${lines.join('\r\n')}\r\n\r\n`)
-      if (head.length > 0) upstream.write(head)
-      socket.pipe(upstream)
-      upstream.pipe(socket)
+      void allowed(request, admitted.userId, admitted.revision)
+        .then((accepted) => {
+          if (
+            !accepted ||
+            !current(admitted.userId, admitted.revision) ||
+            socket.destroyed ||
+            upstream.destroyed
+          )
+            return close()
+          const lines = Object.entries(outgoing(request, admitted, true)).flatMap(([name, value]) =>
+            (Array.isArray(value) ? value : [value ?? '']).map((one) => `${name}: ${one}`)
+          )
+          upstream.write(`GET ${target.pathname}${target.search} HTTP/1.1\r\n${lines.join('\r\n')}\r\n\r\n`)
+          if (head.length > 0) upstream.write(head)
+          socket.pipe(upstream)
+          upstream.pipe(socket)
+        })
+        .catch(close)
     })
     upstream.on('error', () => socket.destroy())
     socket.on('error', () => upstream.destroy())
-    socket.on('close', () => upstream.destroy())
+    socket.on('close', () => {
+      unwatch()
+      upstream.destroy()
+    })
     upstream.on('close', () => socket.destroy())
   }
 
@@ -215,8 +288,11 @@ export async function startLoginProxy(options: LoginProxyOptions): Promise<Login
 
   return {
     port: (server.address() as AddressInfo).port,
+    closeFor,
     close: () =>
       new Promise((resolve) => {
+        closed = true
+        for (const userId of live.keys()) closeFor(userId)
         server.closeAllConnections()
         server.close(() => resolve())
       })

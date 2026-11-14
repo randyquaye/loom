@@ -1,4 +1,6 @@
-import type { ReactNode } from 'react'
+import { useEffect, type ReactNode } from 'react'
+import { useCloud } from '../../state/cloud'
+import { useOrganization } from '../../state/organization'
 import { useProjects } from '../../state/projects'
 import { DEFAULT_SETTINGS_PAGE, useUi, type SettingsPage } from '../../state/ui'
 import {
@@ -64,6 +66,12 @@ function NavRow({ page, label, glyph, trailing }: NavPage) {
 /** Sidebar body while Settings is open: grouped page nav in place of the project tree. */
 export function SettingsNav() {
   const projects = useProjects((s) => s.projects)
+  const connected = useCloud((state) => state.status.state === 'connected')
+  const owner = useOrganization((state) => state.overview?.role === 'owner')
+  useEffect(() => {
+    if (connected) void useOrganization.getState().refresh()
+    else useOrganization.getState().reset()
+  }, [connected])
   return (
     <nav aria-label="Settings">
       <div className="section-label">General</div>
@@ -72,6 +80,16 @@ export function SettingsNav() {
           <NavRow key={row.page} {...row} />
         ))}
       </div>
+      {connected && (
+        <>
+          <div className="section-label">Organization</div>
+          <div className="project-block">
+            <NavRow page="org-overview" label="Overview" glyph={<CloudIcon />} />
+            {owner && <NavRow page="org-members" label="Members and invites" glyph={<BotIcon />} />}
+            {owner && <NavRow page="org-log" label="Admin log" glyph={<ConsoleIcon />} />}
+          </div>
+        </>
+      )}
       <div className="section-label">Agents</div>
       <div className="project-block">
         {AGENTS.map((row) => (

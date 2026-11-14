@@ -35,6 +35,8 @@ export interface RunnerServer {
   sendTo(userId: string | null, channel: string, payload: unknown): void
   /** The users with at least one desktop connected. */
   connectedUsers(): string[]
+  /** The workspaces with a connection live through a port forward. */
+  forwardedWorkspaces(): string[]
   /** Ends the connections of whoever matches: their sign-in is over. */
   closeWhere(matches: (caller: Caller) => boolean): void
   closeWorkspaceForwards(workspaceId: string): void
@@ -187,10 +189,9 @@ export function startRunnerServer(options: RunnerServerOptions): Promise<RunnerS
           }
         },
         connectedUsers() {
-          return [
-            ...new Set([...greeted.values()].map((owner) => owner.userId).concat(forwarding.connectedUsers()))
-          ]
+          return [...new Set([...greeted.values()].map((owner) => owner.userId))]
         },
+        forwardedWorkspaces: () => forwarding.workspaces(),
         closeWhere(matches) {
           forwarding.closeWhere(matches)
           for (const [socket, owner] of greeted) {

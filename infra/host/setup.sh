@@ -1,174 +1,82 @@
 #!/usr/bin/env bash
-# Makes an Ubuntu machine into the Loom pilot host and puts one release of the runner on it.
-# Runs on the host, as root, from infra/host/deploy.sh. Every step checks before it acts, so
-# running it again is how the host is updated.
+# Stage a release, then activate it. Routine releases do not run host maintenance.
 set -euo pipefail
-
-: "${LOOM_HOSTNAME:?the DNS name people reach the runner at}"
-: "${LOOM_REGION:?the AWS Region the host is in}"
-: "${LOOM_DATA_VOLUME_ID:?the id of the data disk}"
-: "${LOOM_RELEASE:?the folder this release was unpacked into}"
-
+exec 9>/run/loom-deploy.lock
+flock -n 9 || { echo 'Another Loom deployment is running' >&2; exit 1; }
+: "${LOOM_HOSTNAME:?}"
+: "${LOOM_REGION:?}"
+: "${LOOM_DATA_VOLUME_ID:?}"
+: "${LOOM_RELEASE:?}"
+: "${LOOM_RELEASE_ID:?}"
 DATA_DIR=/var/lib/loom
 CONFIG_DIR=/etc/loom
 RUNNER_PORT=3877
-# Agent logins: the runner's proxy, and the HTTPS front that containers reach it through.
 LOGIN_PROXY_PORT=3878
-# Each program has an address of its own on that front. GitHub's is the ordinary HTTPS port.
 CLAUDE_FRONT_PORT=8443
 CODEX_FRONT_PORT=8444
-export DEBIAN_FRONTEND=noninteractive
-
 step() { printf '\n== %s\n' "$1"; }
-
-step "Packages"
-# Quiet on purpose: Systems Manager keeps only the start of a command's output.
-apt-get update -qq
-apt-get install -y -qq --no-install-recommends \
-  build-essential ca-certificates curl docker.io gh git gnupg openssl python3 >/dev/null
-
-if [ ! -f /etc/apt/sources.list.d/nodesource.list ]; then
-  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key |
-    gpg --dearmor --yes -o /usr/share/keyrings/nodesource.gpg
-  echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" \
-    >/etc/apt/sources.list.d/nodesource.list
+operator_status() {
+  [ -f "$CONFIG_DIR/operator.token" ] || return 1
+  printf 'Authorization: Bearer %s\n' "$(cat "$CONFIG_DIR/operator.token")" |
+    curl -fsS --max-time 10 -H @- "http://127.0.0.1:$RUNNER_PORT/admin/drain"
+}
+# A release restarts the runner and stops containers. The operator must drain first.
+if systemctl is-active --quiet loom-runner; then
+  operator_status | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("draining") is True else 1)' || {
+    echo 'Drain the runner before deploying; inspect its active work before cutting it over' >&2; exit 1;
+  }
 fi
-if [ ! -f /etc/apt/sources.list.d/caddy-stable.list ]; then
-  curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key |
-    gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable.gpg
-  echo "deb [signed-by=/usr/share/keyrings/caddy-stable.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main" \
-    >/etc/apt/sources.list.d/caddy-stable.list
+if [ ! -f "$CONFIG_DIR/prepared" ] || [ "${LOOM_PREPARE_HOST:-0}" = 1 ]; then
+  bash "$LOOM_RELEASE/infra/host/prepare.sh"
 fi
-apt-get update -qq
-apt-get install -y -qq --no-install-recommends caddy nodejs >/dev/null
-command -v pnpm >/dev/null || npm install --global --silent pnpm@11
-
-step "Data disk"
-# Named by its volume id, so no other disk can ever be mistaken for it.
-DEVICE="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${LOOM_DATA_VOLUME_ID/-/}"
-for _ in $(seq 30); do
-  if [ -e "$DEVICE" ]; then break; fi
-  sleep 2
-done
-[ -e "$DEVICE" ] || { echo "The data disk $LOOM_DATA_VOLUME_ID is not attached" >&2; exit 1; }
-# Only a disk with nothing on it is formatted.
-if [ -z "$(lsblk -no FSTYPE "$DEVICE")" ]; then mkfs.ext4 -q -L loom-data "$DEVICE"; fi
-mkdir -p "$DATA_DIR"
-grep -q 'LABEL=loom-data' /etc/fstab ||
-  echo "LABEL=loom-data $DATA_DIR ext4 defaults,nofail 0 2" >>/etc/fstab
-mountpoint -q "$DATA_DIR" || mount "$DATA_DIR"
-
-step "Runner user"
-id loom >/dev/null 2>&1 || useradd --create-home --shell /bin/bash loom
-usermod --append --groups docker loom
-chown loom:loom "$DATA_DIR"
-# Checkpoints are commits; without an identity git refuses to make them.
-sudo -u loom git config --global user.name 'Loom'
-sudo -u loom git config --global user.email "loom@$LOOM_HOSTNAME"
-
-step "Release"
-chown -R loom:loom "$LOOM_RELEASE"
-sudo -u loom -H sh -c "cd '$LOOM_RELEASE' && pnpm install --prod --frozen-lockfile --reporter=append-only" | tail -n 5
-# The container user carries the runner's own numbers: both write the same checkout.
-docker build --quiet --tag loom-workspace:latest \
-  --build-arg LOOM_UID="$(id -u loom)" --build-arg LOOM_GID="$(id -g loom)" \
-  "$LOOM_RELEASE/images/workspace"
+mountpoint -q "$DATA_DIR" || { echo 'The data disk is not mounted' >&2; exit 1; }
 WORKSPACE_RUNTIME=${LOOM_WORKSPACE_CONTAINER_RUNTIME:-runc}
 WORKSPACE_PIDS=512
 RUNNER_MOUNTS=$DATA_DIR
 case "$WORKSPACE_RUNTIME" in
   runc) ;;
   kata)
-    bash "$LOOM_RELEASE/infra/kata/install.sh"
-    docker build --quiet --tag loom-workspace-kata:latest "$LOOM_RELEASE/images/workspace-kata"
+    docker info --format '{{json .Runtimes}}' | jq -e 'has("kata")' >/dev/null || {
+      echo 'Kata is not installed; drain and deploy with --prepare' >&2; exit 1;
+    }
     WORKSPACE_PIDS=2048
-    # Kata's own read-only mounts do not hold against root in a workspace. Login files are
-    # given through this view instead: read-only on the host before Kata ever sees them.
     LOGIN_FILES_VIEW=$DATA_DIR/login-files-view
     sudo -u loom mkdir -p "$DATA_DIR/login-files"
     mkdir -p "$LOGIN_FILES_VIEW"
     grep -q " $LOGIN_FILES_VIEW " /etc/fstab ||
       echo "$DATA_DIR/login-files $LOGIN_FILES_VIEW none bind,ro,nofail 0 0" >>/etc/fstab
     mountpoint -q "$LOGIN_FILES_VIEW" || mount "$LOGIN_FILES_VIEW"
-    findmnt -no VFS-OPTIONS "$LOGIN_FILES_VIEW" | grep -qE '(^|,)ro(,|$)' ||
-      { echo 'The login files view is not read-only' >&2; exit 1; }
+    findmnt -no VFS-OPTIONS "$LOGIN_FILES_VIEW" | grep -qE '(^|,)ro(,|$)' || {
+      echo 'The login files view is not read-only' >&2; exit 1;
+    }
     RUNNER_MOUNTS="$DATA_DIR $LOGIN_FILES_VIEW"
     ;;
   *) echo 'LOOM_WORKSPACE_CONTAINER_RUNTIME must be runc or kata' >&2; exit 1;;
 esac
-# Ubuntu's default profile for containers refuses the mounts Codex's sandbox makes.
-install -m 0644 "$LOOM_RELEASE/infra/host/loom-workspace.apparmor" /etc/apparmor.d/loom-workspace
-apparmor_parser --replace /etc/apparmor.d/loom-workspace
-ln -sfn "$LOOM_RELEASE" /opt/loom/current
-# Three releases are kept: this one and two to go back to. Their names start with the time.
-find /opt/loom/releases -mindepth 1 -maxdepth 1 -type d | sort -r | tail -n +4 | xargs -r rm -rf
-
-step "Settings"
-install -d -m 0750 -o root -g loom "$CONFIG_DIR"
-# The vault key is outside the data disk and recoverable independently in SSM.
-# Never replace an existing key: that would make every saved login unreadable.
-KEY_READ="$(mktemp)"
-KEY_ERROR="$(mktemp)"
-if aws ssm get-parameter --region "$LOOM_REGION" --name /loom/secret-key --with-decryption \
-  --query Parameter.Value --output text >"$KEY_READ" 2>"$KEY_ERROR"; then
-  KEY_VALUE="$(tr -d '\r\n' <"$KEY_READ")"
-  if [ -f "$CONFIG_DIR/secret.key" ] && [ "$(tr -d '\r\n' <"$CONFIG_DIR/secret.key")" != "$KEY_VALUE" ]; then
-    rm -f "$KEY_READ" "$KEY_ERROR"
-    echo "The local vault key differs from its recovery copy. Refusing to replace either." >&2
-    exit 1
-  fi
-  (umask 027 && printf '%s\n' "$KEY_VALUE" >"$CONFIG_DIR/secret.key")
-elif grep -q 'ParameterNotFound' "$KEY_ERROR"; then
-  if [ ! -f "$CONFIG_DIR/secret.key" ]; then
-    (umask 027 && openssl rand -base64 32 >"$CONFIG_DIR/secret.key")
-  fi
-  # The value is read from a file, never placed in a command line or printed.
-  aws ssm put-parameter --region "$LOOM_REGION" --name /loom/secret-key --type SecureString \
-    --value "file://$CONFIG_DIR/secret.key" --no-overwrite >/dev/null
-else
-  rm -f "$KEY_READ" "$KEY_ERROR"
-  echo "Could not read the vault recovery key. Refusing to generate a replacement." >&2
-  exit 1
+export WORKSPACE_PIDS
+bash "$LOOM_RELEASE/infra/host/configure.sh"
+step "Release"
+# Preserve the privileged publisher before any user-writable dependency installation.
+PUBLISHER="$CONFIG_DIR/transport-publisher/$LOOM_RELEASE_ID"
+install -d -m 0755 -o root -g root "$CONFIG_DIR/transport-publisher" "$PUBLISHER" "$PUBLISHER/chunks"
+install -m 0644 -o root -g root "$LOOM_RELEASE/out/main/transport-proof.js" "$PUBLISHER/transport-proof.js"
+cp -R "$LOOM_RELEASE/out/main/chunks/." "$PUBLISHER/chunks/"
+chown -R root:root "$PUBLISHER"
+chmod -R go-w "$PUBLISHER"
+# Only dependency output is writable by loom; root-run code and every ancestor stay protected.
+install -d -m 0755 -o loom -g loom "$LOOM_RELEASE/node_modules"
+sudo -u loom -H sh -c "cd '$LOOM_RELEASE' && pnpm install --prod --frozen-lockfile --reporter=append-only" | tail -n 5
+node --check "$LOOM_RELEASE/out/main/runner.js"
+docker build --quiet --tag "loom-workspace:$LOOM_RELEASE_ID" \
+  --build-arg LOOM_UID="$(id -u loom)" --build-arg LOOM_GID="$(id -g loom)" \
+  "$LOOM_RELEASE/images/workspace"
+if [ "$WORKSPACE_RUNTIME" = kata ]; then
+  docker build --quiet --tag "loom-workspace-kata:$LOOM_RELEASE_ID" \
+    --build-arg "WORKSPACE_IMAGE=loom-workspace:$LOOM_RELEASE_ID" "$LOOM_RELEASE/images/workspace-kata"
 fi
-unset KEY_VALUE
-rm -f "$KEY_READ" "$KEY_ERROR"
-setting() {
-  aws ssm get-parameter --region "$LOOM_REGION" --name "/loom/$1" --with-decryption \
-    --query Parameter.Value --output text 2>/dev/null || true
-}
-GOOGLE_CLIENT_ID="$(setting google-client-id)"
-(
-  umask 027
-  cat >"$CONFIG_DIR/runner.env" <<ENV
-LOOM_DATA_DIR=$DATA_DIR
-LOOM_SECRET_KEY=$(cat "$CONFIG_DIR/secret.key")
-LOOM_RUNNER_HOST=127.0.0.1
-LOOM_RUNNER_PORT=$RUNNER_PORT
-LOOM_WORKSPACE_PLACEMENT=container
-LOOM_WORKSPACE_CONTAINER_RUNTIME=$WORKSPACE_RUNTIME
-LOOM_WORKSPACE_KATA_IMAGE=loom-workspace-kata:latest
-LOOM_WORKSPACE_DOCKER_DISK_GB=${LOOM_WORKSPACE_DOCKER_DISK_GB:-16}
-LOOM_WORKSPACE_APPARMOR=loom-workspace
-LOOM_WORKSPACE_IDLE_MINUTES=${LOOM_WORKSPACE_IDLE_MINUTES:-30}
-LOOM_WORKSPACE_MEMORY=${LOOM_WORKSPACE_MEMORY:-4g}
-LOOM_WORKSPACE_CPUS=${LOOM_WORKSPACE_CPUS:-2}
-LOOM_WORKSPACE_PIDS=${LOOM_WORKSPACE_PIDS:-$WORKSPACE_PIDS}
-LOOM_LOGIN_PROXY_PORT=$LOGIN_PROXY_PORT
-LOOM_CLAUDE_FRONT_URL=https://$LOOM_HOSTNAME:$CLAUDE_FRONT_PORT
-LOOM_CODEX_FRONT_URL=https://$LOOM_HOSTNAME:$CODEX_FRONT_PORT
-LOOM_GITHUB_FRONT_URL=https://$LOOM_HOSTNAME
-LOOM_PUBLIC_URL=https://$LOOM_HOSTNAME
-LOOM_GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID
-LOOM_GOOGLE_CLIENT_SECRET=$(setting google-client-secret)
-LOOM_SIGN_IN_DOMAINS=$(setting sign-in-domains)
-LOOM_PILOT_EMAILS=$(setting pilot-emails)
-LOOM_GITHUB_CLIENT_ID=$(setting github-client-id)
-LOOM_GITHUB_CLIENT_SECRET=$(setting github-client-secret)
-LOOM_GITHUB_APP_SLUG=$(setting github-app-slug)
-ENV
-)
-chgrp loom "$CONFIG_DIR/secret.key" "$CONFIG_DIR/runner.env"
-
+if [ "${LOOM_MONITORING_ENABLED:-0}" = 1 ]; then
+  bash "$LOOM_RELEASE/infra/host/monitoring.sh"
+fi
 step "TLS proxy"
 # Port 80 is closed, so the certificate is proven over 443 alone and nothing redirects.
 #
@@ -229,6 +137,8 @@ https://$LOOM_HOSTNAME:$CODEX_FRONT_PORT {
 CADDY
 caddy validate --config "$DRAFT" --adapter caddyfile >/dev/null 2>&1 ||
   { caddy validate --config "$DRAFT" --adapter caddyfile 2>&1 | grep '"error"' | cut -c1-300 >&2; exit 1; }
+ln -sfn "$LOOM_RELEASE" /opt/loom/current
+mv "$CONFIG_DIR/runner.env.next" "$CONFIG_DIR/runner.env"
 install -m 0644 "$DRAFT" /etc/caddy/Caddyfile
 rm -f "$DRAFT"
 # The bridge only exists once Docker is up, and the proxy cannot listen on it before then.
@@ -237,6 +147,7 @@ printf '[Unit]\nAfter=docker.service\nWants=docker.service\n' >/etc/systemd/syst
 systemctl daemon-reload
 systemctl enable --quiet caddy
 systemctl reload-or-restart caddy
+bash "$LOOM_RELEASE/infra/host/transport-proof.sh"
 
 step "Runner service"
 cat >/etc/systemd/system/loom-runner.service <<UNIT
@@ -263,13 +174,15 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 UNIT
 systemctl daemon-reload
-if [ -z "$GOOGLE_CLIENT_ID" ]; then
-  # Without sign-in the runner would hand out a developer token. Not on the internet.
-  systemctl disable --quiet --now loom-runner || true
-  echo "Sign-in is not set up (/loom/google-client-id is missing): the runner is NOT running."
-else
-  systemctl enable --quiet loom-runner
-  systemctl restart loom-runner
-  sleep 3
-  systemctl is-active loom-runner
-fi
+
+systemctl enable --quiet loom-runner
+systemctl restart loom-runner
+for _ in $(seq 180); do
+  if curl -fsS --max-time 3 "http://127.0.0.1:$RUNNER_PORT/healthz" >/dev/null; then
+    echo "Release $LOOM_RELEASE_ID is ready. Matching desktop: https://$LOOM_HOSTNAME/download"
+    exit 0
+  fi
+  sleep 2
+done
+echo 'Runner did not become ready; inspect journalctl -u loom-runner' >&2
+exit 1

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { googleClient } from '../auth/google'
+import { createHostProof } from '../auth/host-proof'
 import { destroyAllTerminals } from '../pty'
 import { closeAllSessions } from '../sessions/service'
 import { workspacePlacement } from '../workspace/placement'
@@ -38,22 +39,48 @@ function listOf(value: string): string[] {
 
 /**
  * Sign-in is on when a Google client is configured, and then all of it must be. The client
- * secret and the pilot list are host configuration: neither is ever sent to a desktop.
+ * secret and first owner's email are host configuration; membership lives in SQLite.
  */
-function readSignIn(env: NodeJS.ProcessEnv): SignInConfig | undefined {
+async function readSignIn(env: NodeJS.ProcessEnv): Promise<SignInConfig | undefined> {
   const clientId = env['LOOM_GOOGLE_CLIENT_ID']
-  if (clientId === undefined || clientId === '') return undefined
-  const pilot = new Set(
-    listOf(required(env, 'LOOM_PILOT_EMAILS', 'the email addresses allowed to sign in, separated by commas'))
+  if (clientId === undefined || clientId === '') {
+    if (env['LOOM_GOOGLE_CLIENT_SECRET'] || env['LOOM_SIGN_IN_DOMAINS'] || env['LOOM_OWNER_EMAIL'])
+      throw new Error('LOOM_GOOGLE_CLIENT_ID is required when sign-in settings are present')
+    return undefined
+  }
+  const publicUrl = required(env, 'LOOM_PUBLIC_URL', 'the https address people reach this runner at')
+  const parsed = new URL(publicUrl)
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.pathname !== '/' ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash
   )
+    throw new Error('LOOM_PUBLIC_URL must be an https origin')
+  const signingKey = await readFile(
+    required(env, 'LOOM_RUNNER_SIGNING_KEY_FILE', 'the durable Ed25519 private key'),
+    'utf8'
+  )
+  createHostProof(signingKey, parsed.origin, 'startup-validation')
+  const domains = listOf(
+    required(env, 'LOOM_SIGN_IN_DOMAINS', 'the Google Workspace domains that may sign in')
+  )
+  const ownerEmail = required(env, 'LOOM_OWNER_EMAIL', 'the first organization owner').trim().toLowerCase()
+  if (domains.length === 0 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail))
+    throw new Error('Valid sign-in domains and a first-owner email are required')
   return {
     google: googleClient({
       clientId,
       clientSecret: required(env, 'LOOM_GOOGLE_CLIENT_SECRET', 'the secret of the Google OAuth client')
     }),
-    domains: listOf(required(env, 'LOOM_SIGN_IN_DOMAINS', 'the Google Workspace domains that may sign in')),
-    isAdmitted: (email) => pilot.has(email.toLowerCase()),
-    publicUrl: required(env, 'LOOM_PUBLIC_URL', 'the https address people reach this runner at')
+    googleClientId: clientId,
+    domains,
+    ownerEmail,
+    signingKey,
+    transportProofFile: required(env, 'LOOM_TRANSPORT_PROOF_FILE', 'the root-published TLS key binding'),
+    publicUrl: parsed.origin
   }
 }
 
@@ -126,7 +153,24 @@ async function readConfig(env: NodeJS.ProcessEnv): Promise<RunnerConfig> {
   )
   if (secretKey.length !== 32) throw new Error('LOOM_SECRET_KEY must decode to exactly 32 bytes')
   await mkdir(dataDir, { recursive: true })
-  const signIn = readSignIn(env)
+  const signIn = await readSignIn(env)
+  const maxRunningWorkspaces = Number(
+    signIn === undefined
+      ? (env['LOOM_MAX_RUNNING_WORKSPACES'] ?? 1000)
+      : required(env, 'LOOM_MAX_RUNNING_WORKSPACES', 'the measured host capacity')
+  )
+  const minFreeGB = Number(
+    signIn === undefined
+      ? (env['LOOM_MIN_FREE_DISK_GB'] ?? 0)
+      : required(env, 'LOOM_MIN_FREE_DISK_GB', 'the measured data-disk reserve')
+  )
+  if (
+    !Number.isSafeInteger(maxRunningWorkspaces) ||
+    maxRunningWorkspaces < 1 ||
+    !Number.isFinite(minFreeGB) ||
+    minFreeGB < 0
+  )
+    throw new Error('Capacity must be a positive workspace count and a nonnegative disk reserve')
   const idleMinutes = Number(env['LOOM_WORKSPACE_IDLE_MINUTES'] ?? 30)
   if (!Number.isFinite(idleMinutes) || idleMinutes < 0 || idleMinutes > 10080) {
     throw new Error('LOOM_WORKSPACE_IDLE_MINUTES must be between 0 and 10080')
@@ -145,6 +189,11 @@ async function readConfig(env: NodeJS.ProcessEnv): Promise<RunnerConfig> {
     placement: workspacePlacement('container'),
     allowLocalRemotes: env['LOOM_RUNNER_ALLOW_LOCAL_REMOTES'] === '1',
     idleMs: idleMinutes * 60_000,
+    maxRunningWorkspaces,
+    minFreeDiskBytes: minFreeGB * 1024 ** 3,
+    ...(env['LOOM_OPERATOR_TOKEN'] ? { operatorToken: env['LOOM_OPERATOR_TOKEN'] } : {}),
+    ...(env['LOOM_DOWNLOAD_DIR'] ? { downloadDir: env['LOOM_DOWNLOAD_DIR'] } : {}),
+    ...(env['LOOM_RELEASE_ID'] ? { release: env['LOOM_RELEASE_ID'] } : {}),
     ...readLogins(env),
     ...readGithub(env)
   }

@@ -7,6 +7,8 @@ ROOT=$(mktemp -d /var/tmp/loom-kata-check.XXXXXX)
 NAME=$(basename "$ROOT" | tr '[:upper:].' '[:lower:]-')
 A="$NAME-a"
 B="$NAME-b"
+# Workspaces reach the login proxy under a name Docker points at the host, as this one is.
+HOST_NAME=loom-host.test
 cleanup() {
   local status=$?
   if [ "$status" -ne 0 ]; then
@@ -46,6 +48,7 @@ start() {
   local name=$1 slot=$2
   docker run -d --init --name "$name" --runtime kata --memory 3g --cpus 1 \
     --pids-limit 2048 --cap-add SYS_ADMIN --cap-add NET_ADMIN --cap-add SYS_RESOURCE --cap-add SYS_PTRACE \
+    --add-host "$HOST_NAME:host-gateway" \
     --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
     --mount "type=bind,source=$ROOT/$slot/checkout,target=$ROOT/$slot/checkout" \
     --mount "type=bind,source=$ROOT/$slot/home,target=/home/loom" \
@@ -66,6 +69,11 @@ start "$A" a
 [ "$(inside uname -r)" != "$(uname -r)" ]
 inside test ! -e "$ROOT/host-only"
 pass 'guest kernel and non-root execution'
+# A reloaded Docker 29 forgets the host's address, and containers started after it get none.
+BRIDGE=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')
+read -r HOST_ADDRESS _ < <(inside getent ahostsv4 "$HOST_NAME")
+[ -n "$BRIDGE" ] && [ "$HOST_ADDRESS" = "$BRIDGE" ]
+pass "the host's name resolves to the bridge"
 inside docker info --format '{{.Driver}}' | grep -Eq '^(overlay2|overlayfs)$'
 inside docker version --format '{{.Server.Version}}'
 inside docker compose version --short

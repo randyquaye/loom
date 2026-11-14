@@ -1,7 +1,9 @@
 import { create } from 'zustand'
 import type { CloudStatus } from '../../shared/ipc-contract'
+import { useNotifications } from './notifications'
 import { useProjects } from './projects'
 import { useSessions } from './sessions'
+import { useOrganization } from './organization'
 
 interface CloudState {
   status: CloudStatus
@@ -12,11 +14,13 @@ export const useCloud = create<CloudState>(() => ({ status: { state: 'off' } }))
 
 /**
  * Cloud workspaces can only be listed while the runner can be asked, and whatever their
- * tabs did while it could not is missing here. Both are fetched when the connection comes up.
+ * tabs did while it could not is missing here. Both are fetched when the connection comes up,
+ * and so are the runner's notifications.
  */
 async function connected(): Promise<void> {
   await useProjects.getState().load()
   await useSessions.getState().catchUp()
+  await useNotifications.getState().load()
 }
 
 /**
@@ -26,6 +30,7 @@ async function connected(): Promise<void> {
 async function stopped(): Promise<void> {
   useSessions.setState({ activity: await window.loom.sessions.activity() })
   await useProjects.getState().load()
+  await useNotifications.getState().load()
 }
 
 let subscribed = false
@@ -36,6 +41,7 @@ export function subscribeCloud(): void {
   let pushed = false
   const apply = (status: CloudStatus): void => {
     const before = useCloud.getState().status.state
+    if (status.state !== 'connected') useOrganization.getState().reset()
     useCloud.setState({ status })
     if (status.state === 'connected' && before !== 'connected') {
       void connected().catch((error: unknown) => console.error('Could not catch up with the runner', error))

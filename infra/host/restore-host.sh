@@ -2,6 +2,7 @@
 # Runs only on a NEW rehearsal host with a RESTORED volume. Never on the pilot host.
 set -euo pipefail
 : "${LOOM_REGION:?}"
+: "${LOOM_PARAMETER_PREFIX:?}"
 : "${LOOM_RESTORED_VOLUME:?}"
 : "${LOOM_ARTIFACT_BUCKET:?}"
 : "${LOOM_RESTORE_ARCHIVE:?}"
@@ -52,7 +53,7 @@ sudo -u loom -H sh -c 'cd /opt/loom/rehearsal && pnpm install --prod --frozen-lo
 
 # No sign-in fronts, login service, model calls, Docker image, public listener, or DNS.
 # The key stays in the process environment; no secret is copied to output or arguments.
-LOOM_SECRET_KEY="$(aws ssm get-parameter --region "$LOOM_REGION" --name /loom/secret-key \
+LOOM_SECRET_KEY="$(aws ssm get-parameter --region "$LOOM_REGION" --name "$LOOM_PARAMETER_PREFIX/secret-key" \
   --with-decryption --query Parameter.Value --output text)"
 export LOOM_SECRET_KEY
 cd /opt/loom/rehearsal

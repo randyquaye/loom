@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import type Database from 'better-sqlite3'
 import type { ProjectRow } from '../../shared/ipc-contract'
+import { DEFAULT_AGENT_MODES } from '../../shared/models'
 import { runnerSchemas, type RunnerContract, type UserInstructions } from '../../shared/runner-contract'
 import { attachmentFileName, writeAttachment } from '../context/materialize'
 import { getProjectOrThrow, insertProject, listProjects } from '../db/repos/projects'
 import { getWorkspaceOrThrow, listWorkspaces } from '../db/repos/workspaces'
 import { deleteEnvVar, envNames, listEnvVars, setEnvVar } from '../env/vars'
 import type { Logins } from '../logins/service'
+import type { Notifications } from '../notifications/service'
 import { assertCloneableUrl } from '../git/projects'
 import { slugify } from '../git/slug'
 import { composeInstructions } from '../instructions/compose'
@@ -17,6 +19,7 @@ import { registerGitIpc } from '../ipc/git'
 import { registerGithubIpc } from '../ipc/github'
 import { registerHistoryIpc, searchHistory } from '../ipc/history'
 import { registerLintIpc } from '../ipc/lint'
+import { registerNotificationsIpc } from '../ipc/notifications'
 import { handle, register, type Caller, type IpcDeps } from '../ipc/registry'
 import { registerSessionsIpc } from '../ipc/sessions'
 import { registerTerminalIpc } from '../ipc/terminal'
@@ -37,6 +40,9 @@ import type { WorkspacePlacement } from '../workspace/placement'
 import type { WorkspacePowerService } from '../workspace/power'
 import { cloudHealth } from './health'
 import type { AccessRules } from './access'
+import type { OrgService } from '../org/service'
+import type { RunnerAdmission } from './admission'
+import type { SignInConfig } from './runner'
 
 export interface RunnerHandlerOptions {
   placement: WorkspacePlacement
@@ -49,6 +55,12 @@ export interface RunnerHandlerOptions {
   /** Present on a runner that keeps its users' agent logins itself. */
   logins: Logins | null
   power?: WorkspacePowerService
+  notifications?: Notifications
+  org?: OrgService | null
+  admission?: RunnerAdmission
+  signIn?: SignInConfig | undefined
+  removeMember?(actorId: string, userId: string): Promise<void>
+  purgeMember?(actorId: string, userId: string): Promise<void>
 }
 
 /** A runner always knows who is calling; the desktop's window is the only caller that has no name. */
@@ -180,7 +192,56 @@ export function registerRunnerHandlers(deps: IpcDeps, options: RunnerHandlerOpti
   registerSessionsIpc(deps)
   registerCommentsIpc(deps)
   registerHistoryIpc(deps)
-  handle('cloud:health', () => cloudHealth(deps.dataRoot))
+  if (options.notifications !== undefined) registerNotificationsIpc(options.notifications)
+  handle('cloud:health', (_input, caller) =>
+    options.org === null || options.org === undefined || options.org.owner(signedIn(caller).userId)
+      ? cloudHealth(deps.dataRoot)
+      : null
+  )
+  const organization = (): OrgService => {
+    if (options.org === null || options.org === undefined)
+      throw new Error('This development runner has no organization')
+    return options.org
+  }
+  handle('org:get', async (_input, caller) => {
+    const overview = options.org?.current(signedIn(caller).userId) ?? null
+    if (overview === null || overview.role !== 'owner') return overview
+    return {
+      ...overview,
+      settings: {
+        domains: options.signIn?.domains ?? [],
+        googleClientId: options.signIn?.googleClientId ?? ''
+      },
+      health: await cloudHealth(deps.dataRoot),
+      usage: db
+        .prepare(
+          `SELECT u.id AS userId, u.email,
+        COUNT(CASE WHEN w.power_state IN ('starting','running','stopping','error')
+          OR w.state IN ('initializing','setting_up') THEN 1 END) AS running
+        FROM org_members m JOIN users u ON u.id = m.user_id
+        LEFT JOIN workspaces w ON w.owner_id = u.id
+        GROUP BY u.id ORDER BY u.email`
+        )
+        .all() as Array<{ userId: string; email: string; running: number }>
+    }
+  })
+  handle('org:update', ({ name }, caller) => organization().rename(signedIn(caller).userId, name))
+  handle('org:members', (_input, caller) => organization().members(signedIn(caller).userId))
+  handle('org:invite', ({ email }, caller) => organization().createInvite(signedIn(caller).userId, email))
+  handle('org:invites', (_input, caller) => organization().invites(signedIn(caller).userId))
+  handle('org:revokeInvite', ({ id }, caller) => organization().revokeInvite(signedIn(caller).userId, id))
+  handle('org:setRole', ({ userId, role }, caller) =>
+    organization().setRole(signedIn(caller).userId, userId, role)
+  )
+  handle('org:removeMember', ({ userId }, caller) => {
+    if (options.removeMember === undefined) throw new Error('Member cleanup is not available')
+    return options.removeMember(signedIn(caller).userId, userId)
+  })
+  handle('org:purgeMember', ({ userId }, caller) => {
+    if (options.purgeMember === undefined) throw new Error('Member cleanup is not available')
+    return options.purgeMember(signedIn(caller).userId, userId)
+  })
+  handle('org:log', ({ before }, caller) => organization().adminLog(signedIn(caller).userId, before))
   if (options.power !== undefined) {
     const { power } = options
     handle('workspaces:power', ({ workspaceId }) => power.refresh(workspaceId))
@@ -200,17 +261,22 @@ export function registerRunnerHandlers(deps: IpcDeps, options: RunnerHandlerOpti
   handle('workspaces:list', ({ projectId }, caller) =>
     listWorkspaces(db, projectId).filter((row) => row.ownerId === signedIn(caller).userId)
   )
-  handle('workspaces:add', ({ projectId, name, baseRef }, caller) =>
-    createWorkspace({
-      db,
-      dataRoot: deps.dataRoot,
-      projectId,
-      name,
-      baseRef,
-      ownerId: signedIn(caller).userId,
-      ...options.placement
-    })
-  )
+  // Every workspace made here is stamped: with what its owner chose, or with the defaults.
+  handle('workspaces:add', ({ projectId, name, baseRef, modes }, caller) => {
+    const userId = signedIn(caller).userId
+    const create = () =>
+      createWorkspace({
+        db,
+        dataRoot: deps.dataRoot,
+        projectId,
+        name,
+        baseRef,
+        ownerId: userId,
+        modes: modes ?? DEFAULT_AGENT_MODES,
+        ...options.placement
+      })
+    return options.admission === undefined ? create() : options.admission.create(userId, create)
+  })
   handle('sessions:activity', (_input, caller) =>
     options.access.activityFor(signedIn(caller).userId, sessionActivity())
   )

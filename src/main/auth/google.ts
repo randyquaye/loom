@@ -9,18 +9,25 @@ const CLOCK_SKEW_SECONDS = 60
 
 /** What Google vouches for about the person who just signed in. */
 export interface GoogleIdentity {
+  subject: string
   email: string
   emailVerified: boolean
   /** The Google Workspace domain; null for a personal account. */
   hostedDomain: string | null
+  identityToken: string
 }
 
 /** The two things Loom asks of Google. A stand-in for it in tests implements the same. */
 export interface GoogleClient {
   /** Where to send the browser so the person can choose their account. */
-  authorizeUrl(input: { state: string; codeChallenge: string; redirectUri: string }): string
+  authorizeUrl(input: { state: string; codeChallenge: string; redirectUri: string; nonce: string }): string
   /** Swaps Google's code for an identity, asking Google directly; null when it cannot be trusted. */
-  identify(input: { code: string; codeVerifier: string; redirectUri: string }): Promise<GoogleIdentity | null>
+  identify(input: {
+    code: string
+    codeVerifier: string
+    redirectUri: string
+    nonce: string
+  }): Promise<GoogleIdentity | null>
 }
 
 /**
@@ -33,7 +40,7 @@ export interface GoogleClient {
  * Issuer, audience and age are still checked, so a token minted for another app cannot be
  * replayed here.
  */
-function readIdToken(idToken: string, clientId: string): GoogleIdentity | null {
+function readIdToken(idToken: string, clientId: string, nonce: string): GoogleIdentity | null {
   const payload = idToken.split('.')
   if (payload.length !== 3 || payload[1] === undefined) return null
   let claims: Record<string, unknown>
@@ -50,6 +57,7 @@ function readIdToken(idToken: string, clientId: string): GoogleIdentity | null {
     typeof claims['iss'] !== 'string' ||
     !ISSUERS.has(claims['iss']) ||
     claims['aud'] !== clientId ||
+    claims['nonce'] !== nonce ||
     expires + CLOCK_SKEW_SECONDS < now ||
     issued - CLOCK_SKEW_SECONDS > now ||
     typeof claims['sub'] !== 'string' ||
@@ -60,17 +68,19 @@ function readIdToken(idToken: string, clientId: string): GoogleIdentity | null {
   }
   const domain = claims['hd']
   return {
+    subject: claims['sub'],
     email: email.toLowerCase(),
     // Google sends this as a boolean or the string "true", depending on the endpoint.
     emailVerified: claims['email_verified'] === true || claims['email_verified'] === 'true',
-    hostedDomain: typeof domain === 'string' && domain !== '' ? domain.toLowerCase() : null
+    hostedDomain: typeof domain === 'string' && domain !== '' ? domain.toLowerCase() : null,
+    identityToken: idToken
   }
 }
 
 /** The real Google. The client secret it holds never leaves the runner's host. */
 export function googleClient(config: { clientId: string; clientSecret: string }): GoogleClient {
   return {
-    authorizeUrl({ state, codeChallenge, redirectUri }) {
+    authorizeUrl({ state, codeChallenge, redirectUri, nonce }) {
       const query = new URLSearchParams({
         client_id: config.clientId,
         redirect_uri: redirectUri,
@@ -79,12 +89,13 @@ export function googleClient(config: { clientId: string; clientSecret: string })
         state,
         code_challenge: codeChallenge,
         code_challenge_method: 'S256',
-        prompt: 'select_account'
+        prompt: 'select_account',
+        nonce
       })
       return `${AUTH_URL}?${query.toString()}`
     },
 
-    async identify({ code, codeVerifier, redirectUri }) {
+    async identify({ code, codeVerifier, redirectUri, nonce }) {
       const response = await fetch(TOKEN_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -100,7 +111,7 @@ export function googleClient(config: { clientId: string; clientSecret: string })
       }).catch(() => null)
       if (response === null || !response.ok) return null
       const body = (await response.json().catch(() => null)) as { id_token?: unknown } | null
-      return typeof body?.id_token === 'string' ? readIdToken(body.id_token, config.clientId) : null
+      return typeof body?.id_token === 'string' ? readIdToken(body.id_token, config.clientId, nonce) : null
     }
   }
 }

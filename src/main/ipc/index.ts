@@ -15,15 +15,25 @@ import { registerInstructionsIpc } from './instructions'
 import { registerIntegrationsIpc } from './integrations'
 import { registerLinearIpc } from './linear'
 import { registerLintIpc } from './lint'
+import { registerNotificationsIpc } from './notifications'
 import { registerProjectsIpc } from './projects'
 import { registerSessionsIpc } from './sessions'
 import { registerShellIpc } from './shell'
 import { registerTerminalIpc } from './terminal'
 import { registerWorkspacesIpc } from './workspaces'
 import { workspacePlacement, type WorkspacePlacement } from '../workspace/placement'
+import { createNotifications } from '../notifications/service'
+import type { Notification } from '../../shared/notifications'
 
 export { setIpcRouter, setTrustedOrigin } from './handle'
 export { handle, missingChannelHandlers, type IpcDeps } from './registry'
+
+let notificationSink: ((notification: Notification) => void) | null = null
+
+/** Wired by main once the window exists; this Mac's own notifications reach it through here. */
+export function setNotificationSink(fn: (notification: Notification) => void): void {
+  notificationSink = fn
+}
 
 export function registerIpc(
   deps: IpcDeps,
@@ -65,6 +75,10 @@ export function registerIpc(
   registerLintIpc(deps)
   registerTerminalIpc(deps)
   registerHistoryIpc(deps)
+  // No kind is raised on this Mac yet; the rail is here so that one needs nothing new.
+  registerNotificationsIpc(
+    createNotifications({ db: deps.db, changed: (notification) => notificationSink?.(notification) })
+  )
   registerExportIpc(deps)
   registerSessionsIpc(deps)
   registerCommentsIpc(deps)

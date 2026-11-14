@@ -18,7 +18,7 @@ import {
  * channel the runner serves changes its input, output or meaning: a desktop and a runner
  * that disagree refuse each other with "update" instead of misbehaving.
  */
-export const RUNNER_PROTOCOL = 3
+export const RUNNER_PROTOCOL = 6
 
 export const RUNNER_PATH = '/v1/ws'
 /** Private TCP streams use the same bearer sign-in and ownership checks as ordinary calls. */
@@ -27,7 +27,7 @@ export const RUNNER_FORWARD_PATH = '/v1/forward'
 /** WebSocket close code a runner uses when the desktop speaks another protocol version. */
 export const CLOSE_UPDATE_REQUIRED = 4400
 
-/** Close code for a connection whose sign-in has ended: signed out, revoked, or off the pilot list. */
+/** Close code for a connection whose sign-in or active membership has ended. */
 export const CLOSE_SIGNED_OUT = 4401
 
 /** Desktop to runner. The first frame on a connection is always `hello`. */

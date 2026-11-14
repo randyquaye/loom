@@ -1,7 +1,7 @@
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  { ignores: ['out/**', 'release/**', 'node_modules/**', 'test/fixtures/**'] },
+  { ignores: ['.context/**', 'out/**', 'release/**', 'node_modules/**', 'test/fixtures/**'] },
   ...tseslint.configs.recommended,
   {
     files: ['src/**/*.ts', 'src/**/*.tsx', 'test/**/*.ts', '*.config.ts', '*.config.mjs'],

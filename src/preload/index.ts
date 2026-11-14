@@ -21,6 +21,7 @@ import {
   type WorkspaceStatePush,
   type WorkspacePowerPush
 } from '../shared/ipc-contract'
+import { NOTIFICATION_CHANNEL, type Notification } from '../shared/notifications'
 
 function invoke<K extends keyof IpcContract>(
   channel: K,
@@ -91,8 +92,8 @@ const api: LoomApi = {
     start: (workspaceId) => invoke('workspaces:start', { workspaceId }),
     stop: (workspaceId) => invoke('workspaces:stop', { workspaceId }),
     list: (projectId) => invoke('workspaces:list', { projectId }),
-    add: (projectId, name, baseRef, cloud) =>
-      invoke('workspaces:add', { projectId, name, baseRef: baseRef ?? null, cloud: cloud ?? false }),
+    add: (projectId, name, baseRef, cloud, modes) =>
+      invoke('workspaces:add', { projectId, name, baseRef: baseRef ?? null, cloud: cloud ?? false, modes }),
     remove: (id) => invoke('workspaces:remove', { id }),
     setArchived: (id, archived) => invoke('workspaces:setArchived', { id, archived }),
     scripts: (workspaceId) => invoke('workspaces:scripts', { workspaceId }),
@@ -169,13 +170,32 @@ const api: LoomApi = {
   history: {
     search: (query, projectId) => invoke('history:search', { query, projectId })
   },
+  notifications: {
+    list: () => invoke('notifications:list', undefined),
+    read: () => invoke('notifications:read', undefined),
+    answer: (id, answer) => invoke('notifications:answer', { id, answer })
+  },
   cloud: {
     health: () => invoke('cloud:health', undefined),
     status: () => invoke('cloud:status', undefined),
     runner: () => invoke('cloud:runner', undefined),
-    setRunner: (url) => invoke('cloud:setRunner', { url }),
-    signIn: () => invoke('cloud:signIn', undefined),
-    signOut: () => invoke('cloud:signOut', undefined)
+    setRunner: (url, expectedEmail = '') => invoke('cloud:setRunner', { url, expectedEmail }),
+    signIn: (expectedEmail = '') => invoke('cloud:signIn', { expectedEmail }),
+    signOut: () => invoke('cloud:signOut', undefined),
+    previewInvite: (code) => invoke('cloud:previewInvite', { code }),
+    join: (code, expectedEmail = '') => invoke('cloud:join', { code, expectedEmail })
+  },
+  org: {
+    get: () => invoke('org:get', undefined),
+    update: (name) => invoke('org:update', { name }),
+    members: () => invoke('org:members', undefined),
+    invite: (email) => invoke('org:invite', { email }),
+    invites: () => invoke('org:invites', undefined),
+    revokeInvite: (id) => invoke('org:revokeInvite', { id }),
+    setRole: (userId, role) => invoke('org:setRole', { userId, role }),
+    removeMember: (userId) => invoke('org:removeMember', { userId }),
+    purgeMember: (userId) => invoke('org:purgeMember', { userId }),
+    log: (before) => invoke('org:log', { before })
   },
   logins: {
     status: () => invoke('logins:status', undefined),
@@ -197,6 +217,7 @@ const api: LoomApi = {
     unforward: (workspaceId, port) => invoke('ports:unforward', { workspaceId, port })
   },
   onWorkspacePower: (cb) => subscribe<WorkspacePowerPush>(WORKSPACE_POWER_CHANNEL, cb),
+  onNotification: (cb) => subscribe<Notification>(NOTIFICATION_CHANNEL, cb),
   onSessionEvent: (cb) => subscribe<SessionEventPush>(SESSION_EVENT_CHANNEL, cb),
   onSessionActivity: (cb) => subscribe<SessionActivity>(SESSION_ACTIVITY_CHANNEL, cb),
   onTerminalData: (cb) => subscribe<TerminalDataPush>(TERMINAL_DATA_CHANNEL, cb),

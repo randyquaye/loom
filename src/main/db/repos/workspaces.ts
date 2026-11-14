@@ -5,6 +5,7 @@ import type {
   WorkspaceRuntimeKind,
   WorkspaceState
 } from '../../../shared/ipc-contract'
+import type { AgentModes } from '../../../shared/models'
 
 export interface DbWorkspaceRow {
   id: string
@@ -85,12 +86,17 @@ export function repoBranchTaken(db: Database.Database, repoPath: string, branch:
   return row !== undefined
 }
 
-export function insertWorkspace(db: Database.Database, workspace: WorkspaceRow): void {
+/** `modes` is stamped once, here; null leaves the workspace's agents to their own CLI settings. */
+export function insertWorkspace(
+  db: Database.Database,
+  workspace: WorkspaceRow,
+  modes: AgentModes | null = null
+): void {
   db.prepare(
     `INSERT INTO workspaces
      (id, project_id, name, branch, worktree_path, created_at, archived, state, port,
-      initialization_files_copied, setup_log_path, checkout, runtime, owner_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      initialization_files_copied, setup_log_path, checkout, runtime, owner_id, claude_mode, codex_mode)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     workspace.id,
     workspace.projectId,
@@ -105,8 +111,20 @@ export function insertWorkspace(db: Database.Database, workspace: WorkspaceRow):
     workspace.setupLogPath,
     workspace.checkout,
     workspace.runtime,
-    workspace.ownerId
+    workspace.ownerId,
+    modes?.claude ?? null,
+    modes?.codex ?? null
   )
+}
+
+/** The modes a workspace was created with; undefined where none were stamped. */
+export function workspaceModes(db: Database.Database, id: string): AgentModes | undefined {
+  const row = db
+    .prepare('SELECT claude_mode AS claude, codex_mode AS codex FROM workspaces WHERE id = ?')
+    .get(id) as { [K in keyof AgentModes]: AgentModes[K] | null } | undefined
+  return row === undefined || row.claude === null || row.codex === null
+    ? undefined
+    : { claude: row.claude, codex: row.codex }
 }
 
 export function setWorkspaceState(db: Database.Database, id: string, state: WorkspaceState): void {

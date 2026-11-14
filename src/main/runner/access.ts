@@ -3,7 +3,19 @@ import { CALL_SUBJECTS, type SubjectKind } from '../../shared/call-subjects'
 import type { SessionActivity } from '../../shared/ipc-contract'
 import type { Caller } from '../ipc/registry'
 
-export type Access = 'owner' | 'open'
+export type Access = 'owner' | 'orgOwner' | 'open'
+
+const ORG_OWNER_CALLS: ReadonlySet<string> = new Set([
+  'org:update',
+  'org:members',
+  'org:invite',
+  'org:invites',
+  'org:revokeInvite',
+  'org:setRole',
+  'org:removeMember',
+  'org:purgeMember',
+  'org:log'
+])
 
 /** What the runner serves beyond the window's calls, placed the same way. */
 const RUNNER_SUBJECTS: Record<string, readonly [SubjectKind, string]> = {
@@ -17,6 +29,7 @@ const RUNNER_SUBJECTS: Record<string, readonly [SubjectKind, string]> = {
  */
 const OPEN_CALLS: ReadonlySet<string> = new Set([
   'app:ping',
+  'org:get',
   'cloud:health',
   'projects:ensure',
   'git:branches',
@@ -25,6 +38,8 @@ const OPEN_CALLS: ReadonlySet<string> = new Set([
   'sessions:activity',
   'sessions:unread',
   'history:search',
+  'notifications:list',
+  'notifications:read',
   'env:list',
   'env:set',
   'env:delete',
@@ -44,6 +59,7 @@ const OPEN_CALLS: ReadonlySet<string> = new Set([
  * a call added to the runner is closed to everyone until it is placed here.
  */
 export function accessOf(channel: string): Access | undefined {
+  if (ORG_OWNER_CALLS.has(channel)) return 'orgOwner'
   if (channel in RUNNER_SUBJECTS) return 'owner'
   return OPEN_CALLS.has(channel) ? 'open' : undefined
 }
@@ -66,7 +82,7 @@ export class NotFoundError extends Error {
 }
 
 /** Every workspace on a runner has one owner; this answers whose a thing is, and guards calls with it. */
-export function createAccess(db: Database.Database) {
+export function createAccess(db: Database.Database, isOrgOwner: (userId: string) => boolean = () => false) {
   const ownerOfWorkspace = db.prepare<[string], { owner_id: string | null }>(
     'SELECT owner_id FROM workspaces WHERE id = ?'
   )
@@ -76,14 +92,21 @@ export function createAccess(db: Database.Database) {
   const ownerOfComment = db.prepare<[string], { owner_id: string | null }>(
     'SELECT w.owner_id FROM diff_comments c JOIN workspaces w ON w.id = c.workspace_id WHERE c.id = ?'
   )
+  const ownerOfNotification = db.prepare<[string], { owner_id: string | null }>(
+    'SELECT owner_id FROM notifications WHERE id = ?'
+  )
   /** A terminal is a process, not a row: its owner is whoever's call started it. */
   const terminalOwners = new Map<string, string>()
 
   function ownerOf(kind: SubjectKind, id: string): string | null {
     if (kind === 'terminal') return terminalOwners.get(id) ?? null
-    const lookup =
-      kind === 'workspace' ? ownerOfWorkspace : kind === 'session' ? ownerOfSession : ownerOfComment
-    return lookup.get(id)?.owner_id ?? null
+    const lookups = {
+      workspace: ownerOfWorkspace,
+      session: ownerOfSession,
+      comment: ownerOfComment,
+      notification: ownerOfNotification
+    }
+    return lookups[kind].get(id)?.owner_id ?? null
   }
 
   return {
@@ -93,6 +116,10 @@ export function createAccess(db: Database.Database) {
     assertMayCall(caller: Caller, channel: string, parsed: unknown): void {
       const access = accessOf(channel)
       if (access === 'open') return
+      if (access === 'orgOwner') {
+        if (!isOrgOwner(caller.userId)) throw new Error('Only an organization owner can do this')
+        return
+      }
       const subject = RUNNER_SUBJECTS[channel]
       if (access === undefined || subject === undefined) {
         throw new Error(`${channel} is not available to users of this runner`)

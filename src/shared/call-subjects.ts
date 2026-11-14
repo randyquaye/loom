@@ -1,6 +1,6 @@
 import type { IpcContract } from './ipc-contract'
 
-export type SubjectKind = 'workspace' | 'session' | 'terminal' | 'comment'
+export type SubjectKind = 'workspace' | 'session' | 'terminal' | 'comment' | 'notification'
 
 /**
  * Which thing each call is about, and the input field that names it. The desktop reads it to
@@ -59,5 +59,6 @@ export const CALL_SUBJECTS: Partial<Record<keyof IpcContract, readonly [SubjectK
   'terminal:resize': ['terminal', 'id'],
   'terminal:destroy': ['terminal', 'id'],
   'terminal:setActive': ['terminal', 'id'],
-  'comments:remove': ['comment', 'id']
+  'comments:remove': ['comment', 'id'],
+  'notifications:answer': ['notification', 'id']
 }

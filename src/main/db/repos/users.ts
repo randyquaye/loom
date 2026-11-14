@@ -23,3 +23,31 @@ export function userForEmail(db: Database.Database, email: string): string {
   ensureUser(db, { id, email })
   return id
 }
+
+/** Google subjects are durable identities; email is mutable contact information. */
+export function userForGoogle(db: Database.Database, person: { subject: string; email: string }): string {
+  if (person.subject === '') throw new Error('Google supplied no account identity')
+  const email = person.email.trim().toLowerCase()
+  return db.transaction(() => {
+    const known = db.prepare('SELECT id FROM users WHERE google_subject = ?').get(person.subject) as
+      { id: string } | undefined
+    const addressed = db
+      .prepare('SELECT id, google_subject FROM users WHERE email = ? COLLATE NOCASE')
+      .get(email) as { id: string; google_subject: string | null } | undefined
+    if (addressed !== undefined && addressed.id !== known?.id && addressed.google_subject !== null) {
+      throw new Error('This address belongs to a different Google account; contact an organization owner')
+    }
+    if (known !== undefined) {
+      // An unbound legacy row must not be silently merged with an existing Google identity.
+      if (addressed !== undefined && addressed.id !== known.id) {
+        throw new Error('This address belongs to a different Google account; contact an organization owner')
+      }
+      db.prepare('UPDATE users SET email = ? WHERE id = ?').run(email, known.id)
+      return known.id
+    }
+    const id = addressed?.id ?? randomUUID()
+    if (addressed === undefined) ensureUser(db, { id, email })
+    db.prepare('UPDATE users SET google_subject = ?, email = ? WHERE id = ?').run(person.subject, email, id)
+    return id
+  })()
+}

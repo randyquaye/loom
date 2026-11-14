@@ -14,15 +14,19 @@ import {
   WORKSPACE_POWER_CHANNEL,
   type WorkspacePowerPush
 } from '../../shared/ipc-contract'
+import { NOTIFICATION_CHANNEL, type Notification } from '../../shared/notifications'
 import { registerBackends } from '../agents/wiring'
 import type { GoogleClient } from '../auth/google'
+import { createHostProof } from '../auth/host-proof'
 import { signInRoutes } from '../auth/routes'
 import { signInIsLive, whoHolds } from '../auth/tokens'
 import { openDb } from '../db'
 import { ensureUser } from '../db/repos/users'
+import { createOrgService } from '../org/service'
 import { setEnvSecretStore } from '../env/vars'
 import { call, parseInput } from '../ipc/registry'
-import { destroyTerminalsForCwd, keepScrollback, setTerminalSink } from '../pty'
+import { createNotifications } from '../notifications/service'
+import { destroyTerminalsForCwd, keepScrollback, listTerminals, setTerminalSink, terminalIoAt } from '../pty'
 import {
   discardRuntime,
   containerName,
@@ -49,11 +53,13 @@ import {
   setQueueSink,
   setSessionSink,
   setTitleSink,
+  setTurnStartGuard,
   sessionActivity,
   suspendWorkspaceSessions
 } from '../sessions/service'
 import { setRemoteAccess, setWorkspaceStateSink } from '../workspace/bootstrap'
 import type { WorkspacePlacement } from '../workspace/placement'
+import { createIdlePrompts } from '../workspace/idle-prompt'
 import { createWorkspacePower } from '../workspace/power'
 import { getWorkspaceOrThrow } from '../db/repos/workspaces'
 import { openForwardTarget } from '../runtime/forward'
@@ -61,6 +67,11 @@ import { containerIsRunning } from '../runtime/container'
 import { createAccess } from './access'
 import { registerRunnerHandlers } from './handlers'
 import { sameSecret, startRunnerServer } from './server'
+import { createRunnerAdmission } from './admission'
+import { cloudHealth } from './health'
+import { runnerOperations } from './operations'
+import { createMemberCleanup } from './members'
+import { createTransportProofReader } from './transport'
 
 /**
  * A stand-in for sign-in: whoever presents the token is that user. For a runner on a
@@ -72,13 +83,15 @@ export interface DevIdentity {
   email: string
 }
 
-/** People prove who they are with Google, and the pilot list decides who gets in. */
+/** Google proves identity; active membership decides admission. */
 export interface SignInConfig {
   google: GoogleClient
   /** Google Workspace domains whose accounts may sign in at all. */
   domains: string[]
-  /** The pilot list. Being in the company is not enough. */
-  isAdmitted(email: string): boolean
+  ownerEmail: string
+  googleClientId: string
+  signingKey: string
+  transportProofFile: string
   /** The runner's own address as browsers and Google reach it. */
   publicUrl: string
 }
@@ -102,6 +115,11 @@ export interface RunnerConfig {
   logins?: { host: string; port: number; fronts: Record<LoginProvider, string> }
   github?: GithubAppConfig
   idleMs?: number
+  maxRunningWorkspaces?: number
+  minFreeDiskBytes?: number
+  operatorToken?: string
+  downloadDir?: string
+  release?: string
 }
 
 export interface Runner {
@@ -112,6 +130,18 @@ export interface Runner {
 
 const SCROLLBACK_CHARS = 256 * 1024
 const ACCEPTED_MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const NEW_WORK_CALLS = new Set([
+  'workspaces:add',
+  'workspaces:start',
+  'workspaces:runAction',
+  'terminal:create',
+  'sessions:create',
+  'sessions:fork',
+  'sessions:send',
+  'sessions:sendNow',
+  'sessions:steer',
+  'sessions:steerQueued'
+])
 
 /**
  * What a starting runner owes the tabs the previous process left behind. Nothing here sends
@@ -218,7 +248,8 @@ async function keepLogins(
   db: Database.Database,
   store: SecretStore,
   config: RunnerConfig,
-  where: NonNullable<RunnerConfig['logins']>
+  where: NonNullable<RunnerConfig['logins']>,
+  isAdmitted: (userId: string) => boolean
 ): Promise<Logins> {
   let byAddress = new Map<string, string>()
   let readAt = 0
@@ -232,11 +263,7 @@ async function keepLogins(
     port: where.port,
     fronts: where.fronts,
     ...(config.github === undefined ? {} : { github: config.github }),
-    isAdmitted(userId) {
-      if (config.devIdentities.some((identity) => identity.userId === userId)) return true
-      const user = emailOf.get(userId) as { email: string } | undefined
-      return user !== undefined && config.signIn?.isAdmitted(user.email) === true
-    },
+    isAdmitted,
     // Docker is asked again for an address it has not said anything about, and at least every
     // few seconds: addresses are handed out anew as containers come and go.
     async ownerAt(address) {
@@ -253,7 +280,12 @@ async function keepLogins(
   })
   setContainerLogins(logins)
   // The runner's own clones and fetches reach GitHub as the workspace's owner.
-  setRemoteAccess((ownerId) => (ownerId === null ? Promise.resolve({}) : logins.hostGitAccess(ownerId)))
+  setRemoteAccess(async (ownerId) => {
+    if (ownerId === null || !isAdmitted(ownerId)) throw new Error('An active membership is required')
+    const access = await logins.hostGitAccess(ownerId)
+    if (!isAdmitted(ownerId)) throw new Error('An active membership is required')
+    return access
+  })
   // A sign-in the last runner process was in the middle of is over: nothing can finish it now.
   await removeSignInContainers().catch(() => {})
   await rm(path.join(config.dataDir, SIGN_INS_DIR), { recursive: true, force: true })
@@ -282,13 +314,44 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
     // Workspaces made before owners existed: on a one-user runner they can only be that user's.
     db.prepare('UPDATE workspaces SET owner_id = ? WHERE owner_id IS NULL').run(onlyUser.userId)
   }
-  const access = createAccess(db)
-  const logins = config.logins === undefined ? null : await keepLogins(db, secrets, config, config.logins)
+  const org = config.signIn === undefined ? null : createOrgService(db, config.signIn)
+  const transportProof =
+    config.signIn === undefined
+      ? () => null
+      : createTransportProofReader(
+          config.signIn.transportProofFile,
+          config.signIn.publicUrl,
+          config.signIn.signingKey
+        )
+  const isAdmitted = (userId: string) =>
+    config.devIdentities.some((identity) => identity.userId === userId) || org?.active(userId) === true
+  const access = createAccess(db, (userId) => org?.owner(userId) === true)
+  const admission = createRunnerAdmission({
+    db,
+    isAdmitted,
+    maxRunning: config.maxRunningWorkspaces ?? Number.MAX_SAFE_INTEGER,
+    minFreeBytes: config.minFreeDiskBytes ?? 0,
+    available: async () => (await cloudHealth(config.dataDir)).disk.available
+  })
+  const logins =
+    config.logins === undefined ? null : await keepLogins(db, secrets, config, config.logins, isAdmitted)
+  let ready = false
   let connectedUsers = (): string[] => []
+  let forwardedWorkspaces = (): string[] => []
   let closeForwards = (_id: string): void => {}
   let pushPower = (_push: WorkspacePowerPush): void => {}
+  let pushNotification = (_notification: Notification): void => {}
+  const notifications = createNotifications({ db, changed: (notification) => pushNotification(notification) })
+  const idle = createIdlePrompts({
+    notifications,
+    ownerOf: (id) => access.ownerOf('workspace', id),
+    isConnected: (userId) => connectedUsers().includes(userId),
+    keep: (id) => power.keep(id),
+    stop: (id) => power.stop(id)
+  })
   const power = createWorkspacePower({
     db,
+    admitStart: admission.start,
     start: (id) => runtimeFor(getWorkspaceOrThrow(db, id), config.dataDir).ensureRunning(),
     inspect: (id) => containerIsRunning(containerName(id)),
     stop: (id) => discardRuntime(getWorkspaceOrThrow(db, id)),
@@ -297,28 +360,80 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
       suspendWorkspaceSessions(db, id)
       destroyTerminalsForCwd(getWorkspaceOrThrow(db, id).worktreePath)
     },
-    changed: (push) => pushPower(push),
-    connectedUsers: () => connectedUsers(),
-    busyWorkspaces: () => Object.values(sessionActivity().bySession),
+    changed(push) {
+      pushPower(push)
+      if (push.state === 'stopped' || push.state === 'error') idle.stopped(push.workspaceId)
+    },
+    signals: {
+      busyWorkspaces: () => Object.values(sessionActivity().bySession),
+      terminalIoAt: (id) => terminalIoAt(getWorkspaceOrThrow(db, id).worktreePath),
+      forwardedWorkspaces: () => forwardedWorkspaces(),
+      runningCommand: (id) => runtimeFor(getWorkspaceOrThrow(db, id), config.dataDir).runningCommand()
+    },
+    prompts: idle,
     idleMs: config.idleMs ?? 30 * 60_000
   })
-  setRuntimePowerGate(power)
+  setRuntimePowerGate({
+    ...power,
+    assertRunning(id) {
+      admission.assertWorkspace(id)
+      power.assertRunning(id)
+    },
+    beforeStart(id) {
+      admission.assertWorkspace(id)
+      power.beforeStart(id)
+    },
+    afterStart(id) {
+      admission.assertWorkspace(id)
+      power.afterStart(id)
+    }
+  })
+  setTurnStartGuard((id) => {
+    const owner = getWorkspaceOrThrow(db, id).ownerId
+    if (owner === null) throw new Error('Workspace has no member owner')
+    admission.assertNewWork(owner)
+  })
+  const cleanup = createMemberCleanup({
+    db,
+    org,
+    secrets,
+    logins,
+    power,
+    dataDir: config.dataDir,
+    closeConnections: (userId) => server.closeWhere((caller) => caller.userId === userId)
+  })
   registerRunnerHandlers(
     { db, secrets, dataRoot: config.dataDir },
-    { placement: config.placement, allowLocalRemotes: config.allowLocalRemotes, access, logins, power }
+    {
+      placement: config.placement,
+      allowLocalRemotes: config.allowLocalRemotes,
+      access,
+      logins,
+      power,
+      notifications,
+      org,
+      admission,
+      signIn: config.signIn,
+      removeMember: cleanup.remove,
+      purgeMember: cleanup.purgeMember
+    }
   )
   keepScrollback(SCROLLBACK_CHARS)
   await recover(db)
+  idle.stoppedAll()
   persistQueues(sqliteQueueStore(db))
 
-  const signIn = config.signIn === undefined ? null : { db, isAdmitted: config.signIn.isAdmitted }
+  const signIn = config.signIn === undefined ? null : { db, isAdmitted }
   const signInPages =
     config.signIn === undefined
       ? undefined
       : signInRoutes({
           db,
           google: config.signIn.google,
-          isAdmitted: config.signIn.isAdmitted,
+          isAdmitted,
+          ...(org === null ? {} : { org }),
+          hostProof: (nonce) => createHostProof(config.signIn!.signingKey, config.signIn!.publicUrl, nonce),
+          transportProof,
           domains: config.signIn.domains,
           publicUrl: config.signIn.publicUrl,
           // One host secret, a key of its own for each purpose.
@@ -328,6 +443,43 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
   const pages = new Hono()
   if (signInPages !== undefined) pages.route('/', signInPages)
   if (logins?.githubRoutes !== undefined) pages.route('/', logins.githubRoutes)
+  pages.route(
+    '/',
+    runnerOperations({
+      ...(config.downloadDir === undefined ? {} : { downloadDir: config.downloadDir }),
+      release: config.release ?? 'development',
+      ready: () =>
+        ready && !admission.draining() && (config.signIn === undefined || transportProof() !== null),
+      setDraining: admission.setDraining,
+      status: () => {
+        const workspaces = db.prepare('SELECT id, worktree_path, state FROM workspaces').all() as Array<{
+          id: string
+          worktree_path: string
+          state: string
+        }>
+        return {
+          draining: admission.draining(),
+          activeTurns: Object.entries(sessionActivity().bySession).map(([sessionId, workspaceId]) => ({
+            sessionId,
+            workspaceId
+          })),
+          terminals: workspaces.flatMap((workspace) => {
+            const count = listTerminals(workspace.worktree_path).length
+            return count === 0 ? [] : [{ workspaceId: workspace.id, count }]
+          }),
+          forwards: forwardedWorkspaces(),
+          setup: workspaces
+            .filter((workspace) => ['initializing', 'setting_up'].includes(workspace.state))
+            .map((workspace) => workspace.id)
+        }
+      },
+      authorized(token) {
+        if (config.operatorToken !== undefined && sameSecret(token, config.operatorToken)) return true
+        const caller = signIn === null ? null : whoHolds(signIn, token)
+        return caller !== null && org?.owner(caller.userId) === true
+      }
+    })
+  )
   const server = await startRunnerServer({
     host: config.host,
     port: config.port,
@@ -353,18 +505,26 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
     // The same input checks as the window's calls, then: is this the caller's to touch?
     async dispatch(caller, channel, input) {
       const parsed = parseInput(channel, input)
+      admission.assertMember(caller.userId)
       access.assertMayCall(caller, channel, parsed)
+      if (NEW_WORK_CALLS.has(channel)) admission.assertNewWork(caller.userId)
       const result = await call(channel, parsed, caller)
       access.noteResult(caller, channel, result)
       return result
     }
   })
   connectedUsers = () => server.connectedUsers()
+  forwardedWorkspaces = () => server.forwardedWorkspaces()
+  pushNotification = (notification) => server.sendTo(notification.ownerId, NOTIFICATION_CHANNEL, notification)
   closeForwards = (id) => server.closeWorkspaceForwards(id)
   pushPower = (push) =>
     server.sendTo(access.ownerOf('workspace', push.workspaceId), WORKSPACE_POWER_CHANNEL, push)
   const idleTimer = setInterval(() => void power.sweep(), 15_000)
   idleTimer.unref()
+  const cleanupTimer = setInterval(() => void cleanup.sweep(), 24 * 60 * 60_000)
+  cleanupTimer.unref()
+  await cleanup.sweep()
+  ready = true
   /** Signing out is not complete while a terminal or chat stream of that sign-in is still open. */
   function closeConnectionsOf(signInId: string): void {
     server.closeWhere((caller) => caller.signInId === signInId)
@@ -393,13 +553,19 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
   return {
     port: server.port,
     async close() {
+      ready = false
+      admission.setDraining(true)
       clearInterval(idleTimer)
+      clearInterval(cleanupTimer)
+      await admission.close()
+      await cleanup.close()
       await power.close()
       closeAllSessions(db)
       await server.close()
       await logins?.close()
       setContainerLogins(null)
       setRuntimePowerGate(null)
+      setTurnStartGuard(null)
       setRemoteAccess(null)
       db.close()
     }

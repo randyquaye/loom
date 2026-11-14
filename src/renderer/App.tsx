@@ -1,10 +1,12 @@
 import { useEffect } from 'react'
 import { CommandPalette } from './components/ui/CommandPalette'
 import { ModalHost } from './components/ui/ModalHost'
+import { NotificationCards } from './components/notifications/NotificationCards'
 import { Splitter } from './components/ui/Splitter'
 import { ToastViewport } from './components/ui/Toast'
 import { Sidebar } from './components/sidebar/Sidebar'
 import { Home } from './routes/Home'
+import { Notifications } from './routes/Notifications'
 import { Settings } from './routes/Settings'
 import { Workspace } from './routes/Workspace'
 import { SIDEBAR_DEFAULT, SIDEBAR_MIN, sidebarMax, usePanels } from './state/panels'
@@ -76,12 +78,16 @@ export function App() {
           onCommit={commit}
         />
         {route.name === 'home' && <Home />}
+        {route.name === 'notifications' && <Notifications />}
         {route.name === 'settings' && <Settings />}
         {route.name === 'workspace' && <Workspace workspaceId={route.workspaceId} />}
       </div>
       <ModalHost />
       <CommandPalette />
-      <ToastViewport />
+      <div className="corner-stack">
+        <NotificationCards />
+        <ToastViewport />
+      </div>
     </>
   )
 }

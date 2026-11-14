@@ -1,7 +1,7 @@
 # Daily crash-consistent snapshots of the complete data disk, including SQLite's WAL.
 # The separately encrypted vault key is recovered from SSM, never from this volume.
 resource "aws_iam_role" "backups" {
-  name = "loom-pilot-backups"
+  name = "${local.global_prefix}-backups"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -18,19 +18,19 @@ resource "aws_iam_role_policy_attachment" "backups" {
 }
 
 resource "aws_dlm_lifecycle_policy" "data" {
-  description        = "Daily Loom pilot data backup"
+  description        = local.legacy ? "Daily Loom pilot data backup" : "Daily Loom ${var.stack_name} data backup"
   execution_role_arn = aws_iam_role.backups.arn
   state              = "ENABLED"
 
   policy_details {
     resource_types = ["VOLUME"]
-    target_tags    = { LoomBackup = "pilot-data" }
+    target_tags    = { LoomBackup = local.backup_tag }
 
     schedule {
       name      = "daily"
       copy_tags = true
       tags_to_add = {
-        LoomBackup = "pilot-data-snapshot"
+        LoomBackup = "${local.backup_tag}-snapshot"
       }
       create_rule {
         interval      = 24

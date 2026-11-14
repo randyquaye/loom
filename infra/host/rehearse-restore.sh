@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # Read-only by default. --apply restores to disposable infrastructure, verifies, and removes it.
-# Usage: infra/host/rehearse-restore.sh snap-0123456789abcdef0 [--apply]
+# Usage: infra/host/rehearse-restore.sh STACK snap-0123456789abcdef0 [--apply]
 set -euo pipefail
-cd "$(dirname "$0")/../.."
-SNAPSHOT="${1:-}"
-MODE="${2:---plan}"
+source "$(dirname "$0")/stack.sh"
+load_stack "${1:?Usage: rehearse-restore.sh STACK SNAPSHOT_ID [--plan|--apply]}"
+cd "$LOOM_INFRA_DIR/../.."
+SNAPSHOT="${2:-}"
+MODE="${3:---plan}"
 [[ "$SNAPSHOT" =~ ^snap-[0-9a-f]+$ ]] && [[ "$MODE" = --plan || "$MODE" = --apply ]] || {
-  echo 'Usage: rehearse-restore.sh SNAPSHOT_ID [--plan|--apply]' >&2; exit 1;
+  echo 'Usage: rehearse-restore.sh STACK SNAPSHOT_ID [--plan|--apply]' >&2; exit 1;
 }
-export AWS_PROFILE="${AWS_PROFILE:-loom}" AWS_PAGER=""
-output() { terraform -chdir=infra/host output -raw "$1"; }
+output() { terraform -chdir="$LOOM_INFRA_DIR" output -raw "$1"; }
 REGION="$(output region)"
 SOURCE_INSTANCE="$(output instance_id)"
 SOURCE_VOLUME="$(output data_volume_id)"
@@ -27,15 +28,15 @@ AMI="$(jq -r '.ImageId' <<<"$HOST")"
 PROFILE_ARN="$(output restore_instance_profile_arn)"
 ROOT_DEVICE="$(jq -r '.RootDeviceName' <<<"$HOST")"
 # Prove the recovery key exists without retrieving or printing its value on this Mac.
-aws ssm get-parameter --region "$REGION" --name /loom/secret-key --query Parameter.Name --output text >/dev/null
-NAME="loom-restore-$(date -u +%Y%m%d-%H%M%S)-$RANDOM$RANDOM"
+aws ssm get-parameter --region "$REGION" --name "$LOOM_PARAMETER_PREFIX/secret-key" --query Parameter.Name --output text >/dev/null
+NAME="loom-restore-$STACK_NAME-$(date -u +%Y%m%d-%H%M%S)-$RANDOM$RANDOM"
 EVIDENCE=".context/$NAME"
 mkdir -p "$EVIDENCE"
 jq -n --arg snapshot "$SNAPSHOT" --arg source "$SOURCE_VOLUME" --arg zone "$ZONE" \
-  --arg ami "$AMI" --arg subnet "$SUBNET" \
+  --arg ami "$AMI" --arg subnet "$SUBNET" --arg key "$LOOM_PARAMETER_PREFIX/secret-key" \
   '{snapshot:$snapshot,sourceVolume:$source,zone:$zone,ami:$ami,subnet:$subnet,
     creates:["one encrypted restored volume","one fresh host","one security group with no inbound access"],
-    keyParameter:"/loom/secret-key",publicListeners:false,providerRenewal:false,productionChanges:false}' \
+    keyParameter:$key,publicListeners:false,providerRenewal:false,productionChanges:false}' \
   >"$EVIDENCE/plan.json"
 cat "$EVIDENCE/plan.json"
 if [ "$MODE" = --plan ]; then echo "Plan saved in $EVIDENCE/plan.json. No resources changed."; exit 0; fi
@@ -150,6 +151,7 @@ export PATH="\$PATH:/snap/bin"
 command -v aws >/dev/null || snap install aws-cli --classic >/dev/null
 aws s3 cp --only-show-errors --region $REGION s3://$BUCKET/$ARCHIVE_KEY /tmp/loom-restore.tgz
 tar -xOf /tmp/loom-restore.tgz infra/host/restore-host.sh >/tmp/loom-restore-host.sh
+export LOOM_PARAMETER_PREFIX=$LOOM_PARAMETER_PREFIX
 export LOOM_REGION=$REGION LOOM_RESTORED_VOLUME=$VOLUME LOOM_ARTIFACT_BUCKET=$BUCKET
 export LOOM_RESTORE_ARCHIVE=$ARCHIVE_KEY LOOM_RESTORE_INSTANCE=$INSTANCE
 bash /tmp/loom-restore-host.sh

@@ -79,6 +79,17 @@ export function listTerminals(cwd: string): Array<{ id: string; scrollback: stri
   return live
 }
 const cwdById = new Map<string, string>()
+/** When a byte was last typed into, or printed by, a terminal of each working directory. */
+const ioAt = new Map<string, number>()
+
+function noteIo(id: string): void {
+  const cwd = cwdById.get(id)
+  if (cwd !== undefined) ioAt.set(cwd, Date.now())
+}
+
+export function terminalIoAt(cwd: string): number | undefined {
+  return ioAt.get(cwd)
+}
 /** The terminal the user is looking at, per working directory; run actions target it. */
 const activeByCwd = new Map<string, string>()
 
@@ -96,6 +107,7 @@ export function createTerminal(
   const id = randomUUID()
   const terminal = runtime.openTerminal({ cwd, env: extraEnv })
   terminal.pty.onData((data) => {
+    noteIo(id)
     remember(id, data)
     sink?.(TERMINAL_DATA_CHANNEL, { id, data })
   })
@@ -126,7 +138,10 @@ export function hasTerminal(id: string): boolean {
 }
 
 export function writeTerminal(id: string, data: string): void {
-  sessions.get(id)?.pty.write(data)
+  const terminal = sessions.get(id)
+  if (terminal === undefined) return
+  noteIo(id)
+  terminal.pty.write(data)
 }
 
 export function resizeTerminal(id: string, cols: number, rows: number): void {
@@ -151,6 +166,7 @@ export function destroyAllTerminals(): void {
 
 /** A workspace stop destroys its terminal processes, while other workspaces stay attached. */
 export function destroyTerminalsForCwd(cwd: string): void {
+  ioAt.delete(cwd)
   for (const [id, directory] of cwdById) {
     if (directory !== cwd) continue
     destroyTerminal(id)

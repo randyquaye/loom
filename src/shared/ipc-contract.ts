@@ -1,8 +1,10 @@
 import { z } from 'zod'
 import { questionAnswer, type AgentEvent, type QuestionAnswer } from './events'
 import { MAX_ATTACHMENTS, MAX_INSTANCE_INSTRUCTION_CHARS, MAX_PROJECT_INSTRUCTION_CHARS } from './limits'
-import { EFFORTS } from './models'
-import type { AuthStatus, BackendId, Effort, ModelDescriptor } from './models'
+import { CLAUDE_MODES, CODEX_MODES, EFFORTS } from './models'
+import type { AgentModes, AuthStatus, BackendId, Effort, ModelDescriptor } from './models'
+import type { Notification } from './notifications'
+import type { OrgAdminEvent, OrgInvite, OrgMember, OrgOverview, OrgRole } from './org'
 
 export interface ProjectRow {
   id: string
@@ -404,7 +406,14 @@ export interface IpcContract {
   'ports:unforward': { in: { workspaceId: string; port: number }; out: void }
   'cloud:health': { in: void; out: CloudHealth | null }
   'workspaces:add': {
-    in: { projectId: string; name: string; baseRef: string | null; cloud: boolean }
+    /** `modes` is stamped on a cloud workspace; a workspace on this Mac takes none. */
+    in: {
+      projectId: string
+      name: string
+      baseRef: string | null
+      cloud: boolean
+      modes?: AgentModes | undefined
+    }
     out: WorkspaceRow
   }
   'workspaces:remove': { in: { id: string }; out: void }
@@ -466,12 +475,32 @@ export interface IpcContract {
 
   'history:search': { in: { query: string; projectId: string | null }; out: HistoryHit[] }
 
+  /** The caller's own notifications, newest first. */
+  'notifications:list': { in: void; out: Notification[] }
+  /** Marks all of the caller's notifications read. */
+  'notifications:read': { in: void; out: void }
+  /** Answers with the notification as the answer left it. */
+  'notifications:answer': { in: { id: string; answer: string }; out: Notification }
+
   'cloud:status': { in: void; out: CloudStatus }
   'cloud:runner': { in: void; out: CloudRunner }
-  'cloud:setRunner': { in: { url: string | null }; out: CloudRunner }
+  'cloud:setRunner': { in: { url: string | null; expectedEmail: string }; out: CloudRunner }
   /** Answers once the person has finished in the browser, which can take minutes. */
-  'cloud:signIn': { in: void; out: void }
+  'cloud:signIn': { in: { expectedEmail: string }; out: void }
   'cloud:signOut': { in: void; out: void }
+  'cloud:previewInvite': { in: { code: string }; out: { host: string } }
+  'cloud:join': { in: { code: string; expectedEmail: string }; out: CloudRunner }
+
+  'org:get': { in: void; out: OrgOverview | null }
+  'org:update': { in: { name: string }; out: void }
+  'org:members': { in: void; out: OrgMember[] }
+  'org:invite': { in: { email: string }; out: { invite: OrgInvite; code: string } }
+  'org:invites': { in: void; out: OrgInvite[] }
+  'org:revokeInvite': { in: { id: string }; out: void }
+  'org:setRole': { in: { userId: string; role: OrgRole }; out: void }
+  'org:removeMember': { in: { userId: string }; out: void }
+  'org:purgeMember': { in: { userId: string }; out: void }
+  'org:log': { in: { before?: number | undefined }; out: OrgAdminEvent[] }
   'logins:status': { in: void; out: AgentLogins }
   /** The token `claude setup-token` printed. It goes to the runner's vault and nowhere else. */
   'logins:connectClaude': { in: { token: string }; out: void }
@@ -605,7 +634,8 @@ export const ipcSchemas = {
     projectId: id,
     name: workspaceName,
     baseRef: z.string().min(1).max(200).nullable(),
-    cloud: z.boolean().default(false)
+    cloud: z.boolean().default(false),
+    modes: z.object({ claude: z.enum(CLAUDE_MODES), codex: z.enum(CODEX_MODES) }).optional()
   }),
   'workspaces:remove': z.object({ id }),
   'workspaces:setArchived': z.object({ id, archived: z.boolean() }),
@@ -679,11 +709,32 @@ export const ipcSchemas = {
   'terminal:destroy': z.object({ id }),
   'terminal:setActive': z.object({ id }),
   'history:search': z.object({ query: z.string().max(200), projectId: nullableId }),
+  'notifications:list': z.undefined(),
+  'notifications:read': z.undefined(),
+  'notifications:answer': z.object({ id, answer: z.string().min(1).max(32) }),
   'cloud:status': z.undefined(),
   'cloud:runner': z.undefined(),
-  'cloud:setRunner': z.object({ url: z.string().max(2048).nullable() }),
-  'cloud:signIn': z.undefined(),
+  'cloud:setRunner': z.object({
+    url: z.string().max(2048).nullable(),
+    expectedEmail: z.string().trim().max(254).default('')
+  }),
+  'cloud:signIn': z.object({ expectedEmail: z.string().trim().max(254).default('') }),
   'cloud:signOut': z.undefined(),
+  'cloud:previewInvite': z.object({ code: z.string().min(1).max(4096) }),
+  'cloud:join': z.object({
+    code: z.string().min(1).max(4096),
+    expectedEmail: z.string().trim().max(254).default('')
+  }),
+  'org:get': z.undefined(),
+  'org:update': z.object({ name: z.string().trim().min(1).max(100) }),
+  'org:members': z.undefined(),
+  'org:invite': z.object({ email: z.email().max(254) }),
+  'org:invites': z.undefined(),
+  'org:revokeInvite': z.object({ id }),
+  'org:setRole': z.object({ userId: id, role: z.enum(['owner', 'member']) }),
+  'org:removeMember': z.object({ userId: id }),
+  'org:purgeMember': z.object({ userId: id }),
+  'org:log': z.object({ before: z.number().int().positive().optional() }),
   'logins:status': z.undefined(),
   'logins:connectClaude': z.object({ token: z.string().min(1).max(4096) }),
   'logins:connectCodex': z.undefined(),
@@ -841,8 +892,14 @@ export interface LoomApi {
     start(workspaceId: string): Promise<WorkspacePower>
     stop(workspaceId: string): Promise<WorkspacePower>
     list(projectId: string): Promise<WorkspaceRow[]>
-    /** `cloud` creates the workspace on the runner this desktop follows. */
-    add(projectId: string, name: string, baseRef?: string | null, cloud?: boolean): Promise<WorkspaceRow>
+    /** `cloud` creates the workspace on the runner this desktop follows, stamped with `modes`. */
+    add(
+      projectId: string,
+      name: string,
+      baseRef?: string | null,
+      cloud?: boolean,
+      modes?: AgentModes
+    ): Promise<WorkspaceRow>
     remove(id: string): Promise<void>
     setArchived(id: string, archived: boolean): Promise<void>
     scripts(workspaceId: string): Promise<RepoScriptsInfo>
@@ -914,15 +971,34 @@ export interface LoomApi {
   history: {
     search(query: string, projectId: string | null): Promise<HistoryHit[]>
   }
+  notifications: {
+    list(): Promise<Notification[]>
+    read(): Promise<void>
+    answer(id: string, answer: string): Promise<Notification>
+  }
   cloud: {
     health(): Promise<CloudHealth | null>
     status(): Promise<CloudStatus>
     runner(): Promise<CloudRunner>
     /** Null stops following a runner. Answers with the address as it was kept. */
-    setRunner(url: string | null): Promise<CloudRunner>
+    setRunner(url: string | null, expectedEmail?: string): Promise<CloudRunner>
     /** Opens the sign-in page in the browser; calling again abandons the earlier attempt. */
-    signIn(): Promise<void>
+    signIn(expectedEmail?: string): Promise<void>
     signOut(): Promise<void>
+    previewInvite(code: string): Promise<{ host: string }>
+    join(code: string, expectedEmail?: string): Promise<CloudRunner>
+  }
+  org: {
+    get(): Promise<OrgOverview | null>
+    update(name: string): Promise<void>
+    members(): Promise<OrgMember[]>
+    invite(email: string): Promise<{ invite: OrgInvite; code: string }>
+    invites(): Promise<OrgInvite[]>
+    revokeInvite(id: string): Promise<void>
+    setRole(userId: string, role: OrgRole): Promise<void>
+    removeMember(userId: string): Promise<void>
+    purgeMember(userId: string): Promise<void>
+    log(before?: number): Promise<OrgAdminEvent[]>
   }
   /** Agent logins for cloud workspaces, kept by the runner. */
   logins: {
@@ -940,6 +1016,7 @@ export interface LoomApi {
     unforward(workspaceId: string, port: number): Promise<void>
   }
   onWorkspacePower(cb: (push: WorkspacePowerPush) => void): () => void
+  onNotification(cb: (notification: Notification) => void): () => void
   onSessionEvent(cb: (push: SessionEventPush) => void): () => void
   onSessionActivity(cb: (push: SessionActivity) => void): () => void
   onTerminalData(cb: (push: TerminalDataPush) => void): () => void

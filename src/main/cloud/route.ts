@@ -22,6 +22,7 @@ import {
   type WorkspacePower
 } from '../../shared/ipc-contract'
 import { CALL_SUBJECTS, type SubjectKind } from '../../shared/call-subjects'
+import type { Notification } from '../../shared/notifications'
 import { MAX_IMAGE_ATTACHMENT_BYTES } from '../../shared/limits'
 import type { RunnerContract } from '../../shared/runner-contract'
 import { getProject, getProjectOrThrow } from '../db/repos/projects'
@@ -86,6 +87,7 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
   const forwards = createPortForwards({
     url: options.url,
     token: options.token,
+    ...(options.transport === undefined ? {} : { transport: options.transport }),
     isConnected: () => state === 'connected',
     async check(workspaceId) {
       const power = await runner<WorkspacePower>('workspaces:power', { workspaceId })
@@ -96,6 +98,7 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
   const client = connectRunner({
     url: options.url,
     token: options.token,
+    ...(options.transport === undefined ? {} : { transport: options.transport }),
     ...(options.onRefused === undefined ? {} : { onRefused: options.onRefused }),
     ...(options.protocol === undefined ? {} : { protocol: options.protocol }),
     onPush: fromRunner,
@@ -123,7 +126,8 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
     session: (id) => db.prepare('SELECT 1 FROM sessions WHERE id = ?').get(id) !== undefined,
     // Unknown and exited terminals use the local handlers' existing no-op behavior.
     terminal: (id) => hasTerminal(id) || cloudTerminals.get(id) !== 'live',
-    comment: (id) => db.prepare('SELECT 1 FROM diff_comments WHERE id = ?').get(id) !== undefined
+    comment: (id) => db.prepare('SELECT 1 FROM diff_comments WHERE id = ?').get(id) !== undefined,
+    notification: (id) => db.prepare('SELECT 1 FROM notifications WHERE id = ?').get(id) !== undefined
   }
 
   function activity(): SessionActivity {
@@ -221,7 +225,8 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
     const created = await runner<WorkspaceRow>('workspaces:add', {
       projectId: await runnerProject(project),
       name: input.name,
-      baseRef: input.baseRef
+      baseRef: input.baseRef,
+      modes: input.modes
     })
     return asCloud(created, project.id)
   }
@@ -269,6 +274,21 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
     if (state !== 'connected') return local
     const remote = await runner<Record<string, SessionUnread>>('sessions:unread', undefined).catch(() => ({}))
     return { ...local, ...remote }
+  }
+
+  /** Notifications come from two sources, this Mac and the runner, and are shown as one list. */
+  async function notifications(): Promise<Notification[]> {
+    const local = (await call('notifications:list', undefined)) as Notification[]
+    if (state !== 'connected') return local
+    const remote = await runner<Notification[]>('notifications:list', undefined).catch(
+      (): Notification[] => []
+    )
+    return [...local, ...remote].sort((a, b) => b.createdAt - a.createdAt)
+  }
+
+  async function readNotifications(): Promise<void> {
+    await call('notifications:read', undefined)
+    if (state === 'connected') await runner('notifications:read', undefined)
   }
 
   /**
@@ -342,6 +362,7 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
   function route(name: string, input: unknown): unknown {
     const channel = name as keyof IpcContract
     const parsed = parseInput(channel, input)
+    if (name.startsWith('org:')) return runner(channel, parsed)
     switch (channel) {
       case 'workspaces:list':
         return listWorkspaces(parsed as In<'workspaces:list'>)
@@ -366,6 +387,10 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
         return unread()
       case 'history:search':
         return searchHistory(parsed as In<'history:search'>)
+      case 'notifications:list':
+        return notifications()
+      case 'notifications:read':
+        return readNotifications()
       case 'env:list':
       case 'env:set':
       case 'env:delete':
@@ -417,6 +442,7 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
       githubReturn?.close()
       void forwards.close()
       client.close()
+      options.transport?.close()
     }
   }
 }

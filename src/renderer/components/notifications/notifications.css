@@ -1,0 +1,69 @@
+/* Cards and toasts share the bottom-right corner: cards above, toasts below. */
+.corner-stack {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--s-2);
+}
+
+.corner-stack .toast-viewport {
+  position: static;
+}
+
+.notification-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.notification-card {
+  position: relative;
+  overflow: hidden;
+  width: 320px;
+  padding: var(--s-3) var(--s-4) var(--s-4);
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-2), var(--edge-highlight);
+  animation: modal-in var(--dur-2) var(--ease);
+}
+
+.notification-title {
+  font-weight: 600;
+}
+
+.notification-detail {
+  margin: var(--s-1) 0 var(--s-3);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.notification-actions {
+  display: flex;
+  gap: var(--s-2);
+}
+
+/* Runs down over the time the card waits; the store's timer takes the card away at the end. */
+.notification-countdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--accent-2);
+  transform-origin: left;
+  animation: notification-countdown linear forwards;
+}
+
+@keyframes notification-countdown {
+  to {
+    transform: scaleX(0);
+  }
+}
+
+/* An age beside a title is an aside, not part of the name. */
+.notification-title .settings-state {
+  font-weight: 400;
+}

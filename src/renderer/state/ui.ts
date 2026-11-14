@@ -8,6 +8,9 @@ export type SettingsPage =
   | 'shortcuts'
   | 'integrations'
   | 'cloud'
+  | 'org-overview'
+  | 'org-members'
+  | 'org-log'
   | 'env'
   | 'instructions'
   | 'models'
@@ -18,7 +21,10 @@ export type SettingsPage =
 export const DEFAULT_SETTINGS_PAGE: SettingsPage = 'preferences'
 
 export type Route =
-  { name: 'home' } | { name: 'workspace'; workspaceId: string } | { name: 'settings'; page?: SettingsPage }
+  | { name: 'home' }
+  | { name: 'workspace'; workspaceId: string }
+  | { name: 'notifications' }
+  | { name: 'settings'; page?: SettingsPage }
 
 export interface ModalFlags {
   /** Project the New Workspace modal opens on; '' opens it with no project chosen; null is closed. */

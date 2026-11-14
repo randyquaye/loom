@@ -1,6 +1,7 @@
 # Build the existing workspace image first. Only Kata workspaces use this service image.
+ARG WORKSPACE_IMAGE=loom-workspace:latest
 FROM docker:29.9.3-dind AS engine
-FROM loom-workspace:latest
+FROM ${WORKSPACE_IMAGE}
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bubblewrap e2fsprogs iproute2 iptables kmod nftables socat tini \

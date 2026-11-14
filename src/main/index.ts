@@ -6,7 +6,13 @@ import { migrateProjectInstructions } from './instructions/migrate-general'
 import { openCloudAccount, type CloudAccount } from './cloud/account'
 import { createCloudRoute, type CloudRoute } from './cloud/route'
 import { setCloudAccount, setCloudStatus } from './cloud/status'
-import { missingChannelHandlers, registerIpc, setIpcRouter, setTrustedOrigin } from './ipc'
+import {
+  missingChannelHandlers,
+  registerIpc,
+  setIpcRouter,
+  setNotificationSink,
+  setTrustedOrigin
+} from './ipc'
 import { registerBackends } from './agents/wiring'
 import { destroyAllTerminals, setTerminalSink } from './pty'
 import { createSecretStore, safeStorageCipher, type SecretStore } from './secrets'
@@ -29,6 +35,7 @@ import {
   SESSION_TITLE_CHANNEL,
   WORKSPACE_STATE_CHANNEL
 } from '../shared/ipc-contract'
+import { NOTIFICATION_CHANNEL } from '../shared/notifications'
 
 app.enableSandbox()
 
@@ -53,6 +60,7 @@ function wireLiveUpdates(): void {
   setWorkspaceStateSink((push) => emit(WORKSPACE_STATE_CHANNEL, push))
   setQueueSink((push) => emit(SESSION_QUEUE_CHANNEL, push))
   setTitleSink((push) => emit(SESSION_TITLE_CHANNEL, push))
+  setNotificationSink((notification) => emit(NOTIFICATION_CHANNEL, notification))
 }
 
 /**
@@ -69,6 +77,7 @@ async function openCloud(
     account = await openCloudAccount({
       vault: secrets,
       environment: { url: process.env.LOOM_RUNNER_URL, token: process.env.LOOM_RUNNER_TOKEN },
+      development: !app.isPackaged,
       openBrowser: (url) => void openExternalSafe(url),
       follow(url, auth) {
         const route = createCloudRoute({ db, dataRoot, url, ...auth, toWindow })

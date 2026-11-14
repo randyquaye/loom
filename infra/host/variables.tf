@@ -1,7 +1,26 @@
-variable "profile" {
-  description = "AWS CLI profile of the project the host lives in."
+variable "stack_name" {
+  description = "One stack owns its names, state, parameters and snapshots. loom preserves the original pilot names."
   type        = string
   default     = "loom"
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9-]{0,16}$", var.stack_name))
+    error_message = "Use at most 17 lowercase letters, digits and hyphens, beginning with a letter."
+  }
+}
+
+variable "expected_account_id" {
+  description = "The account confirmed by the stack loader; the provider refuses any other account."
+  type        = string
+  validation {
+    condition     = can(regex("^[0-9]{12}$", var.expected_account_id))
+    error_message = "Use a 12-digit AWS account id."
+  }
+}
+
+variable "subnet_id" {
+  description = "Optional public subnet; VPC and data-disk zone follow it. Otherwise use the Region's default a-zone subnet."
+  type        = string
+  default     = null
 }
 
 variable "region" {
@@ -22,9 +41,9 @@ variable "instance_type" {
 }
 
 variable "enable_kata_workspaces" {
-  description = "Opt in to Kata workspace VMs and nested virtualization. Activation may stop the host."
+  description = "Kata workspace VMs and nested virtualization. Changing this may stop the host."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "root_gb" {
@@ -56,5 +75,15 @@ variable "snapshot_retention" {
   validation {
     condition     = var.snapshot_retention >= 1 && var.snapshot_retention <= 365 && floor(var.snapshot_retention) == var.snapshot_retention
     error_message = "Retain between 1 and 365 daily snapshots."
+  }
+}
+
+variable "alarm_email" {
+  description = "Alarm recipient. Both regional and Route 53 SNS subscriptions must be confirmed. Null leaves monitoring disabled."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.alarm_email == null ? true : can(regex("^[^[:space:]@]+@[^[:space:]@]+$", var.alarm_email))
+    error_message = "Use an email address or null."
   }
 }

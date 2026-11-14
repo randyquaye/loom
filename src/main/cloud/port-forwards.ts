@@ -1,9 +1,13 @@
 import { createServer, type AddressInfo, type Server, type Socket } from 'node:net'
 import WebSocket, { createWebSocketStream } from 'ws'
+import type { Agent } from 'node:https'
+import type { RunnerTransport } from './transport'
+import { HostProofError } from './host-proof'
 import type { PortForward } from '../../shared/ipc-contract'
 import { RUNNER_FORWARD_PATH, RUNNER_PROTOCOL } from '../../shared/runner-contract'
 
 interface ForwardOptions {
+  transport?: RunnerTransport
   url: string
   token(): Promise<string | null>
   isConnected(): boolean
@@ -25,27 +29,36 @@ export function createPortForwards(options: ForwardOptions) {
   const keyOf = (workspaceId: string, port: number) => `${workspaceId}:${port}`
 
   async function tunnel(mapping: Mapping, socket: Socket): Promise<void> {
+    let agent: Agent | undefined
     socket.pause()
     mapping.sockets.add(socket)
     socket.on('error', () => socket.destroy())
     socket.once('close', () => mapping.sockets.delete(socket))
     try {
       const bearer = await options.token()
+      if (bearer !== null) {
+        if (options.transport !== undefined) agent = await options.transport.websocketAgent()
+        else if (options.url.startsWith('wss:'))
+          throw new HostProofError('The runner needs a verified TLS transport')
+      }
       if (
         closed ||
         !options.isConnected() ||
         bearer === null ||
         socket.destroyed ||
         !mapping.server.listening
-      )
+      ) {
+        agent?.destroy()
         return void socket.destroy()
+      }
       const ws = new WebSocket(
         `${options.url}${RUNNER_FORWARD_PATH}/${mapping.workspaceId}/${mapping.port}?protocol=${RUNNER_PROTOCOL}`,
         {
           headers: { authorization: `Bearer ${bearer}` },
           handshakeTimeout: 10_000,
           maxPayload: 128 * 1024,
-          perMessageDeflate: false
+          perMessageDeflate: false,
+          agent
         }
       )
       const stream = createWebSocketStream(ws, { highWaterMark: 64 * 1024 })
@@ -57,11 +70,13 @@ export function createPortForwards(options: ForwardOptions) {
       socket.once('close', close)
       stream.on('error', close)
       ws.on('error', close)
+      ws.once('close', () => agent?.destroy())
       // A normal WebSocket EOF must flush through the local socket before its teardown.
       stream.once('end', () => stream.end())
       socket.pipe(stream).pipe(socket)
       socket.resume()
     } catch {
+      agent?.destroy()
       socket.destroy()
     }
   }

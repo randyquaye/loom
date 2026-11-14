@@ -13,6 +13,9 @@ import { m011 } from './011_owners'
 import { m012 } from './012_sign_in'
 import { m013 } from './013_pending_deliveries'
 import { m014 } from './014_workspace_power'
+import { m015 } from './015_notifications'
+import { m016 } from './016_agent_modes'
+import { m017 } from './017_organization'
 
 export interface Migration {
   name: string
@@ -33,7 +36,10 @@ const migrations: Migration[] = [
   m011,
   m012,
   m013,
-  m014
+  m014,
+  m015,
+  m016,
+  m017
 ]
 
 export function migrate(db: Database.Database): void {
