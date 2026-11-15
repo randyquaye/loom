@@ -54,11 +54,20 @@ import { eventsToMarkdown } from '../export/markdown'
 type Sink = (push: NumberedSessionEventPush) => void
 
 let sink: Sink | null = null
-let turnStartGuard: ((workspaceId: string) => void) | null = null
+type TurnStartGuard = (workspaceId: string, actorId?: string) => void
+let turnStartGuard: TurnStartGuard | null = null
 
 /** The runner pauses new turns for maintenance; already running turns keep their stream. */
-export function setTurnStartGuard(guard: ((workspaceId: string) => void) | null): void {
+export function setTurnStartGuard(guard: TurnStartGuard | null): void {
   turnStartGuard = guard
+}
+
+function assertSessionTurnAllowed(db: Database.Database, sessionId: string, actorId?: string): void {
+  if (turnStartGuard === null) return
+  const row = db.prepare('SELECT workspace_id FROM sessions WHERE id = ?').get(sessionId) as
+    { workspace_id: string } | undefined
+  if (row === undefined) throw new Error(`unknown session ${sessionId}`)
+  turnStartGuard(row.workspace_id, actorId)
 }
 
 /** Wired by main once the window exists; session events push through it. */
@@ -98,6 +107,8 @@ export interface PreparedTurn {
   promptText?: string
   displayText?: string
   messageId?: string
+  /** The human requesting execution; retained when an accepted message waits or restarts. */
+  actorId?: string
 }
 
 export class SessionLimitError extends Error {}
@@ -163,7 +174,8 @@ export function reopenSession(db: Database.Database, sessionId: string): Session
 export function createSession(
   db: Database.Database,
   input: SessionCreateInput,
-  instructionSnapshot = ''
+  instructionSnapshot = '',
+  reservedId?: string
 ): SessionRow {
   assertSessionCapacity(db, input.workspaceId)
   // A loop backend executes its tools inside Loom's own process, which is outside the container.
@@ -174,7 +186,7 @@ export function createSession(
     throw new Error(`${input.backend} cannot run in a container workspace; use Claude or Codex`)
   }
   const row: SessionRow = {
-    id: randomUUID(),
+    id: reservedId ?? randomUUID(),
     workspaceId: input.workspaceId,
     backend: input.backend,
     model: input.model,
@@ -418,14 +430,21 @@ export async function sendNow(
   text: string,
   attachments: readonly string[] = [],
   deniedRoots: readonly string[] = [],
-  messageId?: string
+  messageId?: string,
+  actorId?: string
 ): Promise<void> {
-  if (!busyTurns.has(sessionId)) return sendTurn(db, sessionId, text, attachments, deniedRoots, messageId)
+  if (!busyTurns.has(sessionId))
+    return sendTurn(db, sessionId, text, attachments, deniedRoots, messageId, actorId)
   const target = busyTurns.get(sessionId)
   const work = prepareInput(db, sessionId, text, attachments, deniedRoots)
   const prepared = work instanceof Promise ? await work : work
   if (!databaseIsLive(db)) throw new Error('Loom is shutting down')
-  const input = { ...prepared, ...(messageId === undefined ? {} : { messageId }) }
+  const input = {
+    ...prepared,
+    ...(messageId === undefined ? {} : { messageId }),
+    ...(actorId === undefined ? {} : { actorId })
+  }
+  assertSessionTurnAllowed(db, sessionId, actorId)
   beginDelivery(db, sessionId, input, 'sendNow')
   if (busyTurns.get(sessionId) !== target) return sendPreparedTurn(db, sessionId, input)
   const pending = immediate.get(sessionId) ?? []
@@ -611,16 +630,6 @@ export function dequeue(sessionId: string, index: number): QueuedMessage[] {
 }
 
 function drainQueue(db: Database.Database, sessionId: string): void {
-  if (turnStartGuard !== null) {
-    const workspace = db.prepare('SELECT workspace_id FROM sessions WHERE id = ?').get(sessionId) as
-      { workspace_id: string } | undefined
-    if (workspace === undefined) return
-    try {
-      turnStartGuard(workspace.workspace_id)
-    } catch {
-      return
-    }
-  }
   // Wait for steering acknowledgement before a queued message can start another turn.
   const promotion = promotions.get(sessionId)
   if (promotion !== undefined) {
@@ -631,6 +640,12 @@ function drainQueue(db: Database.Database, sessionId: string): void {
   if (queue === undefined) return
   const first = queue[0]
   if (first === undefined) return
+  try {
+    assertSessionTurnAllowed(db, sessionId, first.actorId)
+  } catch {
+    // Revoked requests stay waiting, rather than running as the next controller.
+    return
+  }
   const next = queueStore === null ? first : { ...first, messageId: first.messageId ?? first.id }
   // Save the handoff before removing its queue row; a crash between commits keeps the input.
   beginDelivery(db, sessionId, next, 'send')
@@ -649,13 +664,16 @@ function drainQueue(db: Database.Database, sessionId: string): void {
 export async function steerQueued(
   db: Database.Database,
   sessionId: string,
-  messageId: string
+  messageId: string,
+  actorId?: string
 ): Promise<QueuedMessage[]> {
   const queue = queues.get(sessionId) ?? []
   const input = queue.find((item) => item.id === messageId)
   const session = live.get(sessionId)
   if (input === undefined || !busyTurns.has(sessionId) || session?.steer === undefined)
     throw new Error('The message or running turn is no longer available for steering')
+  assertSessionTurnAllowed(db, sessionId, input.actorId)
+  if (actorId !== undefined) assertSessionTurnAllowed(db, sessionId, actorId)
   if (promotions.has(sessionId)) throw new Error('A queued message is being delivered')
   const promotion = { drain: false }
   promotions.set(sessionId, promotion)
@@ -679,13 +697,19 @@ export function sendTurn(
   text: string,
   attachments: readonly string[] = [],
   deniedRoots: readonly string[] = [],
-  messageId?: string
+  messageId?: string,
+  actorId?: string
 ): Promise<void> {
   try {
     const work = prepareInput(db, sessionId, text, attachments, deniedRoots)
     const send = (prepared: PreparedTurn) => {
       if (!databaseIsLive(db)) throw new Error('Loom is shutting down')
-      const input = { ...prepared, ...(messageId === undefined ? {} : { messageId }) }
+      const input = {
+        ...prepared,
+        ...(messageId === undefined ? {} : { messageId }),
+        ...(actorId === undefined ? {} : { actorId })
+      }
+      assertSessionTurnAllowed(db, sessionId, actorId)
       beginDelivery(db, sessionId, input, 'send')
       return sendPreparedTurn(db, sessionId, input)
     }
@@ -723,7 +747,7 @@ async function sendPreparedTurn(
       return
   }
   assertRuntimeRunning(gate)
-  turnStartGuard?.(gate.id)
+  turnStartGuard?.(gate.id, input.actorId)
 
   // Inlined before the busy check so a message queued behind a running turn keeps its files.
   // No await on the attachment-free path: an extra tick here lets a settling turn clear the
@@ -761,7 +785,12 @@ async function sendPreparedTurn(
     appendEvent(
       db,
       sessionId,
-      { type: 'user.text', turnId, text: input.displayText ?? body },
+      {
+        type: 'user.text',
+        turnId,
+        text: input.displayText ?? body,
+        ...(input.actorId === undefined ? {} : { actorId: input.actorId })
+      },
       input.messageId
     )
     recorded = true
@@ -792,19 +821,25 @@ async function sendPreparedTurn(
         }
       | undefined
     if (wsRow !== undefined) {
-      await writeLoomContext(wsRow.worktree_path, {
-        workspaceName: wsRow.name,
-        branch: wsRow.branch,
-        repoPath: repositoryRoot(
-          { repoPath: wsRow.repo_path },
-          { checkout: wsRow.checkout, worktreePath: wsRow.worktree_path }
-        ),
-        backend: row.backend,
-        model: row.model,
-        effort: row.effort,
-        at: Date.now(),
-        envNames: await envNames(wsRow.project_id, wsRow.owner_id)
-      }).catch(() => {})
+      const botOwner =
+        wsRow.owner_id !== null &&
+        db.prepare("SELECT 1 FROM org_members WHERE user_id=? AND kind='bot'").get(wsRow.owner_id) !==
+          undefined
+      // Bot metadata was prepared before repository code started; never follow later context mutations.
+      if (!botOwner)
+        await writeLoomContext(wsRow.worktree_path, {
+          workspaceName: wsRow.name,
+          branch: wsRow.branch,
+          repoPath: repositoryRoot(
+            { repoPath: wsRow.repo_path },
+            { checkout: wsRow.checkout, worktreePath: wsRow.worktree_path }
+          ),
+          backend: row.backend,
+          model: row.model,
+          effort: row.effort,
+          at: Date.now(),
+          envNames: await envNames(wsRow.project_id, wsRow.owner_id)
+        }).catch(() => {})
       void autoCheckpoint(wsRow.worktree_path, turnId, input.promptText ?? input.displayText ?? body).catch(
         (error: unknown) => appendError(db, sessionId, 'checkpoint.save', error)
       )
@@ -853,6 +888,7 @@ async function sendPreparedTurn(
       if (!current()) return
       const env = await workspaceEnv(db, row.workspace_id)
       if (!current()) return
+      turnStartGuard?.(gate.id, input.actorId)
       session = await backend.startSession(
         {
           workspaceId: row.workspace_id,
@@ -873,6 +909,7 @@ async function sendPreparedTurn(
       live.set(sessionId, session)
       void pump(db, sessionId, session)
     }
+    turnStartGuard?.(gate.id, input.actorId)
     if (input.images.length === 0) await session.send(body)
     else await session.send(body, input.images)
     if (!databaseIsLive(db)) return
@@ -1009,7 +1046,8 @@ export async function steerTurn(
   text: string,
   attachments: readonly string[] = [],
   deniedRoots: readonly string[] = [],
-  messageId?: string
+  messageId?: string,
+  actorId?: string
 ): Promise<void> {
   const session = live.get(sessionId)
   if (!busyTurns.has(sessionId) || session?.steer === undefined)
@@ -1017,9 +1055,14 @@ export async function steerTurn(
   const target = busyTurns.get(sessionId)
   const work = prepareInput(db, sessionId, text, attachments, deniedRoots)
   const prepared = work instanceof Promise ? await work : work
-  const input = { ...prepared, ...(messageId === undefined ? {} : { messageId }) }
+  const input = {
+    ...prepared,
+    ...(messageId === undefined ? {} : { messageId }),
+    ...(actorId === undefined ? {} : { actorId })
+  }
   if (busyTurns.get(sessionId) !== target || live.get(sessionId) !== session)
     throw new Error('The turn ended before guidance was delivered')
+  assertSessionTurnAllowed(db, sessionId, actorId)
   beginDelivery(db, sessionId, input, 'steer')
   if (messageId !== undefined) await session.steer(input.text, input.images, messageId)
   else if (input.images.length === 0) await session.steer(input.text)
@@ -1030,7 +1073,8 @@ export async function steerTurn(
 export async function answerQuestion(
   db: Database.Database,
   sessionId: string,
-  answer: QuestionAnswer
+  answer: QuestionAnswer,
+  actorId?: string
 ): Promise<void> {
   const history = sessionEvents(db, sessionId)
   const requested = history.findLast(
@@ -1039,13 +1083,20 @@ export async function answerQuestion(
   if (history.some((event) => event.type === 'question.resolved' && event.requestId === answer.requestId))
     throw new Error('Question is already closed')
   if (requested?.type === 'question.requested' && !requested.blocking && !busyTurns.has(sessionId)) {
+    assertSessionTurnAllowed(db, sessionId, actorId)
     const answers = validateQuestionAnswers(requested, answer)
     const visible = visibleQuestionAnswers(requested, answers)
     const displayText = questionAnswerText(requested, visible)
     sendDetached(
       db,
       sessionId,
-      { text: questionAnswerText(requested, answers), images: [], displayText, promptText: displayText },
+      {
+        text: questionAnswerText(requested, answers),
+        images: [],
+        displayText,
+        promptText: displayText,
+        ...(actorId === undefined ? {} : { actorId })
+      },
       'question.followup'
     )
     appendEvent(db, sessionId, {
@@ -1086,6 +1137,21 @@ export function closeAllSessions(db?: Database.Database): void {
   if (db !== undefined) retiring.add(db)
   for (const sessionId of new Set([...live.keys(), ...busyTurns.keys(), ...preparing.keys()]))
     closeSession(sessionId)
+}
+
+/** Stops bot work and discards waiting commands without closing its resumable conversation. */
+export function stopSessionWork(db: Database.Database, sessionId: string): void {
+  const active = openTurn(sessionEvents(db, sessionId))
+  const push = db.transaction(() => {
+    queueStore?.save(sessionId, [])
+    db.prepare('DELETE FROM pending_deliveries WHERE session_id = ?').run(sessionId)
+    return active === undefined
+      ? undefined
+      : recordEvent(db, sessionId, { type: 'turn.done', turnId: active.turnId, stopReason: 'cancelled' })
+  })()
+  closeSession(sessionId)
+  queueSink?.({ sessionId, items: [] })
+  if (push !== undefined) sink?.(push)
 }
 
 /** Stops a workspace's live work without closing tabs or discarding their saved input. */

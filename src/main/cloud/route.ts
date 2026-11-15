@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type Database from 'better-sqlite3'
 import {
+  BOTS_CHANGED_CHANNEL,
   CLOUD_STATUS_CHANNEL,
   WORKSPACE_POWER_CHANNEL,
   SESSION_ACTIVITY_CHANNEL,
@@ -19,13 +20,15 @@ import {
   type TerminalInfo,
   type WorkspaceRow,
   type WorkspacePowerPush,
-  type WorkspacePower
+  type WorkspacePower,
+  type BotWorkspace
 } from '../../shared/ipc-contract'
 import { CALL_SUBJECTS, type SubjectKind } from '../../shared/call-subjects'
 import type { Notification } from '../../shared/notifications'
 import { MAX_IMAGE_ATTACHMENT_BYTES } from '../../shared/limits'
 import type { RunnerContract } from '../../shared/runner-contract'
-import { getProject, getProjectOrThrow } from '../db/repos/projects'
+import { supportsBots } from '../../shared/runner-capabilities'
+import { getProject, getProjectOrThrow, listProjects } from '../db/repos/projects'
 import { getWorkspace } from '../db/repos/workspaces'
 import { userInstructions } from '../instructions/user'
 import { call, parseInput } from '../ipc/registry'
@@ -72,6 +75,7 @@ const MAC_ONLY: Partial<Record<keyof IpcContract, string>> = {
 export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
   const { db, dataRoot, toWindow } = options
   let state: ClientState['state'] = 'connecting'
+  let botsAvailable = false
   /** Runner project ids by local project id, and the reverse for results coming back. */
   const runnerProjects = new Map<string, string>()
   const localProjects = new Map<string, string>()
@@ -84,6 +88,7 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
   let activityRevision = localActivity.revision
   /** Counts connection changes, so an answer that arrives after the next change is dropped. */
   let connection = 0
+  let botGeneration = 0
   const forwards = createPortForwards({
     url: options.url,
     token: options.token,
@@ -141,6 +146,18 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
   }
 
   function fromRunner(channel: string, payload: unknown): void {
+    if (
+      channel === BOTS_CHANGED_CHANNEL &&
+      (payload as { accessChanged?: boolean }).accessChanged !== false
+    ) {
+      botGeneration += 1
+      const { botId } = payload as { botId: string }
+      for (const [id, workspace] of cloudWorkspaces) {
+        if (workspace.bot?.id !== botId) continue
+        void forwards.closeWorkspace(id)
+        cloudWorkspaces.delete(id)
+      }
+    }
     if (channel === WORKSPACE_POWER_CHANNEL) {
       const push = payload as WorkspacePowerPush
       if (push.state !== 'running' && push.state !== 'starting')
@@ -155,9 +172,18 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
 
   function changed(next: ClientState): void {
     state = next.state
+    botsAvailable = next.state === 'connected' && supportsBots(next.capabilities)
+    if (!botsAvailable) {
+      for (const [id, workspace] of cloudWorkspaces) {
+        if (workspace.bot === undefined) continue
+        void forwards.closeWorkspace(id)
+        cloudWorkspaces.delete(id)
+      }
+    }
     if (next.state !== 'connected') forwards.disconnect()
     if (next.state === 'signed-out' || next.state === 'update') void forwards.clear()
     connection += 1
+    botGeneration += 1
     // A runner that came back may be a fresh one; ask again rather than trust old ids.
     runnerProjects.clear()
     localProjects.clear()
@@ -199,22 +225,29 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
   }
 
   async function listWorkspaces(input: In<'workspaces:list'>): Promise<WorkspaceRow[]> {
+    const generation = botGeneration
     const local = (await call('workspaces:list', input)) as WorkspaceRow[]
     const project = getProject(db, input.projectId)
     const cached = [...cloudWorkspaces.values()].filter(
       (workspace) => workspace.projectId === input.projectId
     )
     if (state !== 'connected') return [...local, ...cached]
-    if (project === null || project.remoteUrl === null) return local
+    const virtual = input.projectId.startsWith('loom-bot-project:')
+      ? input.projectId.slice('loom-bot-project:'.length)
+      : null
+    if (virtual !== null && !botsAvailable) return local
+    if (virtual === null && (project === null || project.remoteUrl === null)) return local
     try {
       const remote = await runner<WorkspaceRow[]>('workspaces:list', {
-        projectId: await runnerProject(project)
+        projectId: virtual ?? (await runnerProject(project!))
       })
+      if (generation !== botGeneration) throw new Error('Bot access changed; refresh the workspace list')
       for (const old of cached) cloudWorkspaces.delete(old.id)
-      return [...local, ...remote.map((row) => asCloud(row, project.id))]
+      return [...local, ...remote.map((row) => asCloud(row, input.projectId))]
     } catch (error) {
       // Local workspaces must still list when the runner drops mid-call.
-      if (error instanceof RunnerUnreachableError) return [...local, ...cached]
+      if (error instanceof RunnerUnreachableError)
+        return [...local, ...[...cloudWorkspaces.values()].filter((row) => row.projectId === input.projectId)]
       throw error
     }
   }
@@ -240,7 +273,10 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
     if (workspace === undefined) throw new Error(`unknown cloud workspace ${input.workspaceId}`)
     return runner(channel, {
       ...input,
-      instructions: await userInstructions(db, dataRoot, workspace.projectId)
+      instructions:
+        workspace.bot === undefined
+          ? await userInstructions(db, dataRoot, workspace.projectId)
+          : { overlay: [], general: null }
     })
   }
 
@@ -359,9 +395,30 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
     return isLocal[kind]((parsed as Record<string, string>)[field] ?? '')
   }
 
+  async function openBot(input: In<'bots:open'>): Promise<BotWorkspace> {
+    const generation = botGeneration
+    const result = await runner<BotWorkspace>('bots:open', input)
+    if (generation !== botGeneration) throw new Error('Bot access changed; open the workspace again')
+    if (result.project === null || result.workspace === null) return result
+    const remoteProject = result.project
+    // The runner keys projects by the exact remote string; aliases must not replace personal mappings.
+    const local = listProjects(db).find((project) => project.remoteUrl === remoteProject.remoteUrl)
+    const project: ProjectRow = local ?? {
+      ...remoteProject,
+      id: `loom-bot-project:${remoteProject.id}`,
+      repoPath: ''
+    }
+    runnerProjects.set(project.id, remoteProject.id)
+    localProjects.set(remoteProject.id, project.id)
+    return { ...result, project, workspace: asCloud(result.workspace, project.id) }
+  }
+
   function route(name: string, input: unknown): unknown {
     const channel = name as keyof IpcContract
     const parsed = parseInput(channel, input)
+    if (name === 'bots:open') return openBot(parsed as In<'bots:open'>)
+    if (name.startsWith('bots:')) return runner(channel, parsed)
+    if (name.startsWith('subscriptions:')) return runner(channel, parsed)
     if (name.startsWith('org:')) return runner(channel, parsed)
     switch (channel) {
       case 'workspaces:list':

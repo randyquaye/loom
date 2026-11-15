@@ -18,6 +18,7 @@ export function CheckpointsMenu({
   anchorRef: RefObject<HTMLButtonElement | null>
   onClose: () => void
 }) {
+  const readOnly = workspace.bot?.access === 'view'
   const [checkpoints, setCheckpoints] = useState<CheckpointInfo[] | null>(null)
   const [loadFailed, setLoadFailed] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -90,7 +91,7 @@ export function CheckpointsMenu({
   }, [loading, saving, restoring, anchorRef])
 
   async function save() {
-    if (pendingRef.current || loading) return
+    if (readOnly || pendingRef.current || loading) return
     pendingRef.current = true
     setSaving(true)
     try {
@@ -116,7 +117,7 @@ export function CheckpointsMenu({
   }
 
   async function restore() {
-    if (restoring === null || pendingRef.current) return
+    if (readOnly || restoring === null || pendingRef.current) return
     pendingRef.current = true
     setBusy(true)
     let restored = false
@@ -147,23 +148,25 @@ export function CheckpointsMenu({
     <>
       <div className="popover-wrap checkpoints-anchor" style={position}>
         <Popover
-          open={restoring === null}
+          open={restoring === null || readOnly}
           onClose={onClose}
           anchorRef={anchorRef}
           className="checkpoints-menu"
         >
           <div className="checkpoints-head" role="presentation">
             <span className="grow">Checkpoints</span>
-            <button
-              ref={saveRef}
-              type="button"
-              role="menuitem"
-              className="btn btn-ghost"
-              disabled={loading || saving}
-              onClick={() => void save()}
-            >
-              {saving ? 'Saving…' : 'Save now'}
-            </button>
+            {!readOnly && (
+              <button
+                ref={saveRef}
+                type="button"
+                role="menuitem"
+                className="btn btn-ghost"
+                disabled={loading || saving}
+                onClick={() => void save()}
+              >
+                {saving ? 'Saving…' : 'Save now'}
+              </button>
+            )}
           </div>
           <div className="checkpoints-list" role="presentation" aria-busy={loading || saving}>
             {loading ? (
@@ -193,29 +196,31 @@ export function CheckpointsMenu({
                       {relativeTime(checkpoint.at)}
                     </time>
                   </div>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    tabIndex={-1}
-                    className="icon-btn"
-                    title="Restore checkpoint"
-                    aria-label={`Restore checkpoint: ${checkpoint.label}`}
-                    disabled={saving}
-                    onClick={() => setRestoring(checkpoint)}
-                  >
-                    <svg
-                      className="icon"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={1.5}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      tabIndex={-1}
+                      className="icon-btn"
+                      title="Restore checkpoint"
+                      aria-label={`Restore checkpoint: ${checkpoint.label}`}
+                      disabled={saving}
+                      onClick={() => setRestoring(checkpoint)}
                     >
-                      <path d="M3 10a9 9 0 1 1 2.6 8.4M3 4v6h6M12 7v5l3 2" />
-                    </svg>
-                  </button>
+                      <svg
+                        className="icon"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={1.5}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M3 10a9 9 0 1 1 2.6 8.4M3 4v6h6M12 7v5l3 2" />
+                      </svg>
+                    </button>
+                  )}
                   <button
                     type="button"
                     role="menuitem"
@@ -248,7 +253,7 @@ export function CheckpointsMenu({
           </div>
         </Popover>
       </div>
-      {restoring !== null && (
+      {restoring !== null && !readOnly && (
         <Modal
           open
           title="Restore checkpoint"

@@ -13,6 +13,7 @@ export interface ForwardTarget {
 interface ForwardingOptions {
   open?: ((caller: Caller, workspaceId: string, port: number) => Promise<ForwardTarget>) | undefined
   stillAllowed(caller: Caller): boolean
+  mayForward?(caller: Caller, workspaceId: string): boolean
 }
 
 function reject(socket: Duplex, status: number): void {
@@ -26,9 +27,11 @@ export function createForwardingServer(options: ForwardingOptions) {
   const alive = new WeakSet<WebSocket>()
   const pending = new Map<Duplex, { workspaceId: string; caller: Caller }>()
   let closed = false
+  const allowed = (caller: Caller, workspaceId: string) =>
+    options.stillAllowed(caller) && (options.mayForward?.(caller, workspaceId) ?? true)
   const heartbeat = setInterval(() => {
-    for (const [socket, { caller }] of live) {
-      if (!options.stillAllowed(caller)) socket.close(CLOSE_SIGNED_OUT, 'signed out')
+    for (const [socket, { caller, workspaceId }] of live) {
+      if (!allowed(caller, workspaceId)) socket.close(CLOSE_SIGNED_OUT, 'access ended')
       else if (!alive.has(socket)) socket.terminate()
       else {
         alive.delete(socket)
@@ -58,7 +61,7 @@ export function createForwardingServer(options: ForwardingOptions) {
       const timeout = setTimeout(() => socket.destroy(), 10_000)
       let target: ForwardTarget
       try {
-        if (!options.stillAllowed(caller)) return reject(socket, 401)
+        if (!allowed(caller, workspaceId)) return reject(socket, 401)
         target = await options.open(caller, workspaceId, port)
       } catch {
         return reject(socket, 404)
@@ -71,7 +74,7 @@ export function createForwardingServer(options: ForwardingOptions) {
         socket.destroyed ||
         target.input.destroyed ||
         target.output.destroyed ||
-        !options.stillAllowed(caller)
+        !allowed(caller, workspaceId)
       ) {
         target.close()
         return reject(socket, 401)
@@ -86,8 +89,8 @@ export function createForwardingServer(options: ForwardingOptions) {
           const guard = () =>
             new Transform({
               transform(chunk, _encoding, done) {
-                if (options.stillAllowed(caller)) done(null, chunk)
-                else done(new Error('You are no longer signed in'))
+                if (allowed(caller, workspaceId)) done(null, chunk)
+                else done(new Error('Workspace access ended'))
               }
             })
           const incoming = guard()

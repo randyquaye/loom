@@ -9,10 +9,12 @@ import { Home } from './routes/Home'
 import { Notifications } from './routes/Notifications'
 import { Settings } from './routes/Settings'
 import { Workspace } from './routes/Workspace'
+import { watchBotAccess } from './routes/settings/BotsPage'
 import { SIDEBAR_DEFAULT, SIDEBAR_MIN, sidebarMax, usePanels } from './state/panels'
 import { useUi } from './state/ui'
 
 export function App() {
+  useEffect(watchBotAccess, [])
   const route = useUi((s) => s.route)
   const sidebarW = usePanels((s) => s.sidebarW)
   const rightW = usePanels((s) => s.rightW)

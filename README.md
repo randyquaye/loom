@@ -8,6 +8,9 @@ its lifetime.
 
 Spec: `../Documents/Work/loom-design-2026-11-04.md` (dated design doc of record).
 
+Cloud organizations can configure [LoomBots](docs/bots.md), grant human access, and
+invoke them in bot-owned workspaces. Robot is the included starting configuration.
+
 ## Providers
 
 | Backend | Execution path                                           | Auth                                   |

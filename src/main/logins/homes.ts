@@ -17,6 +17,7 @@ export interface HomeToSecure {
   githubUrl: string
   userId: string
   homePath: string
+  workspaceId?: string
 }
 
 /** A ChatGPT sign-in as Codex keeps it in a home folder. */
@@ -170,7 +171,7 @@ export async function secureHome(home: HomeToSecure): Promise<void> {
     if (!(await lstat(directory)).isDirectory())
       throw new Error('Credential directories may not be symbolic links')
   }
-  const kept = await home.vault.get(home.userId, 'codex')
+  const kept = await home.vault.get(home.userId, 'codex', home.workspaceId)
   const values = [
     '{}',
     kept === null

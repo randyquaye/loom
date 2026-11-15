@@ -23,6 +23,8 @@ export const CODEX_MODELS: ModelDescriptor[] = [
 ]
 
 export const CLAUDE_MODELS: ModelDescriptor[] = [
+  { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', efforts: CLAUDE_EFFORTS },
+  { id: 'claude-fable-5-2', label: 'Claude Fable 5.2', efforts: CLAUDE_EFFORTS },
   { id: 'sonnet', label: 'Claude Sonnet (latest)', efforts: CLAUDE_EFFORTS },
   { id: 'opus', label: 'Claude Opus (latest)', efforts: CLAUDE_EFFORTS },
   { id: 'fable', label: 'Claude Fable (latest)', efforts: CLAUDE_EFFORTS },

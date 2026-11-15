@@ -18,6 +18,68 @@ import { errorEvent, isRec, num, str, sub } from './record'
 import type { RpcCall, RpcId } from './rpc'
 
 export type RequestHandler = (call: RpcCall, reply: (result: unknown) => Promise<void>) => void
+export interface CodexQuotaObservation {
+  /** Unix milliseconds; null means the provider supplied no usable reset time. */
+  resetAt: number | null
+}
+type QuotaObserver = (observation: CodexQuotaObservation) => void
+let quotaObserverFactory: ((workspaceId: string) => QuotaObserver | undefined) | null = null
+
+/** Captured once per session so feedback retains its original credential lifecycle guard. */
+export function setCodexQuotaObserver(
+  factory: ((workspaceId: string) => QuotaObserver | undefined) | null
+): void {
+  quotaObserverFactory = factory
+}
+
+const REACHED_LIMITS = new Set([
+  'rate_limit_reached',
+  'workspace_owner_credits_depleted',
+  'workspace_member_credits_depleted',
+  'workspace_owner_usage_limit_reached',
+  'workspace_member_usage_limit_reached'
+])
+
+function quotaObservation(call: RpcCall, threadId: string): CodexQuotaObservation | undefined {
+  if (call.id !== undefined || !isRec(call.params)) return
+  const params = call.params
+  if (call.method === 'account/rateLimits/updated') {
+    const limits = sub(params, 'rateLimits')
+    if (limits === undefined) return
+    const exhausted = ['primary', 'secondary'].flatMap((key) => {
+      const window = sub(limits, key)
+      const used = window === undefined ? undefined : num(window, 'usedPercent')
+      return window !== undefined && used !== undefined && Number.isInteger(used) && used >= 100
+        ? [window]
+        : []
+    })
+    if (
+      exhausted.length === 0 &&
+      limits['spendControlReached'] !== true &&
+      !REACHED_LIMITS.has(str(limits, 'rateLimitReachedType') ?? '')
+    )
+      return
+    const resets = exhausted.flatMap((window) => {
+      const seconds = num(window, 'resetsAt')
+      if (seconds === undefined || !Number.isSafeInteger(seconds)) return []
+      const at = seconds * 1000
+      return at > Date.now() && at <= 8.64e15 ? [at] : []
+    })
+    // Sparse/unknown updates never emit a healthy state or clear an earlier exhaustion.
+    return { resetAt: resets.length === 0 ? null : Math.max(...resets) }
+  }
+  if (params['threadId'] !== threadId) return
+  const turn = sub(params, 'turn')
+  const error =
+    call.method === 'error'
+      ? sub(params, 'error')
+      : call.method === 'turn/completed' && turn?.['status'] === 'failed'
+        ? sub(turn, 'error')
+        : undefined
+  const code = error === undefined ? undefined : str(error, 'codexErrorInfo')
+  if (code === 'usageLimitExceeded' || code === 'rateLimitExceeded') return { resetAt: null }
+}
+
 interface Turn {
   id: string
   startSettled: Promise<void>
@@ -41,6 +103,12 @@ export function startCodexSession(
 ): RunningSession {
   assertSessionOpts('codex', opts)
   const queue = createEventQueue()
+  let observeQuota: QuotaObserver | undefined
+  try {
+    observeQuota = quotaObserverFactory?.(opts.workspaceId)
+  } catch {
+    // Optional account observation must not change provider session behavior.
+  }
   let active: Turn | undefined
   let closed = false
   let threadId = opts.resumeId ?? ''
@@ -165,6 +233,16 @@ export function startCodexSession(
       (call, rpc) => {
         const id = call.id
         const params = isRec(call.params) ? call.params : undefined
+        if (!closed && observeQuota !== undefined) {
+          const observation = quotaObservation(call, threadId)
+          if (observation !== undefined) {
+            try {
+              observeQuota(observation)
+            } catch {
+              // A revoked/stopped account cannot turn feedback into a provider failure.
+            }
+          }
+        }
         if (id !== undefined) {
           const reply = (result: unknown) => rpc.respond(id, result)
           const approval = codexApprovalQuestion(call, threadId, reply)

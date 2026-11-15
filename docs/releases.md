@@ -126,12 +126,14 @@ intersection in its hello frame. Older runners ignore the new header; older desk
 ignore the optional hello field. Missing capabilities mean baseline personal workflows.
 This adds no connection round trip, alternate protocol path, or version-specific adapter.
 
-The base desktop and runner declare no optional features. Feature implementations
-explicitly register their supported capabilities when they land; release tooling never
-advertises unfinished features. Existing personal work and port forwarding keep their
-established protocol-6 paths and authentication, including TLS host verification.
-Feature boundaries must preserve baseline responses and live updates for clients that
-have not opted in. Capability declarations never replace membership or ownership checks.
+Implemented features register their capabilities: `bots.v1` for bots and
+`subscriptions.v1` for organization subscription administration. The desktop hides
+unavailable features and refuses their calls locally. A newer runner keeps bot workspace
+responses and live pushes out of legacy clients. Explicit client/server capability
+lists can restrict negotiation; an empty list retains baseline behavior. Existing
+personal work and port forwarding continue using their established protocol-6 paths
+and authentication, including TLS host verification. Capability declarations never
+replace membership, ownership, or grant checks.
 
 | Change | Does the operator need to update the runner? |
 | --- | --- |
@@ -142,11 +144,10 @@ have not opted in. Capability declarations never replace membership or ownership
 
 Release checks exercise a frozen older-runner fixture, including requests, events and
 forwarded bytes. The fixture uses the established protocol rather than importing the
-current protocol constant. Explicit fixture capabilities exercise feature opt-in,
-unsupported-call refusal, reconnect reset and per-connection push projection. The default
-peers advertise no optional features. Both workflows run these checks before publication.
-Feature implementations must add coverage for preserving their baseline responses and
-updates; the protocol number alone cannot establish compatibility.
+current protocol constant. Legacy-client checks also keep optional bot data out of
+baseline responses and pushes. Both workflows run these maintained checks before
+publication. Developers must extend coverage when adding an optional feature or changing
+an established request; the protocol number alone cannot establish compatibility.
 
 The main WebSocket and forwarded connections still refuse a different wire protocol.
 That is reserved for an actual breaking format or semantic change, which needs an

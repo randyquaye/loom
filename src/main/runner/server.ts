@@ -19,7 +19,7 @@ import { createForwardingServer, type ForwardTarget } from './forwarding'
 export interface RunnerServerOptions {
   host: string
   port: number
-  /** Optional features implemented by this runner. */
+  /** Optional features implemented by this runner; omitted uses this build's features. */
   capabilities?: readonly string[]
   /** Answers ordinary requests, which is how people sign in; without it there are none. */
   http?: RequestListener | undefined
@@ -30,6 +30,8 @@ export interface RunnerServerOptions {
   /** Answers one call on behalf of the connection's user. */
   dispatch(caller: Caller, channel: string, input: unknown): unknown
   forward?: (caller: Caller, workspaceId: string, port: number) => Promise<ForwardTarget>
+  /** Current workspace authority, rechecked for pending and live byte streams. */
+  mayForward?(caller: Caller, workspaceId: string): boolean
   /** Projects a push for one connection; undefined suppresses that connection's update. */
   pushFor?(caller: Caller, channel: string, payload: unknown, workspaceId?: string): unknown | undefined
 }
@@ -97,6 +99,7 @@ function send(socket: WebSocket, frame: RunnerFrame): void {
  * updates leave on the same socket.
  */
 export function startRunnerServer(options: RunnerServerOptions): Promise<RunnerServer> {
+  const supportedCapabilities = options.capabilities ?? RUNNER_CAPABILITIES
   const http = createServer(
     options.http ??
       ((_request, response) => {
@@ -107,12 +110,16 @@ export function startRunnerServer(options: RunnerServerOptions): Promise<RunnerS
   /** Connections that have completed their hello, each with the user it belongs to. */
   const greeted = new Map<WebSocket, Caller>()
   const alive = new WeakSet<WebSocket>()
-  const forwarding = createForwardingServer({ open: options.forward, stillAllowed: options.stillAllowed })
+  const forwarding = createForwardingServer({
+    open: options.forward,
+    stillAllowed: options.stillAllowed,
+    ...(options.mayForward === undefined ? {} : { mayForward: options.mayForward })
+  })
 
   http.on('upgrade', (request, socket, head) => {
     const forward = request.url?.startsWith(`${RUNNER_FORWARD_PATH}/`) ?? false
     if (request.url !== RUNNER_PATH && !forward) return reject(socket, 404, 'Not Found')
-    const admission = admit(request, options.authenticate, options.capabilities ?? RUNNER_CAPABILITIES)
+    const admission = admit(request, options.authenticate, supportedCapabilities)
     if ('status' in admission) return reject(socket, admission.status, admission.reason)
     if (forward) {
       void forwarding.upgrade(request, socket, head, admission.caller).catch(() => socket.destroy())

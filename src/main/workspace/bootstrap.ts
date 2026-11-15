@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { appendFile, lstat, mkdir, writeFile } from 'node:fs/promises'
+import { appendFile, lstat, mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type Database from 'better-sqlite3'
 import { CONTEXT_DIR, WORKTREE_BRANCH_PREFIX } from '../../shared/brand'
@@ -31,6 +31,7 @@ import { envOverlay } from '../env/vars'
 import { git } from '../git/run'
 import { allocateSlug, slugify } from '../git/slug'
 import { discardRuntime, loginEnvironment, removeRuntimeStorage, runtimeFor } from '../runtime'
+import { botWorkspaceProfileFolders } from '../subscriptions/profiles'
 import {
   addWorktree,
   isValidBranchRef,
@@ -126,6 +127,12 @@ export interface CreateWorkspaceInput {
   dataRoot: string
   projectId: string
   name: string
+  /** A trusted invocation may reserve identity before asynchronous initialization. */
+  id?: string
+  /** Trusted authority check at insertion and before runtime/setup launch. */
+  beforeInsert?: () => void
+  /** Trusted files are prepared after checkout, before any repository runtime or setup code starts. */
+  prepareWorkspace?: (workspace: WorkspaceRow) => Promise<void>
   baseRef?: string | null
   checkout?: WorkspaceCheckout
   runtime?: WorkspaceRuntimeKind
@@ -208,6 +215,18 @@ export async function workspaceEnv(
     workspace.checkout === 'clone'
       ? ((await cloneDefaultBranch(root)) ?? 'main')
       : await git(root, ['symbolic-ref', '--short', 'HEAD']).catch(() => 'main')
+  const owner =
+    workspace.ownerId === null
+      ? undefined
+      : (db
+          .prepare(
+            `SELECT m.kind,json_extract(b.config,'$.name') AS name FROM org_members m
+      LEFT JOIN bots b ON b.user_id=m.user_id WHERE m.user_id=?`
+          )
+          .get(workspace.ownerId) as { kind: string; name: string | null } | undefined)
+  const bot = owner?.kind === 'bot'
+  const botName = owner?.name ?? 'Loom bot'
+  const botEmail = `bot-${workspace.ownerId}@loom.invalid`
   return {
     LOOM_WORKSPACE_NAME: workspace.name,
     LOOM_WORKSPACE_ID: workspace.id,
@@ -218,8 +237,16 @@ export async function workspaceEnv(
     // A container is not the user's own machine, wherever its host happens to be.
     LOOM_IS_LOCAL: workspace.runtime === 'container' ? '0' : '1',
     // User variables last; LOOM_* names are reserved, so nothing above can be shadowed.
-    ...(await envOverlay(project.id, workspace.ownerId)),
-    ...(await loginEnvironment(workspace))
+    ...(bot ? {} : await envOverlay(project.id, workspace.ownerId)),
+    ...(await loginEnvironment(workspace)),
+    ...(bot
+      ? {
+          GIT_AUTHOR_NAME: botName,
+          GIT_AUTHOR_EMAIL: botEmail,
+          GIT_COMMITTER_NAME: botName,
+          GIT_COMMITTER_EMAIL: botEmail
+        }
+      : {})
   }
 }
 
@@ -234,6 +261,9 @@ export async function createWorkspace({
   dataRoot,
   projectId,
   name,
+  id,
+  beforeInsert,
+  prepareWorkspace,
   baseRef = null,
   checkout = 'worktree',
   runtime = 'machine',
@@ -256,7 +286,7 @@ export async function createWorkspace({
     throw new WorkspaceNameError(`"${name}" cannot be used as the git ref ${branch}`)
   }
   const workspace: WorkspaceRow = {
-    id: randomUUID(),
+    id: id ?? randomUUID(),
     projectId,
     name,
     branch,
@@ -275,6 +305,7 @@ export async function createWorkspace({
     // Count and insert atomically so two concurrent creates cannot both pass
     // the per-project cap.
     db.transaction(() => {
+      beforeInsert?.()
       if (countWorkspaces(db, projectId, ownerId) >= MAX_WORKSPACES_PER_PROJECT) {
         throw new WorkspaceLimitError(project.name, MAX_WORKSPACES_PER_PROJECT)
       }
@@ -291,7 +322,9 @@ export async function createWorkspace({
     repoPath: project.repoPath,
     remoteUrl: project.remoteUrl,
     workspace,
-    baseRef
+    baseRef,
+    ...(beforeInsert === undefined ? {} : { beforeInsert }),
+    ...(prepareWorkspace === undefined ? {} : { prepareWorkspace })
   })
   return workspace
 }
@@ -304,6 +337,8 @@ interface InitializeInput {
   remoteUrl: string | null
   workspace: WorkspaceRow
   baseRef: string | null
+  beforeInsert?: () => void
+  prepareWorkspace?: (workspace: WorkspaceRow) => Promise<void>
 }
 
 /** Cuts the worktree from the project repository, which may first need a commit and a fetch. */
@@ -367,9 +402,13 @@ async function initializeWorkspace(input: InitializeInput): Promise<void> {
   try {
     const isClone = workspace.checkout === 'clone'
     await (isClone ? checkOutClone(input, log) : checkOutWorktree(input, log))
+    input.beforeInsert?.()
     const root = repositoryRoot({ repoPath }, workspace)
     await seedContextDir(workspace.worktreePath)
     await ensureContextIgnored(root)
+    input.beforeInsert?.()
+    await input.prepareWorkspace?.(workspace)
+    input.beforeInsert?.()
     const settings = await readRepoSettings(root)
     // Gitignored seeds such as .env come from the project checkout, which a clone does not have.
     const copied = isClone
@@ -387,16 +426,20 @@ async function initializeWorkspace(input: InitializeInput): Promise<void> {
             'use environment values or the setup script instead'
         : `copied ${copied} file(s)`
     )
+    input.beforeInsert?.()
     setWorkspaceState(db, workspace.id, 'setting_up')
     pushState(workspace.id, 'setting_up')
     const runtime = runtimeFor(workspace, input.dataRoot)
+    input.beforeInsert?.()
     await runtime.ensureRunning()
+    input.beforeInsert?.()
     if (settings.setup !== null) {
       const setupLog = path.join(logDir, 'setup.log')
       setWorkspaceRuntime(db, workspace.id, { setupLog })
       const env = await workspaceEnv(db, workspace.id)
       await log(`setup: ${settings.setup}`)
       try {
+        input.beforeInsert?.()
         const { stdout, stderr } = await runtime.exec('zsh', ['-lc', settings.setup], {
           cwd: workspace.worktreePath,
           env,
@@ -430,11 +473,13 @@ export async function removeWorkspace({
   workspace,
   dataRoot
 }: RemoveWorkspaceInput): Promise<void> {
+  const profileFolders = botWorkspaceProfileFolders(db, workspace, dataRoot)
   // The container goes first: its processes still hold files in the folder being deleted.
   await discardRuntime(workspace)
   if (workspace.checkout === 'clone') await removeClone(workspace.worktreePath, dataRoot)
   else await removeWorktree(repoPath, workspace.worktreePath, workspace.branch)
   await removeRuntimeStorage(workspace, dataRoot)
+  for (const folder of profileFolders) await rm(folder, { recursive: true, force: true })
   deleteWorkspace(db, workspace.id)
 }
 

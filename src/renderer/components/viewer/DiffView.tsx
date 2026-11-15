@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useId, useRef, useState } from 'react'
 import type { CommentRow } from '../../../shared/ipc-contract'
 import { cacheKey, useFiles } from '../../state/files'
+import { useProjects } from '../../state/projects'
 import { useToasts } from '../ui/Toast'
 import '../panels/panels.css'
 
@@ -101,6 +102,12 @@ export function DiffView({ workspaceId, path }: { workspaceId: string; path: str
 }
 
 function DiffFile({ workspaceId, path }: { workspaceId: string; path: string }) {
+  const readOnly = useProjects(
+    (state) =>
+      Object.values(state.workspacesByProject)
+        .flat()
+        .find((row) => row.id === workspaceId)?.bot?.access === 'view'
+  )
   const diff = useFiles((s) => s.diffByPath[cacheKey(workspaceId, path)])
   const push = useToasts((s) => s.push)
   const [comments, setComments] = useState<CommentRow[]>([])
@@ -142,7 +149,7 @@ function DiffFile({ workspaceId, path }: { workspaceId: string; path: string }) 
 
   async function saveComment(commentPath: string, line: number, body: string): Promise<boolean> {
     const current = request.current
-    if (current.mutating) return false
+    if (readOnly || current.mutating) return false
     current.mutating = true
     setMutating(true)
     try {
@@ -163,7 +170,7 @@ function DiffFile({ workspaceId, path }: { workspaceId: string; path: string }) 
 
   async function removeComment(id: string) {
     const current = request.current
-    if (current.mutating) return
+    if (readOnly || current.mutating) return
     current.mutating = true
     setMutating(true)
     try {
@@ -200,7 +207,7 @@ function DiffFile({ workspaceId, path }: { workspaceId: string; path: string }) 
           <Fragment key={`${i}:${lineKey}:${text}`}>
             <div className="diff-row" data-kind={kind}>
               <span className="diff-comment-gutter">
-                {newLine !== null && lineKey !== null && (
+                {!readOnly && newLine !== null && lineKey !== null && (
                   <button
                     type="button"
                     className="diff-comment-add"
@@ -259,27 +266,33 @@ function DiffFile({ workspaceId, path }: { workspaceId: string; path: string }) 
                       })}
                     </time>
                   </div>
-                  <button
-                    type="button"
-                    className="diff-comment-remove"
-                    aria-label={`Remove comment on line ${newLine}`}
-                    disabled={mutating}
-                    onClick={() => void removeComment(comment.id)}
-                  >
-                    ×
-                  </button>
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      className="diff-comment-remove"
+                      aria-label={`Remove comment on line ${newLine}`}
+                      disabled={mutating}
+                      onClick={() => void removeComment(comment.id)}
+                    >
+                      ×
+                    </button>
+                  )}
                 </div>
               ))}
-            {newLine !== null && commentPath !== null && lineKey !== null && editingLine === lineKey && (
-              <CommentComposer
-                key={newLine}
-                id={editorId}
-                line={newLine}
-                pending={mutating}
-                onSave={(body) => saveComment(commentPath, newLine, body)}
-                onClose={closeEditor}
-              />
-            )}
+            {!readOnly &&
+              newLine !== null &&
+              commentPath !== null &&
+              lineKey !== null &&
+              editingLine === lineKey && (
+                <CommentComposer
+                  key={newLine}
+                  id={editorId}
+                  line={newLine}
+                  pending={mutating}
+                  onSave={(body) => saveComment(commentPath, newLine, body)}
+                  onClose={closeEditor}
+                />
+              )}
           </Fragment>
         )
       })}

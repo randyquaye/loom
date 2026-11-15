@@ -122,6 +122,14 @@ export function Sidebar() {
   const [deleting, setDeleting] = useState<WorkspaceRow | null>(null)
   // Stable identity: Modal re-runs its autofocus whenever onClose changes.
   const closeDelete = useCallback(() => setDeleting(null), [])
+  const deleteTarget = deleting?.bot
+    ? Object.values(workspacesByProject)
+        .flat()
+        .find((workspace) => workspace.id === deleting.id && workspace.bot?.access === 'control')
+    : deleting
+  useEffect(() => {
+    if (deleting !== null && !deleteTarget) closeDelete()
+  }, [deleting, deleteTarget, closeDelete])
   const [removing, setRemoving] = useState<ProjectRow | null>(null)
   const closeRemove = useCallback(() => setRemoving(null), [])
   const prsByProject = useBranchPrs(
@@ -161,6 +169,7 @@ export function Sidebar() {
           .find((w) => w.id === activeWorkspaceId)?.projectId ?? null)
   const selectedAtCap =
     selectedProjectId !== null &&
+    !selectedProjectId.startsWith('loom-bot-project:') &&
     liveCount(workspacesByProject[selectedProjectId]) >= MAX_WORKSPACES_PER_PROJECT
 
   return (
@@ -172,7 +181,9 @@ export function Sidebar() {
             className="side-foot-btn"
             disabled={selectedAtCap}
             title={selectedAtCap ? 'Workspace limit reached' : 'New workspace'}
-            onClick={() => openAddWorkspace(selectedProjectId)}
+            onClick={() =>
+              openAddWorkspace(selectedProjectId?.startsWith('loom-bot-project:') ? null : selectedProjectId)
+            }
           >
             <span className="side-foot-glyph">
               <PlusIcon />
@@ -238,16 +249,20 @@ export function Sidebar() {
                         </span>
                         <span className="project-name">{project.name}</span>
                       </button>
-                      <button
-                        className="icon-btn row-action"
-                        title={atCap ? 'Workspace limit reached' : 'New workspace'}
-                        aria-label={`New workspace in ${project.name}`}
-                        disabled={atCap}
-                        onClick={() => openAddWorkspace(project.id)}
-                      >
-                        <PlusIcon />
-                      </button>
-                      <ProjectActions project={project} onRemove={() => setRemoving(project)} />
+                      {!project.id.startsWith('loom-bot-project:') && (
+                        <button
+                          className="icon-btn row-action"
+                          title={atCap ? 'Workspace limit reached' : 'New workspace'}
+                          aria-label={`New workspace in ${project.name}`}
+                          disabled={atCap}
+                          onClick={() => openAddWorkspace(project.id)}
+                        >
+                          <PlusIcon />
+                        </button>
+                      )}
+                      {!project.id.startsWith('loom-bot-project:') && (
+                        <ProjectActions project={project} onRemove={() => setRemoving(project)} />
+                      )}
                     </div>
                     <div className="project-workspaces" data-collapsed={!expanded}>
                       <div className="project-workspaces-inner">
@@ -328,7 +343,7 @@ export function Sidebar() {
         </div>
       </aside>
       {/* Outside the aside: its backdrop-filter would contain the modal's fixed overlay. */}
-      {deleting !== null && <DeleteWorkspaceModal workspace={deleting} onClose={closeDelete} />}
+      {deleteTarget && <DeleteWorkspaceModal workspace={deleteTarget} onClose={closeDelete} />}
       {removing !== null && <RemoveProjectModal project={removing} onClose={closeRemove} />}
     </>
   )

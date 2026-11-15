@@ -318,6 +318,12 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
         .flat()
         .find((row) => row.id === sessionId) ?? null
   )
+  const botWorkspace = useProjects(
+    (state) =>
+      Object.values(state.workspacesByProject)
+        .flat()
+        .find((workspace) => workspace.id === session?.workspaceId)?.bot !== undefined
+  )
   // Derived from the event stream, so a turn started elsewhere (e.g. the first turn sent by the
   // start composer just before this one mounted) still shows Cancel.
   const running = useSessions((s) => isTurnRunning(s.eventsBySession[sessionId] ?? []))
@@ -445,6 +451,7 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
 
   /** Model/effort are fixed per session: a different pick forks into a new, immediately active tab. */
   function forkTo(source: SessionRow, backend: BackendId, model: string, effort: Effort) {
+    if (botWorkspace) return
     if (disabled) return
     const label = useSessions.getState().modelsByBackend[backend]?.find((m) => m.id === model)?.label ?? model
     fork({ workspaceId: source.workspaceId, backend, model, effort, sourceSessionId: source.id })
@@ -590,13 +597,19 @@ function SessionComposer({ sessionId, disabled }: { sessionId: string; disabled:
         <div className="composer-footer">
           {session !== null && (
             <>
-              <ModelPicker
-                mode="fork"
-                backend={session.backend}
-                model={session.model}
-                effort={asEffort(session.effort)}
-                onPick={(backend, model, effort) => forkTo(session, backend, model, effort)}
-              />
+              {botWorkspace ? (
+                <span className="settings-state" title="Pinned to this bot conversation">
+                  {session.backend} · {session.model} · {session.effort}
+                </span>
+              ) : (
+                <ModelPicker
+                  mode="fork"
+                  backend={session.backend}
+                  model={session.model}
+                  effort={asEffort(session.effort)}
+                  onPick={(backend, model, effort) => forkTo(session, backend, model, effort)}
+                />
+              )}
               <ContextDonut session={session} />
             </>
           )}

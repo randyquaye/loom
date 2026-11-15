@@ -6,9 +6,8 @@ import {
   type ServerResponse
 } from 'node:http'
 import { request as httpsRequest } from 'node:https'
-import { connect as connectPlain, isIP, type AddressInfo, type Socket } from 'node:net'
+import { isIP, type AddressInfo } from 'node:net'
 import type { Duplex } from 'node:stream'
-import { connect as connectTls } from 'node:tls'
 import { isLoginProvider, PROVIDERS, type ProviderRules } from './providers'
 import { standInUser, type LoginProvider } from './stand-in'
 import type { Login, LoginVault } from './vault'
@@ -22,11 +21,41 @@ export interface LoginProxyOptions {
   /** Whether this person may still use the host at all. */
   isAdmitted(userId: string): boolean
   /** Whose container a call from this address comes from; null when it is none of the runner's. */
-  ownerAt(address: string): string | null | Promise<string | null>
+  ownerAt(address: string): LoginCaller | Promise<LoginCaller>
+  /** Host-only quota feedback; the exact admitted login fences account reconnects. */
+  onResponse?(
+    userId: string,
+    provider: LoginProvider,
+    workspaceId: string | undefined,
+    status: number,
+    headers: IncomingHttpHeaders,
+    login: Login | null,
+    path: string
+  ): void
   /** One address in place of all of a provider's servers: for tests that stand in for them. */
   upstreams?: Partial<Record<LoginProvider, string>>
   /** Told about refusals: which agent, which call, why. Never a token. */
   onRefused?(note: string): void
+}
+
+export type LoginCaller = string | { userId: string; workspaceId: string } | null
+
+/** Capacity is temporarily unavailable; a workspace's stand-in is still authenticated. */
+export class LoginUnavailable extends Error {
+  readonly headers: Record<string, string>
+  constructor(
+    message: string,
+    readonly status: 429 | 503 = 503,
+    retryAt?: number
+  ) {
+    super(message)
+    this.headers =
+      retryAt === undefined
+        ? {}
+        : {
+            'retry-after': String(Math.max(1, Math.ceil((retryAt - Date.now()) / 1000)))
+          }
+  }
 }
 
 export interface LoginProxy {
@@ -62,13 +91,15 @@ const KEPT_FOR_UPGRADE = new Set(['connection', 'upgrade'])
 /** `login` is null for a call that goes on as anybody, to a server that allows it. */
 type Admitted = {
   userId: string
+  workspaceId: string | undefined
+  provider: LoginProvider
   revision: number
   rules: ProviderRules
   login: Login | null
   target: URL
   path: string
 }
-type Refused = { status: number; message: string }
+type Refused = { status: number; message: string; headers?: Record<string, string> }
 
 function isLoopback(address: string | undefined): boolean {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
@@ -98,9 +129,9 @@ function forwardable(headers: IncomingHttpHeaders, upgrade: boolean): IncomingHt
 
 /**
  * Stands between an agent in a container and the agent's own servers. The container holds
- * only a stand-in; here it is exchanged for its owner's real login, on the calls the agent
- * needs and nothing else. A real login is never sent anywhere but to its own agent's server,
- * and never on behalf of anyone but the person it belongs to.
+ * only a stand-in; the verified caller and workspace resolve either a personal login or
+ * a granted organization subscription. Real credentials only reach the fixed provider
+ * routes the agent needs, after current ownership and access checks.
  */
 export async function startLoginProxy(options: LoginProxyOptions): Promise<LoginProxy> {
   const revisions = new Map<string, number>()
@@ -127,9 +158,16 @@ export async function startLoginProxy(options: LoginProxyOptions): Promise<Login
     return !closed && options.isAdmitted(userId) && (revisions.get(userId) ?? 0) === revision
   }
 
-  async function allowed(request: IncomingMessage, userId: string, revision: number): Promise<boolean> {
+  async function allowed(
+    request: IncomingMessage,
+    userId: string,
+    revision: number,
+    workspaceId?: string
+  ): Promise<boolean> {
     const owner = await options.ownerAt(callerAddress(request))
-    return owner === userId && current(userId, revision)
+    const id = typeof owner === 'string' ? owner : owner?.userId
+    const workspace = typeof owner === 'string' ? undefined : owner?.workspaceId
+    return id === userId && workspace === workspaceId && current(userId, revision)
   }
 
   async function admit(request: IncomingMessage): Promise<Admitted | Refused> {
@@ -144,7 +182,9 @@ export async function startLoginProxy(options: LoginProxyOptions): Promise<Login
     const userId = standInUser(options.key, name, bearer)
     if (userId === null) return { status: 401, message: `This is not a ${rules.label} login Loom issued` }
     const revision = revisions.get(userId) ?? 0
-    if (!(await allowed(request, userId, revision))) {
+    const owner = await options.ownerAt(callerAddress(request))
+    const workspaceId = typeof owner === 'string' ? undefined : owner?.workspaceId
+    if (!(await allowed(request, userId, revision, workspaceId))) {
       return { status: 403, message: 'This login cannot be used from here' }
     }
     // Encoded dots and slashes could mean one path here and another at the server.
@@ -153,9 +193,18 @@ export async function startLoginProxy(options: LoginProxyOptions): Promise<Login
       options.onRefused?.(`${name}: ${request.method ?? ''} ${path} is not a call the agent needs`)
       return { status: 403, message: `Loom does not pass ${path} on to ${rules.label}` }
     }
-    const login = await options.vault.get(userId, name)
-    if (!(await allowed(request, userId, revision)))
+    let login: Login | null = null
+    let unavailable: LoginUnavailable | undefined
+    try {
+      login = await options.vault.get(userId, name, workspaceId)
+    } catch (error) {
+      if (!(error instanceof LoginUnavailable)) throw error
+      unavailable = error
+    }
+    if (!(await allowed(request, userId, revision, workspaceId)))
       return { status: 403, message: 'This login cannot be used from here' }
+    if (unavailable !== undefined)
+      return { status: unavailable.status, message: unavailable.message, headers: unavailable.headers }
     if (login === null && rules.openToAnybody !== true) {
       return {
         status: 401,
@@ -163,13 +212,26 @@ export async function startLoginProxy(options: LoginProxyOptions): Promise<Login
       }
     }
     const target = new URL(`${route.path}${url.search}`, options.upstreams?.[name] ?? route.origin)
-    return { userId, revision, rules, login, target, path }
+    return { userId, workspaceId, provider: name, revision, rules, login, target, path }
+  }
+
+  function observe(admitted: Admitted, answer: IncomingMessage): void {
+    if (!current(admitted.userId, admitted.revision)) return
+    options.onResponse?.(
+      admitted.userId,
+      admitted.provider,
+      admitted.workspaceId,
+      answer.statusCode ?? 502,
+      answer.headers,
+      admitted.login,
+      admitted.path
+    )
   }
 
   function outgoing(request: IncomingMessage, admitted: Admitted, upgrade: boolean): IncomingHttpHeaders {
     const headers = forwardable(request.headers, upgrade)
     headers.host = admitted.target.host
-    // Either the owner's real login goes on in the stand-in's place, or nothing does.
+    // Either the authorized credential replaces the stand-in, or nothing does.
     delete headers.authorization
     if (admitted.login !== null) admitted.rules.authorize(headers, admitted.login, admitted.path)
     return headers
@@ -186,7 +248,9 @@ export async function startLoginProxy(options: LoginProxyOptions): Promise<Login
     const admitted = await admit(request)
     if ('status' in admitted) {
       request.resume()
-      response.writeHead(admitted.status, { 'content-type': 'application/json' }).end(refusal(admitted))
+      response
+        .writeHead(admitted.status, { ...admitted.headers, 'content-type': 'application/json' })
+        .end(refusal(admitted))
       return
     }
     if (!current(admitted.userId, admitted.revision)) {
@@ -201,6 +265,7 @@ export async function startLoginProxy(options: LoginProxyOptions): Promise<Login
       admitted.target,
       { method: request.method, headers: outgoing(request, admitted, false) },
       (answer) => {
+        observe(admitted, answer)
         response.writeHead(answer.statusCode ?? 502, forwardable(answer.headers, false))
         answer.pipe(response)
       }
@@ -221,55 +286,73 @@ export async function startLoginProxy(options: LoginProxyOptions): Promise<Login
     request.pipe(upstream)
   }
 
-  /** Codex talks to its server over one long connection; it is joined end to end, not read. */
+  /** Inspect the upgrade handshake; accepted WebSocket frames pass through exactly once. */
   async function join(request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
     const admitted = await admit(request)
     if ('status' in admitted) {
       const body = refusal(admitted)
+      const headers = Object.entries(admitted.headers ?? {})
+        .map(([name, value]) => `${name}: ${value}\r\n`)
+        .join('')
       socket.end(
         `HTTP/1.1 ${admitted.status} Refused\r\ncontent-type: application/json\r\n` +
-          `content-length: ${Buffer.byteLength(body)}\r\nconnection: close\r\n\r\n${body}`
+          `${headers}content-length: ${Buffer.byteLength(body)}\r\nconnection: close\r\n\r\n${body}`
       )
       return
     }
-    const { target } = admitted
-    const secure = target.protocol === 'https:'
-    const port = Number(target.port) || (secure ? 443 : 80)
-    const upstream: Socket = secure
-      ? connectTls({ host: target.hostname, port, servername: target.hostname })
-      : connectPlain({ host: target.hostname, port })
+    if (!(await allowed(request, admitted.userId, admitted.revision, admitted.workspaceId))) {
+      socket.destroy()
+      return
+    }
+    const send = admitted.target.protocol === 'https:' ? httpsRequest : httpRequest
+    let tunnel: Duplex | undefined
+    const upstream = send(admitted.target, {
+      method: request.method,
+      headers: outgoing(request, admitted, true)
+    })
     const close = (): void => {
       upstream.destroy()
+      tunnel?.destroy()
       socket.destroy()
     }
     const unwatch = watch(admitted.userId, close)
-    upstream.once(secure ? 'secureConnect' : 'connect', () => {
-      void allowed(request, admitted.userId, admitted.revision)
+    const responseHead = (answer: IncomingMessage, upgraded: boolean): string => {
+      const headers = forwardable(answer.headers, upgraded)
+      if (!upgraded) headers.connection = 'close'
+      const lines = Object.entries(headers).flatMap(([name, value]) =>
+        (Array.isArray(value) ? value : [value ?? '']).map((one) => `${name}: ${one}`)
+      )
+      return `HTTP/1.1 ${answer.statusCode ?? 502} ${answer.statusMessage ?? ''}\r\n${lines.join('\r\n')}\r\n\r\n`
+    }
+    upstream.once('response', (answer) => {
+      observe(admitted, answer)
+      socket.write(responseHead(answer, false))
+      answer.pipe(socket)
+    })
+    upstream.once('upgrade', (answer, joined, upstreamHead) => {
+      tunnel = joined
+      void allowed(request, admitted.userId, admitted.revision, admitted.workspaceId)
         .then((accepted) => {
-          if (
-            !accepted ||
-            !current(admitted.userId, admitted.revision) ||
-            socket.destroyed ||
-            upstream.destroyed
-          )
-            return close()
-          const lines = Object.entries(outgoing(request, admitted, true)).flatMap(([name, value]) =>
-            (Array.isArray(value) ? value : [value ?? '']).map((one) => `${name}: ${one}`)
-          )
-          upstream.write(`GET ${target.pathname}${target.search} HTTP/1.1\r\n${lines.join('\r\n')}\r\n\r\n`)
-          if (head.length > 0) upstream.write(head)
-          socket.pipe(upstream)
-          upstream.pipe(socket)
+          if (!accepted || socket.destroyed || joined.destroyed) return close()
+          observe(admitted, answer)
+          socket.write(responseHead(answer, true))
+          if (upstreamHead.length > 0) socket.write(upstreamHead)
+          if (head.length > 0) joined.write(head)
+          socket.pipe(joined)
+          joined.pipe(socket)
+          joined.on('error', close)
+          joined.on('close', () => socket.destroy())
         })
         .catch(close)
     })
-    upstream.on('error', () => socket.destroy())
-    socket.on('error', () => upstream.destroy())
+    upstream.on('error', close)
+    socket.on('error', close)
     socket.on('close', () => {
       unwatch()
       upstream.destroy()
+      tunnel?.destroy()
     })
-    upstream.on('close', () => socket.destroy())
+    upstream.end()
   }
 
   const fail = (response: ServerResponse) => (): void => {

@@ -1,4 +1,5 @@
 import { cloudAccount, cloudStatus } from '../cloud/status'
+import { ipcSchemas } from '../../shared/ipc-contract'
 import { handle } from './registry'
 import { previewInvite } from '../cloud/account'
 
@@ -15,6 +16,9 @@ export function registerCloudIpc(): void {
   handle('org:get', () => null)
   const orgNeedsRunner = (): never => {
     throw new Error('Connect to your organization’s cloud runner first')
+  }
+  for (const channel of Object.keys(ipcSchemas) as Array<keyof typeof ipcSchemas>) {
+    if (channel.startsWith('bots:') || channel.startsWith('subscriptions:')) handle(channel, orgNeedsRunner)
   }
   handle('org:update', orgNeedsRunner)
   handle('org:members', orgNeedsRunner)

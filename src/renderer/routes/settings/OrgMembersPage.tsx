@@ -115,17 +115,19 @@ export function OrgMembersPage() {
               </div>
               {person.state === 'active' && (
                 <>
-                  <button
-                    className="btn btn-ghost"
-                    disabled={busy}
-                    onClick={() =>
-                      void act(() =>
-                        window.loom.org.setRole(person.userId, person.role === 'owner' ? 'member' : 'owner')
-                      )
-                    }
-                  >
-                    {person.role === 'owner' ? 'Make member' : 'Make owner'}
-                  </button>
+                  {person.kind === 'human' && (
+                    <button
+                      className="btn btn-ghost"
+                      disabled={busy}
+                      onClick={() =>
+                        void act(() =>
+                          window.loom.org.setRole(person.userId, person.role === 'owner' ? 'member' : 'owner')
+                        )
+                      }
+                    >
+                      {person.role === 'owner' ? 'Make member' : 'Make owner'}
+                    </button>
+                  )}
                   <button className="btn btn-danger" disabled={busy} onClick={() => setRemoving(person)}>
                     Remove
                   </button>

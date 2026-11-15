@@ -25,11 +25,15 @@ import './flow.css'
 export function SessionTabs({
   workspaceId,
   chatShown,
-  onSelect
+  onSelect,
+  readOnly = false,
+  botWorkspace = false
 }: {
   workspaceId: string
   chatShown: boolean
   onSelect: () => void
+  readOnly?: boolean
+  botWorkspace?: boolean
 }) {
   const sessions = useSessions((s) => s.sessionsByWorkspace[workspaceId]) ?? []
   const running = useSessions((s) => s.activity.bySession)
@@ -40,7 +44,8 @@ export function SessionTabs({
   const push = useToasts((s) => s.push)
   const openNewSession = useUi((s) => s.openNewSession)
   const atCap = sessions.length >= MAX_SESSIONS_PER_WORKSPACE
-  const drafting = activeId === '' || (activeId === null && sessions.length === 0)
+  const drafting =
+    !readOnly && !botWorkspace && (activeId === '' || (activeId === null && sessions.length === 0))
   const [menu, setMenu] = useState<{ session: SessionRow; x: number; y: number } | null>(null)
   const [instructionsSession, setInstructionsSession] = useState<SessionRow | null>(null)
   const tabsRef = useRef<HTMLDivElement>(null)
@@ -54,6 +59,7 @@ export function SessionTabs({
   const closeInstructions = useCallback(() => setInstructionsSession(null), [])
 
   function closeTab(session: SessionRow) {
+    if (readOnly) return
     closeSession(workspaceId, session.id)
       .then(() => useUi.getState().saveComposeDraft(session.id, ''))
       .catch((err: unknown) => push(`Could not close session: ${String(err)}`, 'err'))
@@ -69,6 +75,7 @@ export function SessionTabs({
   }
 
   function forkTab(session: SessionRow) {
+    if (readOnly || botWorkspace) return
     window.loom.sessions
       .fork({
         workspaceId,
@@ -137,15 +144,17 @@ export function SessionTabs({
               )}
               <span className="tab-label">{session.title}</span>
             </button>
-            <button
-              type="button"
-              className="tab-close"
-              aria-label={`Close ${session.title}`}
-              title="Close session"
-              onClick={() => closeTab(session)}
-            >
-              ×
-            </button>
+            {!readOnly && (
+              <button
+                type="button"
+                className="tab-close"
+                aria-label={`Close ${session.title}`}
+                title="Close session"
+                onClick={() => closeTab(session)}
+              >
+                ×
+              </button>
+            )}
           </div>
         )
       })}
@@ -159,19 +168,23 @@ export function SessionTabs({
           <span className="tab-label">New session</span>
         </button>
       )}
-      <button
-        className="tab tab-add"
-        title={atCap ? 'Session limit reached' : 'New session'}
-        aria-label="New session"
-        disabled={atCap || drafting}
-        onClick={() => {
-          openNewSession(workspaceId)
-          onSelect()
-        }}
-      >
-        +
-      </button>
-      <RecentChats key={workspaceId} workspaceId={workspaceId} atCap={atCap} onSelect={onSelect} />
+      {!readOnly && !botWorkspace && (
+        <button
+          className="tab tab-add"
+          title={atCap ? 'Session limit reached' : 'New session'}
+          aria-label="New session"
+          disabled={atCap || drafting}
+          onClick={() => {
+            openNewSession(workspaceId)
+            onSelect()
+          }}
+        >
+          +
+        </button>
+      )}
+      {!readOnly && (
+        <RecentChats key={workspaceId} workspaceId={workspaceId} atCap={atCap} onSelect={onSelect} />
+      )}
       {menu !== null && (
         <TabMenu key={`${menu.session.id}:${menu.x}:${menu.y}`} x={menu.x} y={menu.y} onClose={closeMenu}>
           {(
@@ -181,20 +194,25 @@ export function SessionTabs({
               ['Fork session', forkTab],
               ['Close session', closeTab]
             ] as const
-          ).map(([label, run]) => (
-            <button
-              key={label}
-              type="button"
-              role="menuitem"
-              className="list-option popover-item"
-              onClick={() => {
-                closeMenu()
-                run(menu.session)
-              }}
-            >
-              {label}
-            </button>
-          ))}
+          )
+            .filter(
+              ([label]) =>
+                (!readOnly || label === 'View instructions') && (!botWorkspace || label !== 'Fork session')
+            )
+            .map(([label, run]) => (
+              <button
+                key={label}
+                type="button"
+                role="menuitem"
+                className="list-option popover-item"
+                onClick={() => {
+                  closeMenu()
+                  run(menu.session)
+                }}
+              >
+                {label}
+              </button>
+            ))}
         </TabMenu>
       )}
       {instructionsSession !== null && (

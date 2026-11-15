@@ -50,12 +50,14 @@ export function MessageList({
   sessionId,
   events,
   onFileOpen,
-  onPrompt
+  onPrompt,
+  readOnly = false
 }: {
   sessionId?: string | undefined
   events: AgentEvent[]
   onFileOpen?: FileOpen
   onPrompt?: (text: string) => void
+  readOnly?: boolean
 }) {
   observe(events)
   const blocks = useMemo(() => deriveBlocks(events), [events])
@@ -99,7 +101,7 @@ export function MessageList({
     return () => observer.disconnect()
   }, [running])
 
-  if (events.length === 0) return <ChatEmptyState onPrompt={onPrompt} />
+  if (events.length === 0) return <ChatEmptyState onPrompt={readOnly ? undefined : onPrompt} />
 
   const last = segments.at(-1)
   const liveTurn =
@@ -117,9 +119,10 @@ export function MessageList({
             key={block.id}
             request={block.request}
             sessionId={sessionId}
+            readOnly={readOnly}
             answers={block.answers}
             followUp={times.done.has(block.turnId) && !block.request.blocking}
-            disabled={block.resolved || (times.done.has(block.turnId) && block.request.blocking)}
+            disabled={readOnly || block.resolved || (times.done.has(block.turnId) && block.request.blocking)}
           />
         )
       case 'text':

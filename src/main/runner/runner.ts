@@ -5,6 +5,7 @@ import { getRequestListener } from '@hono/node-server'
 import { Hono } from 'hono'
 import type Database from 'better-sqlite3'
 import {
+  BOTS_CHANGED_CHANNEL,
   SESSION_ACTIVITY_CHANNEL,
   SESSION_EVENT_CHANNEL,
   SESSION_QUEUE_CHANNEL,
@@ -12,10 +13,13 @@ import {
   TERMINAL_EXIT_CHANNEL,
   WORKSPACE_STATE_CHANNEL,
   WORKSPACE_POWER_CHANNEL,
+  type SessionActivity,
   type WorkspacePowerPush
 } from '../../shared/ipc-contract'
 import { NOTIFICATION_CHANNEL, type Notification } from '../../shared/notifications'
+import { RUNNER_CAPABILITIES, supportsBots } from '../../shared/runner-capabilities'
 import { registerBackends } from '../agents/wiring'
+import { setCodexQuotaObserver } from '../agents/cli/codex-session'
 import type { GoogleClient } from '../auth/google'
 import { createHostProof } from '../auth/host-proof'
 import { signInRoutes } from '../auth/routes'
@@ -23,6 +27,18 @@ import { signInIsLive, whoHolds } from '../auth/tokens'
 import { openDb } from '../db'
 import { ensureUser } from '../db/repos/users'
 import { createOrgService } from '../org/service'
+import { createBotService, readBot } from '../bots/repository'
+import { createBotGithub, type BotGithub } from '../bots/github'
+import { createBotExecution } from '../bots/execution'
+import { createBotInvocations } from '../bots/invocations'
+import { createBotQuiescence } from '../bots/quiescence'
+import { registerBotHandlers } from '../bots/handlers'
+import { createSubscriptions, type Subscriptions } from '../subscriptions/repository'
+import { registerSubscriptionHandlers } from '../subscriptions/handlers'
+import { assertBotProfileAvailable } from '../subscriptions/profiles'
+import { botRepositoryUrl, canonicalBotRepository } from '../../shared/bots'
+import { CALL_SUBJECTS } from '../../shared/call-subjects'
+import { getProjectOrThrow } from '../db/repos/projects'
 import { setEnvSecretStore } from '../env/vars'
 import { call, parseInput } from '../ipc/registry'
 import { createNotifications } from '../notifications/service'
@@ -55,6 +71,7 @@ import {
   setTitleSink,
   setTurnStartGuard,
   sessionActivity,
+  stopSessionWork,
   suspendWorkspaceSessions
 } from '../sessions/service'
 import { setRemoteAccess, setWorkspaceStateSink } from '../workspace/bootstrap'
@@ -65,7 +82,8 @@ import { getWorkspaceOrThrow } from '../db/repos/workspaces'
 import { openForwardTarget } from '../runtime/forward'
 import { containerIsRunning } from '../runtime/container'
 import { createAccess } from './access'
-import { registerRunnerHandlers } from './handlers'
+import { createRunnerGit } from './git'
+import { ensureProject, registerRunnerHandlers } from './handlers'
 import { sameSecret, startRunnerServer } from './server'
 import { createRunnerAdmission } from './admission'
 import { cloudHealth } from './health'
@@ -140,7 +158,8 @@ const NEW_WORK_CALLS = new Set([
   'sessions:send',
   'sessions:sendNow',
   'sessions:steer',
-  'sessions:steerQueued'
+  'sessions:steerQueued',
+  'bots:invoke'
 ])
 
 /**
@@ -236,9 +255,6 @@ async function codexSignIn(dataDir: string): Promise<SignInRun> {
   }
 }
 
-/** How long the answer to "whose container is at this address" is believed. */
-const ADDRESSES_FRESH_MS = 5000
-
 /**
  * Starts the runner's care of agent logins and puts it into every container it starts from
  * here on: a home with no real login in it, stand-ins in the environment, and the proxy's
@@ -249,10 +265,11 @@ async function keepLogins(
   store: SecretStore,
   config: RunnerConfig,
   where: NonNullable<RunnerConfig['logins']>,
-  isAdmitted: (userId: string) => boolean
+  isAdmitted: (userId: string) => boolean,
+  botGithub?: BotGithub,
+  isBot?: (userId: string) => boolean,
+  subscriptions?: Subscriptions
 ): Promise<Logins> {
-  let byAddress = new Map<string, string>()
-  let readAt = 0
   const emailOf = db.prepare('SELECT email FROM users WHERE id = ?')
   const ownerOf = db.prepare('SELECT owner_id FROM workspaces WHERE id = ?')
 
@@ -264,16 +281,18 @@ async function keepLogins(
     fronts: where.fronts,
     ...(config.github === undefined ? {} : { github: config.github }),
     isAdmitted,
-    // Docker is asked again for an address it has not said anything about, and at least every
-    // few seconds: addresses are handed out anew as containers come and go.
+    ...(botGithub === undefined || isBot === undefined ? {} : { botGithub: { ...botGithub, isBot } }),
+    ...(subscriptions === undefined ? {} : { subscriptions }),
+    validateWorkspaceProfile: (workspaceId) => assertBotProfileAvailable(db, workspaceId),
+    // Resolve each admission from Docker again, including after a credential await:
+    // an address can already belong to another member's newly started container.
     async ownerAt(address) {
-      if (!byAddress.has(address) || Date.now() - readAt > ADDRESSES_FRESH_MS) {
-        byAddress = await workspacesByAddress().catch(() => new Map<string, string>())
-        readAt = Date.now()
-      }
+      const byAddress = await workspacesByAddress().catch(() => null)
+      if (byAddress === null) return null
       const workspaceId = byAddress.get(address)
       if (workspaceId === undefined) return null
-      return (ownerOf.get(workspaceId) as { owner_id: string | null } | undefined)?.owner_id ?? null
+      const userId = (ownerOf.get(workspaceId) as { owner_id: string | null } | undefined)?.owner_id ?? null
+      return userId !== null && isBot?.(userId) === true ? { userId, workspaceId } : userId
     },
     homeOf: (userId) => homeFolder(config.dataDir, userId),
     signInToCodex: () => codexSignIn(config.dataDir)
@@ -304,6 +323,7 @@ async function keepLogins(
 export async function startRunner(config: RunnerConfig): Promise<Runner> {
   await mkdir(config.dataDir, { recursive: true })
   const db = openDb(path.join(config.dataDir, 'loom.db'))
+  const gitBoundary = createRunnerGit({ db, dataRoot: config.dataDir })
   const secrets = createSecretStore(path.join(config.dataDir, 'secrets.enc'), aesGcmCipher(config.secretKey))
   setEnvSecretStore(secrets)
   setLoomDataRoot(config.dataDir)
@@ -315,6 +335,18 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
     db.prepare('UPDATE workspaces SET owner_id = ? WHERE owner_id IS NULL').run(onlyUser.userId)
   }
   const org = config.signIn === undefined ? null : createOrgService(db, config.signIn)
+  const bots = org === null ? null : createBotService({ db, org })
+  const initialBotIds = (
+    db.prepare("SELECT user_id AS userId FROM org_members WHERE kind='bot'").all() as Array<{
+      userId: string
+    }>
+  ).map((row) => row.userId)
+  // The proxy starts before recovery; old bot containers must remain unauthorized throughout.
+  const blockedBots = new Set(initialBotIds)
+  const membershipKind = db.prepare('SELECT kind FROM org_members WHERE user_id=?')
+  const isBot = (userId: string) =>
+    (membershipKind.get(userId) as { kind: string } | undefined)?.kind === 'bot'
+  const subscriptions = org === null ? null : createSubscriptions({ db, org, isBot })
   const transportProof =
     config.signIn === undefined
       ? () => null
@@ -324,7 +356,9 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
           config.signIn.signingKey
         )
   const isAdmitted = (userId: string) =>
-    config.devIdentities.some((identity) => identity.userId === userId) || org?.active(userId) === true
+    !blockedBots.has(userId) &&
+    (config.devIdentities.some((identity) => identity.userId === userId) ||
+      (org?.active(userId) === true && (!isBot(userId) || readBot(db, userId)?.enabled === true)))
   const access = createAccess(db, (userId) => org?.owner(userId) === true)
   const admission = createRunnerAdmission({
     db,
@@ -333,8 +367,27 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
     minFreeBytes: config.minFreeDiskBytes ?? 0,
     available: async () => (await cloudHealth(config.dataDir)).disk.available
   })
-  const logins =
-    config.logins === undefined ? null : await keepLogins(db, secrets, config, config.logins, isAdmitted)
+  let logins: Logins | null = null
+  const botGithub = createBotGithub({
+    store: secrets,
+    isAdmitted,
+    isBot,
+    repositories: (id) => readBot(db, id)?.config.repositories ?? [],
+    onRevoked: (id) => logins?.revokeAccess(id)
+  })
+  logins =
+    config.logins === undefined
+      ? null
+      : await keepLogins(
+          db,
+          secrets,
+          config,
+          config.logins,
+          isAdmitted,
+          botGithub,
+          isBot,
+          subscriptions ?? undefined
+        )
   let ready = false
   let connectedUsers = (): string[] => []
   let forwardedWorkspaces = (): string[] => []
@@ -388,10 +441,50 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
       power.afterStart(id)
     }
   })
-  setTurnStartGuard((id) => {
-    const owner = getWorkspaceOrThrow(db, id).ownerId
+  setTurnStartGuard((id, actorId) => {
+    const workspace = getWorkspaceOrThrow(db, id)
+    const owner = workspace.ownerId
     if (owner === null) throw new Error('Workspace has no member owner')
     admission.assertNewWork(owner)
+    if (isBot(owner)) {
+      const bot = bots?.assertControl(actorId ?? '', owner)
+      const repository = canonicalBotRepository(getProjectOrThrow(db, workspace.projectId).remoteUrl ?? '')
+      if (!bot?.config.repositories.includes(repository)) throw new Error('Bot repository access was revoked')
+      const session = db
+        .prepare('SELECT backend FROM sessions WHERE workspace_id=? ORDER BY created_at,id LIMIT 1')
+        .get(id) as { backend: string } | undefined
+      if (
+        (session?.backend !== 'claude' && session?.backend !== 'codex') ||
+        subscriptions === null ||
+        subscriptions.assigned(owner, session.backend, id) === null
+      )
+        throw new Error(
+          'This bot conversation has no available organization subscription. Inspect its assigned account or start a new bot task.'
+        )
+    }
+  })
+  setCodexQuotaObserver((workspaceId) => {
+    if (subscriptions === null) return
+    const workspace = getWorkspaceOrThrow(db, workspaceId)
+    const owner = workspace.ownerId
+    if (owner === null || !isBot(owner)) return
+    const account = subscriptions.assigned(owner, 'codex', workspaceId)
+    if (account === null) return
+    const assertCurrent = subscriptions.guardAccount(account.id)
+    return ({ resetAt }) => {
+      if (!ready || !db.open || !isAdmitted(owner)) return
+      const binding = db
+        .prepare(
+          'SELECT account_id AS accountId FROM subscription_bindings WHERE workspace_id=? AND provider=? AND bot_id=?'
+        )
+        .get(workspaceId, 'codex', owner) as { accountId: string } | undefined
+      if (binding?.accountId !== account.id) return
+      const headers =
+        resetAt !== null && Number.isFinite(resetAt) && resetAt > Date.now()
+          ? { 'x-ratelimit-reset': String(resetAt / 1000) }
+          : {}
+      subscriptions.observe(owner, 'codex', workspaceId, 429, headers, assertCurrent)
+    }
   })
   const cleanup = createMemberCleanup({
     db,
@@ -414,12 +507,111 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
       org,
       admission,
       signIn: config.signIn,
-      removeMember: cleanup.remove,
+      async removeMember(actorId, userId) {
+        const affected = db
+          .prepare('SELECT bot_id AS botId FROM bot_grants WHERE user_id = ?')
+          .all(userId) as Array<{ botId: string }>
+        try {
+          await cleanup.remove(actorId, userId)
+        } finally {
+          for (const { botId } of affected) await botsChanged(botId, true)
+          if (isBot(userId)) await botsChanged(userId, true)
+        }
+      },
       purgeMember: cleanup.purgeMember
     }
   )
+  const execution = createBotExecution({
+    db,
+    dataRoot: config.dataDir,
+    admission,
+    projectFor: (repository) =>
+      ensureProject(db, { name: repository.split('/')[1]!, remoteUrl: botRepositoryUrl(repository) }, false),
+    async credentialsReady(botId, settings, workspaceId) {
+      if (logins === null || subscriptions === null)
+        throw new Error('Bot execution requires organization subscriptions')
+      const status = await logins.status(botId)
+      if (!status[settings.backend])
+        throw new Error(
+          `Grant this bot organization ${settings.backend} subscriptions and connect an eligible account`
+        )
+      if (!status.github) throw new Error('Connect the bot GitHub installation and repository grants first')
+      subscriptions.reserve(botId, settings.backend, workspaceId)
+    }
+  })
+  const invocations =
+    bots === null
+      ? null
+      : createBotInvocations({
+          db,
+          bots,
+          provision: execution.provision,
+          changed: (botId) => {
+            void botsChanged(botId, false).catch((error: unknown) =>
+              console.warn('[loom-runner] bot cleanup remains blocked:', error)
+            )
+          }
+        })
+  const audiences = new Map<string, Set<string>>()
+  for (const row of db.prepare('SELECT bot_id AS botId,user_id AS userId FROM bot_grants').all() as Array<{
+    botId: string
+    userId: string
+  }>) {
+    const audience = audiences.get(row.botId) ?? new Set<string>()
+    audience.add(row.userId)
+    audiences.set(row.botId, audience)
+  }
+  const quiescence = createBotQuiescence({
+    db,
+    blocked: blockedBots,
+    interrupt: (botId) =>
+      invocations?.interrupt(
+        botId,
+        'Bot access or credentials changed. Inspect retained work before explicitly continuing.'
+      ),
+    revokeCredentials: (botId) => botGithub.invalidate(botId),
+    closeForwards: (workspaceId) => closeForwards(workspaceId),
+    stopSession: (sessionId) => stopSessionWork(db, sessionId),
+    stopTerminals: (workspaceId) => destroyTerminalsForCwd(getWorkspaceOrThrow(db, workspaceId).worktreePath),
+    stopWorkspace: (workspaceId) => power.stopForRemoval(workspaceId)
+  })
+  async function botsChanged(botId: string, stop: boolean): Promise<void> {
+    const previous = audiences.get(botId) ?? new Set<string>()
+    const next = new Set(
+      (
+        db.prepare('SELECT user_id AS userId FROM bot_grants WHERE bot_id = ?').all(botId) as Array<{
+          userId: string
+        }>
+      ).map((row) => row.userId)
+    )
+    audiences.set(botId, next)
+    return quiescence.change(botId, stop, () => {
+      for (const userId of connectedUsers()) {
+        if (org?.owner(userId) || previous.has(userId) || next.has(userId))
+          server.sendTo(userId, BOTS_CHANGED_CHANNEL, {
+            botId,
+            accessChanged: stop || previous.has(userId) !== next.has(userId)
+          })
+      }
+    })
+  }
+  if (bots !== null && org !== null && invocations !== null)
+    registerBotHandlers({
+      db,
+      bots,
+      org,
+      invocations,
+      github: botGithub,
+      logins,
+      access,
+      changed: botsChanged
+    })
+  if (subscriptions !== null && org !== null)
+    registerSubscriptionHandlers({ db, org, subscriptions, logins, changed: botsChanged })
   keepScrollback(SCROLLBACK_CHARS)
   await recover(db)
+  quiescence.releaseRecovered(initialBotIds)
+  invocations?.recover()
   idle.stoppedAll()
   persistQueues(sqliteQueueStore(db))
 
@@ -491,8 +683,19 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
     },
     stillAllowed: (caller) =>
       caller.signInId === undefined || (signIn !== null && signInIsLive(signIn, caller.signInId)),
+    mayForward: (caller, workspaceId) =>
+      isAdmitted(caller.userId) &&
+      access.mayControlWorkspace(caller.userId, workspaceId, caller.capabilities),
+    pushFor(caller, channel, payload, workspaceId) {
+      if (supportsBots(caller.capabilities ?? RUNNER_CAPABILITIES)) return payload
+      if (channel.startsWith('bots:') || (workspaceId !== undefined && access.isBotWorkspace(workspaceId)))
+        return undefined
+      return channel === SESSION_ACTIVITY_CHANNEL
+        ? access.activityFor(caller.userId, payload as SessionActivity, [])
+        : payload
+    },
     async forward(caller, workspaceId, port) {
-      access.assertMayCall(caller, 'workspaces:power', { workspaceId })
+      access.assertMayCall(caller, 'ports:forward', { workspaceId, port })
       const workspace = getWorkspaceOrThrow(db, workspaceId)
       if (
         workspace.runtime !== 'container' ||
@@ -509,7 +712,15 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
       access.assertMayCall(caller, channel, parsed)
       if (NEW_WORK_CALLS.has(channel)) admission.assertNewWork(caller.userId)
       const result = await call(channel, parsed, caller)
-      access.noteResult(caller, channel, result)
+      admission.assertMember(caller.userId)
+      if (
+        (channel in CALL_SUBJECTS || channel === 'files:upload') &&
+        !['workspaces:remove', 'terminal:destroy', 'comments:remove'].includes(channel)
+      )
+        access.assertMayCall(caller, channel, parsed)
+      if (channel === 'bots:open')
+        invocations?.get(caller.userId, (parsed as { invocationId: string }).invocationId)
+      access.noteResult(caller, channel, result, parsed)
       return result
     }
   })
@@ -517,8 +728,10 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
   forwardedWorkspaces = () => server.forwardedWorkspaces()
   pushNotification = (notification) => server.sendTo(notification.ownerId, NOTIFICATION_CHANNEL, notification)
   closeForwards = (id) => server.closeWorkspaceForwards(id)
-  pushPower = (push) =>
-    server.sendTo(access.ownerOf('workspace', push.workspaceId), WORKSPACE_POWER_CHANNEL, push)
+  const toWorkspace = (workspaceId: string, channel: string, payload: unknown): void => {
+    for (const userId of access.viewers(workspaceId)) server.sendTo(userId, channel, payload, workspaceId)
+  }
+  pushPower = (push) => toWorkspace(push.workspaceId, WORKSPACE_POWER_CHANNEL, push)
   const idleTimer = setInterval(() => void power.sweep(), 15_000)
   idleTimer.unref()
   const cleanupTimer = setInterval(() => void cleanup.sweep(), 24 * 60 * 60_000)
@@ -531,16 +744,19 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
   }
 
   // What the desktop pushes to its window, a runner pushes to the desktops of the owner alone.
-  const toOwnerOfSession = (channel: string) => (push: { sessionId: string }) =>
-    server.sendTo(access.ownerOf('session', push.sessionId), channel, push)
+  const toOwnerOfSession = (channel: string) => (push: { sessionId: string }) => {
+    const workspaceId = access.workspaceOf('session', push.sessionId)
+    if (workspaceId !== null) toWorkspace(workspaceId, channel, { ...push, workspaceId })
+  }
   setSessionSink(toOwnerOfSession(SESSION_EVENT_CHANNEL))
   setQueueSink(toOwnerOfSession(SESSION_QUEUE_CHANNEL))
   setTitleSink(toOwnerOfSession(SESSION_TITLE_CHANNEL))
-  setWorkspaceStateSink((push) =>
-    server.sendTo(access.ownerOf('workspace', push.workspaceId), WORKSPACE_STATE_CHANNEL, push)
-  )
+  setWorkspaceStateSink((push) => toWorkspace(push.workspaceId, WORKSPACE_STATE_CHANNEL, push))
   setTerminalSink((channel, push) => {
-    server.sendTo(access.ownerOf('terminal', push.id), channel, push)
+    const workspaceId = access.workspaceOf('terminal', push.id)
+    if (workspaceId !== null && isBot(access.ownerOf('workspace', workspaceId) ?? ''))
+      toWorkspace(workspaceId, channel, push)
+    else server.sendTo(access.ownerOf('terminal', push.id), channel, push)
     if (channel === TERMINAL_EXIT_CHANNEL) access.forgetTerminal(push.id)
   })
   // One snapshot covers every tab; each user is sent the part that is theirs.
@@ -558,6 +774,8 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
       clearInterval(idleTimer)
       clearInterval(cleanupTimer)
       await admission.close()
+      await invocations?.close()
+      await quiescence.idle()
       await cleanup.close()
       await power.close()
       closeAllSessions(db)
@@ -566,7 +784,16 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
       setContainerLogins(null)
       setRuntimePowerGate(null)
       setTurnStartGuard(null)
+      setCodexQuotaObserver(null)
       setRemoteAccess(null)
+      // A later runner in this process must not invoke closures holding this closed database.
+      setSessionSink(() => {})
+      setQueueSink(() => {})
+      setTitleSink(() => {})
+      setActivitySink(() => {})
+      setWorkspaceStateSink(() => {})
+      setTerminalSink(() => {})
+      gitBoundary.close()
       db.close()
     }
   }

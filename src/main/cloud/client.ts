@@ -5,7 +5,8 @@ import { HostProofError } from './host-proof'
 import {
   RUNNER_CAPABILITIES,
   RUNNER_CAPABILITIES_HEADER,
-  supportsBots
+  supportsBots,
+  supportsSubscriptions
 } from '../../shared/runner-capabilities'
 import {
   CLOSE_SIGNED_OUT,
@@ -35,7 +36,7 @@ export interface RunnerClientOptions extends RunnerAuth {
   url: string
   /** What this desktop speaks; a runner on another version ends in the `update` state. */
   protocol?: number
-  /** Optional features implemented by this client. */
+  /** Optional features implemented by this client; omitted uses this build's features. */
   capabilities?: readonly string[]
   onPush(channel: string, payload: unknown): void
   onState(state: ClientState): void
@@ -111,6 +112,11 @@ export function connectRunner(options: RunnerClientOptions): RunnerClient {
   let silenceTimer: NodeJS.Timeout | undefined
 
   function send(call: Pending): void {
+    if (call.frame.channel.startsWith('subscriptions:') && !supportsSubscriptions(capabilities)) {
+      pending.delete(call.frame.id)
+      call.reject(new Error('This runner does not support subscriptions. Ask your operator to update it.'))
+      return
+    }
     if (call.frame.channel.startsWith('bots:') && !supportsBots(capabilities)) {
       pending.delete(call.frame.id)
       call.reject(new Error('This runner does not support bots. Ask your operator to update it.'))

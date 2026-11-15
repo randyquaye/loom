@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import {
+  BOTS_CHANGED_CHANNEL,
   CLOUD_STATUS_CHANNEL,
   SESSION_EVENT_CHANNEL,
   SESSION_ACTIVITY_CHANNEL,
@@ -10,6 +11,7 @@ import {
   WORKSPACE_STATE_CHANNEL,
   WORKSPACE_POWER_CHANNEL,
   type CloudStatus,
+  type BotChangedPush,
   type IpcContract,
   type LoomApi,
   type SessionEventPush,
@@ -40,6 +42,35 @@ function subscribe<T>(channel: string, cb: (push: T) => void): () => void {
 
 const api: LoomApi = {
   ping: () => invoke('app:ping', undefined),
+  bots: {
+    list: () => invoke('bots:list', undefined),
+    create: (slug, config) => invoke('bots:create', { slug, config }),
+    update: (botId, config, enabled, revision) => invoke('bots:update', { botId, config, enabled, revision }),
+    grants: (botId) => invoke('bots:grants', { botId }),
+    setGrant: (botId, userId, access) => invoke('bots:setGrant', { botId, userId, access }),
+    logins: (botId) => invoke('bots:logins', { botId }),
+    connectClaude: (botId, token) => invoke('bots:connectClaude', { botId, token }),
+    connectCodex: (botId) => invoke('bots:connectCodex', { botId }),
+    setGithub: (botId, credentials) => invoke('bots:setGithub', { botId, ...credentials }),
+    disconnect: (botId, provider) => invoke('bots:disconnect', { botId, provider }),
+    invoke: (botId, repository, prompt, requestKey) =>
+      invoke('bots:invoke', { botId, repository, prompt, requestKey }),
+    invocations: (botId) => invoke('bots:invocations', { botId }),
+    open: (invocationId) => invoke('bots:open', { invocationId })
+  },
+  onBotsChanged: (cb) => subscribe<BotChangedPush>(BOTS_CHANGED_CHANNEL, cb),
+  subscriptions: {
+    list: () => invoke('subscriptions:list', undefined),
+    create: (provider, label) => invoke('subscriptions:create', { provider, label }),
+    update: (accountId, label, enabled, expectedEnabled) =>
+      invoke('subscriptions:update', { accountId, label, enabled, expectedEnabled }),
+    connectClaude: (accountId, token) => invoke('subscriptions:connectClaude', { accountId, token }),
+    connectCodex: (accountId) => invoke('subscriptions:connectCodex', { accountId }),
+    status: (accountId) => invoke('subscriptions:status', { accountId }),
+    disconnect: (accountId) => invoke('subscriptions:disconnect', { accountId }),
+    grants: (botId) => invoke('subscriptions:grants', { botId }),
+    setGrant: (botId, provider, allowed) => invoke('subscriptions:setGrant', { botId, provider, allowed })
+  },
   secrets: {
     has: (provider) => invoke('secrets:has', { provider }),
     set: (provider, value) => invoke('secrets:set', { provider, value }),

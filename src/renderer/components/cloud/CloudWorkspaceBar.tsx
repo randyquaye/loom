@@ -17,12 +17,14 @@ export function CloudWorkspaceBar({
   workspaceId,
   setupReady,
   setupFailed,
-  setupLogPath
+  setupLogPath,
+  readOnly = false
 }: {
   workspaceId: string
   setupReady: boolean
   setupFailed: boolean
   setupLogPath?: string | null
+  readOnly?: boolean
 }) {
   const status = useCloud((state) => state.status)
   const power = useWorkspacePower((state) => state.byWorkspace[workspaceId])
@@ -52,15 +54,15 @@ export function CloudWorkspaceBar({
     const firstOpen = opened.current !== workspaceId
     opened.current = workspaceId
     const state = useWorkspacePower.getState()
-    void (firstOpen ? state.start(workspaceId) : state.load(workspaceId)).catch((error: unknown) =>
-      push(String(error), 'err')
+    void (firstOpen && !readOnly ? state.start(workspaceId) : state.load(workspaceId)).catch(
+      (error: unknown) => push(String(error), 'err')
     )
-  }, [workspaceId, setupReady, setupFailed, connected, push])
+  }, [workspaceId, setupReady, setupFailed, connected, push, readOnly])
 
   useEffect(() => {
     let disposed = false
     setForwards([])
-    if (!connected) return
+    if (!connected || readOnly) return
     void window.loom.ports
       .list(workspaceId)
       .then((ports) => {
@@ -70,7 +72,7 @@ export function CloudWorkspaceBar({
     return () => {
       disposed = true
     }
-  }, [workspaceId, connected, power?.state, push])
+  }, [workspaceId, connected, power?.state, push, readOnly])
 
   useEffect(() => {
     let disposed = false
@@ -136,6 +138,13 @@ export function CloudWorkspaceBar({
       setWorking(false)
     }
   }
+
+  if (readOnly)
+    return (
+      <span className="settings-state" role="status" title={message}>
+        View only
+      </span>
+    )
 
   return (
     <div className="cloud-workspace" data-state={connected ? power?.state : status.state}>

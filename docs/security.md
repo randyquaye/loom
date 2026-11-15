@@ -16,10 +16,25 @@ change roles/name, inspect host use and read the admin log. It gives no ordinary
 or call for opening another human member's workspace, terminal, conversation or values.
 Being an org owner and owning a particular workspace are separate permissions.
 
-Membership kind is separate from role: human/bot is independent of owner/member. Bots
-and org-wide values are follow-on work. Human sessions never receive or read org values,
-an owner's included. Any later bot design must protect those values even when a human
-may inspect bot work; a terminal can expose the process environment.
+Membership kind is separate from role. Bots are nonhuman members and cannot become
+organization owners or acquire Google sign-ins. Explicit per-bot View and Control
+grants govern their shared workspaces; bot administration alone grants no workspace
+access. The creator receives an explicit Control grant. Human workspace privacy is
+unchanged. An organization owner can remove a bot and purge its retained data without
+being granted permission to inspect it.
+
+Provider and GitHub installation credentials remain host-owned and are supplied through
+the existing proxy boundary. Claude/Codex subscription accounts belong to the organization;
+bots receive explicit provider-pool grants and durable workspace account assignments.
+Canonical account credentials and refresh state are never copied into bot vault slots.
+The proxy verifies both bot ownership and the calling workspace around credential awaits.
+Each bot workspace has its own stand-in profile; revoked capacity closes affected streams
+and quiesces execution. Personal logins remain separate. Raw bot and org-wide environment
+secret values are not injected into bot workspaces. A controller can exercise the bot's granted capabilities,
+and a viewer sees its permitted transcripts and files; values given to workspace code
+cannot be protected from that code by hiding settings. Human sessions never receive
+org-wide values, an owner's included. See [LoomBots](bots.md) for configuration, sharing,
+revocation and recovery behavior.
 
 ## Identity and invitations
 
@@ -129,6 +144,12 @@ login mounts. Outbound networking is open. IMDS requires v2 and has one hop, kee
 workspace code away from the host's AWS role. The host's SSM access explicitly denies
 parameters outside its stack path. Guest PID-limit enforcement remains a documented
 pilot deferral; Aztec proving is not an acceptance requirement. Neither is claimed passed.
+
+After trusted checkout preparation, Git queries and checkpoints for container workspaces
+run inside that workspace's runtime. Repository-selected Git filters therefore execute
+inside the same boundary as workspace code. Checkpoint staging uses a private temporary
+index there. Stopped or retired runtimes cannot fall back to host Git or start implicitly
+for a query; machine workspaces retain their existing host Git behavior.
 
 The org host publicly serves the matching desktop. The team pilot is currently unsigned;
 use a specific macOS approval only after verifying the source and operator. External

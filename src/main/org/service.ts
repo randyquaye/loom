@@ -42,7 +42,7 @@ export function createOrgService(db: Database.Database, config: { ownerEmail: st
   }
   function owner(userId: string): boolean {
     const row = member(userId)
-    return row?.state === 'active' && row.role === 'owner'
+    return row?.state === 'active' && row.kind === 'human' && row.role === 'owner'
   }
   function requireOwner(actorId: string): void {
     if (!owner(actorId)) throw new OrgError('Only an organization owner can do this')
@@ -63,7 +63,9 @@ export function createOrgService(db: Database.Database, config: { ownerEmail: st
       owner(userId) &&
       (
         db
-          .prepare("SELECT COUNT(*) AS n FROM org_members WHERE state = 'active' AND role = 'owner'")
+          .prepare(
+            "SELECT COUNT(*) AS n FROM org_members WHERE state = 'active' AND kind = 'human' AND role = 'owner'"
+          )
           .get() as { n: number }
       ).n <= 1
     ) {
@@ -117,6 +119,8 @@ export function createOrgService(db: Database.Database, config: { ownerEmail: st
         requireOwner(actorId)
         if (role !== 'owner' && role !== 'member') throw new OrgError('Unknown organization role')
         if (!active(userId)) throw new OrgError('This person is not an active member')
+        if (role === 'owner' && member(userId)?.kind === 'bot')
+          throw new OrgError('Bot members cannot become organization owners')
         if (role === 'member') protectLastOwner(userId)
         db.prepare('UPDATE org_members SET role = ? WHERE user_id = ?').run(role, userId)
         audit(actorId, 'member.role', userId, role)
@@ -142,6 +146,8 @@ export function createOrgService(db: Database.Database, config: { ownerEmail: st
           'UPDATE org_invites SET revoked_at = ? WHERE email = (SELECT email FROM users WHERE id = ?) AND used_at IS NULL AND revoked_at IS NULL'
         ).run(now, userId)
         audit(actorId, 'member.remove', userId, null, now)
+        db.prepare('DELETE FROM bot_grants WHERE user_id = ? OR bot_id = ?').run(userId, userId)
+        db.prepare('DELETE FROM bot_subscription_grants WHERE bot_id = ?').run(userId)
         return ids.map((row) => row.id)
       })()
     },
@@ -229,6 +235,7 @@ export function createOrgService(db: Database.Database, config: { ownerEmail: st
     },
     /** Called only after Google has verified the account and allowed Workspace domain. */
     admitGoogle(userId: string, email: string, codeChallenge: string): string | null {
+      if (member(userId)?.kind === 'bot') throw new OrgError('Bot members cannot sign in as humans')
       return db.transaction(() => {
         if (organization() === null && email === config.ownerEmail.trim().toLowerCase()) {
           const now = Date.now()

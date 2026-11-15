@@ -1,16 +1,116 @@
 .chat-question {
-  padding: var(--s-4);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  align-self: flex-start;
+  gap: var(--s-3);
+  width: fit-content;
+  max-width: min(100%, 560px);
+  padding: var(--s-3);
   margin: var(--s-3) 0;
   border: 1px solid var(--border);
   border-radius: var(--r-2);
   background: var(--surface-1);
 }
+
 .chat-question fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  width: 100%;
+  min-width: 0;
   border: 0;
   padding: 0;
-  margin: 0 0 var(--s-3);
+  margin: 0;
 }
+
+.chat-question:has(.input) {
+  min-width: min(320px, 100%);
+}
+
+.chat-question legend {
+  padding: 0;
+  margin-bottom: var(--s-1);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
 .chat-question p {
   white-space: pre-wrap;
-  margin: var(--s-2) 0;
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.chat-question-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.chat-question-choice {
+  position: relative;
+  display: flex;
+  max-width: 100%;
+  cursor: pointer;
+}
+
+/* Native controls retain radio arrow keys, checkbox Space, and screen-reader states. */
+.chat-question-choice input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.chat-question-choice-body {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  max-width: 340px;
+  padding: 6px 10px;
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
+.chat-question-choice-body small {
+  color: var(--text-muted);
+  font: inherit;
+}
+
+.chat-question-choice:hover input:not(:disabled) + .chat-question-choice-body {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+
+.chat-question-choice input:checked + .chat-question-choice-body {
+  border-color: var(--accent-3);
+  background: var(--accent-2-a18);
+  box-shadow: var(--edge-highlight);
+}
+
+.chat-question-choice input:focus-visible + .chat-question-choice-body {
+  box-shadow: var(--focus-ring);
+}
+
+.chat-question-choice[data-disabled='true'] {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.chat-question > .btn {
+  padding: 6px 10px;
+  font-size: var(--fs-xs);
+}
+
+.chat-question .input {
+  min-width: min(260px, 100%);
+  width: 100%;
+  padding: 6px 10px;
+  font-size: var(--fs-sm);
 }

@@ -4,6 +4,7 @@ import type Database from 'better-sqlite3'
 import type { ProjectRow } from '../../shared/ipc-contract'
 import { DEFAULT_AGENT_MODES } from '../../shared/models'
 import { runnerSchemas, type RunnerContract, type UserInstructions } from '../../shared/runner-contract'
+import { RUNNER_CAPABILITIES, supportsBots } from '../../shared/runner-capabilities'
 import { attachmentFileName, writeAttachment } from '../context/materialize'
 import { getProjectOrThrow, insertProject, listProjects } from '../db/repos/projects'
 import { getWorkspaceOrThrow, listWorkspaces } from '../db/repos/workspaces'
@@ -27,6 +28,7 @@ import { registerWorkspacesIpc } from '../ipc/workspaces'
 import { AttachmentError } from '../sessions/attachments'
 import {
   createSession,
+  cancelTurn,
   forkSession,
   sendNow,
   sendTurn,
@@ -43,6 +45,11 @@ import type { AccessRules } from './access'
 import type { OrgService } from '../org/service'
 import type { RunnerAdmission } from './admission'
 import type { SignInConfig } from './runner'
+import { readBot } from '../bots/repository'
+import { compileBotInstructions } from '../bots/execution'
+import type { BotConfig } from '../../shared/bots'
+import { markSessionRead } from '../sessions/unread'
+import { answerQuestion, stopSessionWork, steerQueued } from '../sessions/service'
 
 export interface RunnerHandlerOptions {
   placement: WorkspacePlacement
@@ -90,7 +97,7 @@ function uniqueProjectName(db: Database.Database, name: string): string {
  * A runner has no checkout of its own: a project is its remote address, which is both what
  * identifies it and where its workspaces are cloned from.
  */
-function ensureProject(
+export function ensureProject(
   db: Database.Database,
   input: RunnerContract['projects:ensure']['in'],
   allowLocalRemotes: boolean
@@ -120,6 +127,13 @@ async function instructionSnapshot(
   instructions: UserInstructions
 ): Promise<string> {
   const workspace = getWorkspaceOrThrow(db, workspaceId)
+  if (workspace.ownerId !== null && readBot(db, workspace.ownerId) !== null) {
+    const invocation = db
+      .prepare('SELECT config FROM bot_invocations WHERE workspace_id = ?')
+      .get(workspaceId) as { config: string } | undefined
+    if (invocation === undefined) throw new Error('Bot workspace has no configuration snapshot')
+    return compileBotInstructions(JSON.parse(invocation.config) as BotConfig)
+  }
   return composeInstructions({
     repositoryInstructions: [],
     overlay: instructions.overlay,
@@ -184,11 +198,19 @@ export function registerRunnerHandlers(deps: IpcDeps, options: RunnerHandlerOpti
   const { db } = deps
 
   handle('app:ping', () => 'pong')
-  registerWorkspacesIpc(deps, options.placement)
+  const authorizeControl = (caller: Caller | undefined, workspaceId: string) => {
+    const identity = signedIn(caller)
+    options.admission?.assertMember(identity.userId)
+    options.access.assertMayCall(identity, 'terminal:create', { workspaceId })
+    const workspace = getWorkspaceOrThrow(db, workspaceId)
+    if (workspace.ownerId !== null && readBot(db, workspace.ownerId) !== null && workspace.state !== 'ready')
+      throw new Error('Wait for bot workspace setup to finish before using its terminal')
+  }
+  registerWorkspacesIpc(deps, options.placement, authorizeControl)
   registerGitIpc(deps)
   registerFilesIpc(deps)
   registerLintIpc(deps)
-  registerTerminalIpc(deps)
+  registerTerminalIpc(deps, authorizeControl)
   registerSessionsIpc(deps)
   registerCommentsIpc(deps)
   registerHistoryIpc(deps)
@@ -226,7 +248,13 @@ export function registerRunnerHandlers(deps: IpcDeps, options: RunnerHandlerOpti
     }
   })
   handle('org:update', ({ name }, caller) => organization().rename(signedIn(caller).userId, name))
-  handle('org:members', (_input, caller) => organization().members(signedIn(caller).userId))
+  handle('org:members', (_input, caller) => {
+    const signed = signedIn(caller)
+    const members = organization().members(signed.userId)
+    return supportsBots(signed.capabilities ?? RUNNER_CAPABILITIES)
+      ? members
+      : members.filter((member) => member.kind === 'human')
+  })
   handle('org:invite', ({ email }, caller) => organization().createInvite(signedIn(caller).userId, email))
   handle('org:invites', (_input, caller) => organization().invites(signedIn(caller).userId))
   handle('org:revokeInvite', ({ id }, caller) => organization().revokeInvite(signedIn(caller).userId, id))
@@ -258,9 +286,29 @@ export function registerRunnerHandlers(deps: IpcDeps, options: RunnerHandlerOpti
   }
 
   // The window's handlers answer for the one user of a Mac. These answer for the caller alone.
-  handle('workspaces:list', ({ projectId }, caller) =>
-    listWorkspaces(db, projectId).filter((row) => row.ownerId === signedIn(caller).userId)
-  )
+  const visibleWorkspaceIds = (caller: Caller): string[] =>
+    (db.prepare('SELECT id FROM workspaces').all() as Array<{ id: string }>)
+      .filter((row) => options.access.mayViewWorkspace(caller.userId, row.id, caller.capabilities))
+      .map((row) => row.id)
+  handle('workspaces:list', ({ projectId }, caller) => {
+    const { userId, capabilities } = signedIn(caller)
+    return listWorkspaces(db, projectId)
+      .filter((row) => options.access.mayViewWorkspace(userId, row.id, capabilities))
+      .map((row) => {
+        const bot = row.ownerId === null ? null : readBot(db, row.ownerId)
+        return bot === null
+          ? row
+          : {
+              ...row,
+              bot: {
+                id: bot.id,
+                access: options.access.mayControlWorkspace(userId, row.id, capabilities)
+                  ? ('control' as const)
+                  : ('view' as const)
+              }
+            }
+      })
+  })
   // Every workspace made here is stamped: with what its owner chose, or with the defaults.
   handle('workspaces:add', ({ projectId, name, baseRef, modes }, caller) => {
     const userId = signedIn(caller).userId
@@ -277,10 +325,29 @@ export function registerRunnerHandlers(deps: IpcDeps, options: RunnerHandlerOpti
       })
     return options.admission === undefined ? create() : options.admission.create(userId, create)
   })
-  handle('sessions:activity', (_input, caller) =>
-    options.access.activityFor(signedIn(caller).userId, sessionActivity())
+  handle('sessions:activity', (_input, caller) => {
+    const signed = signedIn(caller)
+    return options.access.activityFor(signed.userId, sessionActivity(), signed.capabilities)
+  })
+  handle('sessions:unread', (_input, caller) => {
+    const signed = signedIn(caller)
+    return unreadSessions(db, signed.userId, visibleWorkspaceIds(signed))
+  })
+  handle('sessions:markRead', ({ sessionId, seq }, caller) =>
+    markSessionRead(db, sessionId, seq, signedIn(caller).userId)
   )
-  handle('sessions:unread', (_input, caller) => unreadSessions(db, signedIn(caller).userId))
+  handle('sessions:cancel', ({ sessionId }) => {
+    const owner = options.access.ownerOf('session', sessionId)
+    return owner !== null && readBot(db, owner) !== null
+      ? stopSessionWork(db, sessionId)
+      : cancelTurn(db, sessionId)
+  })
+  handle('sessions:answerQuestion', ({ sessionId, answer }, caller) =>
+    answerQuestion(db, sessionId, answer, signedIn(caller).userId)
+  )
+  handle('sessions:steerQueued', ({ sessionId, messageId }, caller) =>
+    steerQueued(db, sessionId, messageId, signedIn(caller).userId)
+  )
 
   // Agent logins, likewise each person's own. A runner that leaves logins in the home folder
   // says so, and has nothing to connect.
@@ -289,7 +356,13 @@ export function registerRunnerHandlers(deps: IpcDeps, options: RunnerHandlerOpti
     if (logins === null) throw new Error('This runner does not keep agent logins')
     return logins
   }
-  registerGithubIpc(deps, (caller) => keeper().githubExec(signedIn(caller).userId))
+  registerGithubIpc(deps, (caller, workspaceId) =>
+    keeper().githubExec(
+      workspaceId === undefined
+        ? signedIn(caller).userId
+        : (getWorkspaceOrThrow(db, workspaceId).ownerId ?? signedIn(caller).userId)
+    )
+  )
   handle('logins:status', (_input, caller) =>
     logins === null
       ? { managed: false, claude: false, codex: false, github: false, codexSigningIn: false }
@@ -320,9 +393,10 @@ export function registerRunnerHandlers(deps: IpcDeps, options: RunnerHandlerOpti
   handle('env:delete', ({ scope, projectId, name }, caller) =>
     deleteEnvVar(scope, projectId, name, signedIn(caller).userId)
   )
-  handle('history:search', ({ query, projectId }, caller) =>
-    searchHistory(db, query, projectId, signedIn(caller).userId)
-  )
+  handle('history:search', ({ query, projectId }, caller) => {
+    const signed = signedIn(caller)
+    return searchHistory(db, query, projectId, signed.userId, visibleWorkspaceIds(signed))
+  })
 
   handleRunner('projects:ensure', (input) => ensureProject(db, input, options.allowLocalRemotes))
 
@@ -340,13 +414,26 @@ export function registerRunnerHandlers(deps: IpcDeps, options: RunnerHandlerOpti
     )
   })
 
-  handleRunner('sessions:create', async ({ instructions, ...input }) =>
-    createSession(db, input, await instructionSnapshot(db, input.workspaceId, instructions))
-  )
+  handleRunner('sessions:create', async ({ instructions, ...input }) => {
+    const workspace = getWorkspaceOrThrow(db, input.workspaceId)
+    if (workspace.ownerId !== null && readBot(db, workspace.ownerId) !== null) {
+      const pinned = db
+        .prepare('SELECT config FROM bot_invocations WHERE workspace_id = ?')
+        .get(input.workspaceId) as { config: string } | undefined
+      if (pinned === undefined) throw new Error('Bot configuration snapshot is missing')
+      const config = JSON.parse(pinned.config) as BotConfig
+      if (input.backend !== config.backend || input.model !== config.model || input.effort !== config.effort)
+        throw new Error('A bot conversation uses its workspace configuration')
+    }
+    return createSession(db, input, await instructionSnapshot(db, input.workspaceId, instructions))
+  })
 
-  handleRunner('sessions:fork', async ({ instructions, ...input }) =>
-    forkSession(db, input, await instructionSnapshot(db, input.workspaceId, instructions))
-  )
+  handleRunner('sessions:fork', async ({ instructions, ...input }) => {
+    const workspace = getWorkspaceOrThrow(db, input.workspaceId)
+    if (workspace.ownerId !== null && readBot(db, workspace.ownerId) !== null)
+      throw new Error('Start a new bot conversation instead of forking a bot transcript')
+    return forkSession(db, input, await instructionSnapshot(db, input.workspaceId, instructions))
+  })
 
   // The three ways a message reaches a tab. Each is delivered once under its ID.
   const once = deliverOnce(db)
@@ -356,9 +443,11 @@ export function registerRunnerHandlers(deps: IpcDeps, options: RunnerHandlerOpti
     'sessions:sendNow': sendNow
   } as const
   for (const channel of Object.keys(messages) as Array<keyof typeof messages>) {
-    handleRunner(channel, ({ sessionId, text, attachments, messageId }) => {
+    handleRunner(channel, ({ sessionId, text, attachments, messageId }, caller) => {
       assertWorkspaceRelative(attachments)
-      return once(messageId, () => messages[channel](db, sessionId, text, attachments, [], messageId))
+      return once(messageId, () =>
+        messages[channel](db, sessionId, text, attachments, [], messageId, signedIn(caller).userId)
+      )
     })
   }
 }

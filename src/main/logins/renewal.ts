@@ -10,6 +10,11 @@ export interface RenewalOptions {
   codexTokenUrl?: string
   github?: GithubClient
   now?: () => number
+  /** Captures an organization account lifecycle before a refresh starts. */
+  guardLogin?(userId: string, login: Login): () => void
+  /** Successful rotation preserves canonical credentials even while execution is disabled. */
+  guardSuccess?(userId: string, login: Login): () => void
+  onInvalid?(userId: string, provider: LoginProvider, assertMayCommit?: () => void): void
 }
 
 export function expiryOf(accessToken: string): number | null {
@@ -37,7 +42,8 @@ async function renewCodex(login: CodexLogin, tokenUrl: string): Promise<CodexLog
     signal: AbortSignal.timeout(20000),
     redirect: 'error'
   })
-  if (response.status >= 400 && response.status < 500) throw new RenewalRefusedError()
+  if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429)
+    throw new RenewalRefusedError()
   if (!response.ok) throw new Error('Codex could not renew its login')
   const body = (await response.json()) as Record<string, unknown>
   const accessToken = body['access_token']
@@ -75,6 +81,8 @@ export function renewingVault(vault: LoginVault, options: RenewalOptions = {}): 
     login: Exclude<Login, { provider: 'claude' }>,
     revision: number
   ): Promise<Login | null> {
+    const assertMayCommit = options.guardLogin?.(userId, login)
+    const assertSuccess = options.guardSuccess?.(userId, login) ?? assertMayCommit
     let next: Login | null
     try {
       if (login.provider === 'github') {
@@ -92,22 +100,36 @@ export function renewingVault(vault: LoginVault, options: RenewalOptions = {}): 
       const current = await vault.get(userId, login.provider)
       if ((revisions.get(key) ?? 0) !== revision || current?.refreshToken !== login.refreshToken)
         return current
-      if (next === null) await vault.remove(userId, login.provider)
-      else await vault.put(userId, next)
+      const assertCredential = next === null ? assertMayCommit : assertSuccess
+      const assertPublication = () => {
+        if ((revisions.get(key) ?? 0) !== revision) throw new Error('The login changed during renewal')
+        assertCredential?.()
+      }
+      try {
+        assertPublication()
+      } catch {
+        return null
+      }
+      if (next === null) {
+        await vault.remove(userId, login.provider, assertPublication)
+        options.onInvalid?.(userId, login.provider, assertPublication)
+      } else await vault.put(userId, next, assertPublication)
       return next
     })
   }
   return {
     ...vault,
-    put(userId, login) {
+    put(userId, login, assertMayCommit) {
+      assertMayCommit?.()
       const key = keyOf(userId, login.provider)
       revisions.set(key, (revisions.get(key) ?? 0) + 1)
-      return serialized(key, () => vault.put(userId, login))
+      return serialized(key, () => vault.put(userId, login, assertMayCommit))
     },
-    remove(userId, provider) {
+    remove(userId, provider, assertMayCommit) {
+      assertMayCommit?.()
       const key = keyOf(userId, provider)
       revisions.set(key, (revisions.get(key) ?? 0) + 1)
-      return serialized(key, () => vault.remove(userId, provider))
+      return serialized(key, () => vault.remove(userId, provider, assertMayCommit))
     },
     async get<P extends LoginProvider>(userId: string, provider: P) {
       type Kept = Extract<Login, { provider: P }> | null

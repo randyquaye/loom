@@ -28,7 +28,7 @@ export function toBlocker(err: unknown): IntegrationBlocker {
 
 export function registerGithubIpc(
   deps: IpcDeps,
-  forCaller?: (caller: Caller | undefined) => Promise<GhExec>
+  forCaller?: (caller: Caller | undefined, workspaceId?: string) => Promise<GhExec>
 ): void {
   const worktreeOf = makeWorktreeResolver(deps.db)
   function blocker(error: unknown): IntegrationBlocker {
@@ -88,7 +88,7 @@ export function registerGithubIpc(
       const pullRequest =
         forCaller === undefined
           ? await findPullRequestForBranch(ref, head)
-          : await findPullRequestForBranch(ref, head, await forCaller(caller))
+          : await findPullRequestForBranch(ref, head, await forCaller(caller, workspaceId))
       return { kind: 'ok', pullRequest }
     } catch (err) {
       return blocker(err)

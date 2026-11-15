@@ -36,7 +36,8 @@ A full host refuses new work with a capacity or free-space message. Stop an unus
 workspace or contact an owner. There is no queue promising eventual admission.
 
 You can update Loom independently of your company's host. Existing personal cloud work
-continues on older runners; optional features need host support before they appear. Operators drain the host before restarting it: running work can finish,
+continues on older runners; optional features such as Bots need host support before
+they appear. Operators drain the host before restarting it: running work can finish,
 while new turns/workspaces/starts are refused. Reconnect after the update. If Loom asks
 for a compatible desktop, use your organization's download link.
 

@@ -31,8 +31,9 @@ function asPhrase(query: string): string {
 export function searchHistory(
   db: Database.Database,
   query: string,
-  projectId: string | null,
-  ownerId?: string
+  projectId: string | null = null,
+  ownerId?: string,
+  visibleWorkspaceIds: readonly string[] = []
 ): HistoryHit[] {
   const scope: string[] = []
   const scopeParams: string[] = []
@@ -41,8 +42,12 @@ export function searchHistory(
     scopeParams.push(projectId)
   }
   if (ownerId !== undefined) {
-    scope.push('w.owner_id = ?')
-    scopeParams.push(ownerId)
+    scope.push(`(w.owner_id = ? OR (
+      w.id IN (SELECT value FROM json_each(?)) AND EXISTS (
+        SELECT 1 FROM org_members m WHERE m.user_id = w.owner_id AND m.kind = 'bot' AND m.state = 'active'
+      )
+    ))`)
+    scopeParams.push(ownerId, JSON.stringify(visibleWorkspaceIds))
   }
   const trimmed = query.trim()
   if (trimmed === '') {
