@@ -44,7 +44,7 @@ jobs:
         run: |
           pnpm typecheck
           pnpm lint
-          npm rebuild better-sqlite3 node-pty
+          node -e "const db = new (require('better-sqlite3'))(':memory:'); db.close(); require('node-pty')"
           pnpm test
           pnpm build
       - name: Build unsigned desktop
