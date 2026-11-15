@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { ChangeEntry, Diagnostic, FileNode, FilePreview } from '../../shared/ipc-contract'
 import { useToasts } from '../components/ui/Toast'
 import { useProjects } from './projects'
+import { useUi } from './ui'
 
 /** Content caches are per workspace: the same relative path differs between worktrees. */
 export function cacheKey(workspaceId: string, path: string): string {
@@ -26,8 +27,10 @@ interface FilesState {
   loadTree(workspaceId: string): Promise<void>
   /** Loads one directory's children once; cached until refresh. */
   expand(workspaceId: string, path: string): Promise<void>
-  /** Re-lists the top level and drops this workspace's children and diff caches. */
+  /** Refreshes loaded listings and previews without navigating away from chat. */
   refresh(workspaceId: string): Promise<void>
+  /** Cached preview bytes for inline images; never selects the viewer or runs lint. */
+  preview(workspaceId: string, path: string, reload?: boolean): Promise<FilePreview>
   loadChanges(workspaceId: string): Promise<void>
   /** Resolves false (after a toast) when the file could not be read; the previous file stays open. */
   open(workspaceId: string, path: string): Promise<boolean>
@@ -45,9 +48,44 @@ function withoutWorkspace<T>(records: Record<string, T>, workspaceId: string): R
 }
 
 const workspaceEpochs = new Map<string, number>()
-function currentRead(workspaceId: string): () => boolean {
+const readIds = new Map<string, symbol>()
+const pendingDirectories = new Map<string, Promise<void>>()
+const pendingPreviews = new Map<string, Promise<FilePreview>>()
+
+function currentRead(workspaceId: string, resource?: string): () => boolean {
   const epoch = workspaceEpochs.get(workspaceId) ?? 0
-  return () => (workspaceEpochs.get(workspaceId) ?? 0) === epoch
+  const key = resource === undefined ? undefined : cacheKey(workspaceId, resource)
+  const id = Symbol()
+  if (key !== undefined) readIds.set(key, id)
+  return () =>
+    (workspaceEpochs.get(workspaceId) ?? 0) === epoch && (key === undefined || readIds.get(key) === id)
+}
+
+function activateViewer(workspaceId: string): void {
+  const { route } = useUi.getState()
+  if (route.name === 'workspace' && route.workspaceId === workspaceId)
+    useUi.setState({ workspacePane: 'viewer' })
+}
+
+function readDirectory(workspaceId: string, path: string): Promise<void> {
+  const current = currentRead(workspaceId, `dir:${path}`)
+  const key = cacheKey(workspaceId, path)
+  const request: Promise<void> = (
+    path === '' ? window.loom.files.tree(workspaceId) : window.loom.files.listDir(workspaceId, path)
+  )
+    .then((nodes) => {
+      if (!current()) return
+      useFiles.setState((state) =>
+        path === ''
+          ? { treeByWorkspace: { ...state.treeByWorkspace, [workspaceId]: nodes } }
+          : { childrenByPath: { ...state.childrenByPath, [key]: nodes } }
+      )
+    })
+    .finally(() => {
+      if (pendingDirectories.get(key) === request) pendingDirectories.delete(key)
+    })
+  pendingDirectories.set(key, request)
+  return request
 }
 
 export const useFiles = create<FilesState>((set, get) => ({
@@ -64,6 +102,9 @@ export const useFiles = create<FilesState>((set, get) => ({
   forgetWorkspaces(workspaceIds) {
     for (const workspaceId of new Set(workspaceIds)) {
       workspaceEpochs.set(workspaceId, (workspaceEpochs.get(workspaceId) ?? 0) + 1)
+      for (const records of [readIds, pendingDirectories, pendingPreviews]) {
+        for (const key of records.keys()) if (key.startsWith(`${workspaceId}:`)) records.delete(key)
+      }
       const state = get()
       const drop = <T>(values: Record<string, T>) =>
         Object.fromEntries(Object.entries(values).filter(([id]) => id !== workspaceId))
@@ -82,50 +123,89 @@ export const useFiles = create<FilesState>((set, get) => ({
   },
 
   async loadTree(workspaceId) {
-    const current = currentRead(workspaceId)
-    const tree = await window.loom.files.tree(workspaceId)
-    if (!current()) return
-    set({ treeByWorkspace: { ...get().treeByWorkspace, [workspaceId]: tree } })
+    await readDirectory(workspaceId, '')
   },
 
   async expand(workspaceId, path) {
-    const current = currentRead(workspaceId)
     const key = cacheKey(workspaceId, path)
     if (get().childrenByPath[key] !== undefined) return
-    const children = await window.loom.files.listDir(workspaceId, path)
-    if (!current()) return
-    set({ childrenByPath: { ...get().childrenByPath, [key]: children } })
+    await (pendingDirectories.get(key) ?? readDirectory(workspaceId, path))
   },
 
   async refresh(workspaceId) {
-    const current = currentRead(workspaceId)
-    const openPath = get().openPathByWorkspace[workspaceId] ?? null
-    const showingDiff = (get().viewerModeByWorkspace[workspaceId] ?? 'content') === 'diff'
-    set({
-      childrenByPath: withoutWorkspace(get().childrenByPath, workspaceId),
-      diffByPath: withoutWorkspace(get().diffByPath, workspaceId)
-    })
-    await get().loadTree(workspaceId)
-    if (!current()) return
-    // A diff that was on screen must not strand the viewer on Loading…: refetch it.
-    if (showingDiff && openPath !== null) {
-      if (openPath.startsWith('@checkpoint/')) {
-        const id = openPath.slice('@checkpoint/'.length)
-        try {
-          const diff = await window.loom.git.diffCheckpoint(workspaceId, id)
-          if (!current()) return
-          set({ diffByPath: { ...get().diffByPath, [cacheKey(workspaceId, openPath)]: diff } })
-        } catch {
-          // A pruned checkpoint simply loses its cached diff; the viewer shows Loading…
-        }
-      } else {
-        await get().openDiff(workspaceId, openPath)
-      }
+    const state = get()
+    const prefix = `${workspaceId}:`
+    const paths = (keys: Iterable<string>) =>
+      [...keys].filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length))
+    const directories = new Set([
+      '',
+      ...paths(Object.keys(state.childrenByPath)),
+      ...paths(pendingDirectories.keys())
+    ])
+    const reads: Promise<unknown>[] = [...directories].map((path) => readDirectory(workspaceId, path))
+    for (const path of paths(Object.keys(state.contentByPath))) {
+      // A removed file may retain its last readable preview; other files still refresh.
+      reads.push(
+        get()
+          .preview(workspaceId, path, true)
+          .catch(() => {})
+      )
     }
+    if (state.changesByWorkspace[workspaceId] !== undefined) reads.push(get().loadChanges(workspaceId))
+    const openPath = state.openPathByWorkspace[workspaceId] ?? null
+    const showingDiff = state.viewerModeByWorkspace[workspaceId] === 'diff'
+    const openKey = openPath === null ? null : cacheKey(workspaceId, openPath)
+    set({
+      diffByPath: Object.fromEntries(
+        Object.entries(get().diffByPath).filter(
+          ([key]) => !key.startsWith(prefix) || (showingDiff && key === openKey)
+        )
+      )
+    })
+    if (showingDiff && openPath !== null) {
+      const current = currentRead(workspaceId, `diff:${openPath}`)
+      const read = openPath.startsWith('@checkpoint/')
+        ? window.loom.git.diffCheckpoint(workspaceId, openPath.slice('@checkpoint/'.length))
+        : window.loom.git.diff(workspaceId, openPath)
+      reads.push(
+        read
+          .then((diff) => {
+            if (current())
+              set({ diffByPath: { ...get().diffByPath, [cacheKey(workspaceId, openPath)]: diff } })
+          })
+          .catch(() => {})
+      )
+    }
+    // Wait for every read, so a later write cannot overlap an unfinished refresh.
+    const results = await Promise.allSettled(reads)
+    const failed = results.find((result) => result.status === 'rejected')
+    if (failed?.status === 'rejected') throw failed.reason
+  },
+
+  async preview(workspaceId, path, reload = false) {
+    const key = cacheKey(workspaceId, path)
+    if (!reload) {
+      const cached = get().contentByPath[key]
+      if (cached !== undefined) return cached
+      const pending = pendingPreviews.get(key)
+      if (pending !== undefined) return pending
+    }
+    const current = currentRead(workspaceId, `content:${path}`)
+    const request: Promise<FilePreview> = window.loom.files
+      .preview(workspaceId, path)
+      .then((content) => {
+        if (current()) set({ contentByPath: { ...get().contentByPath, [key]: content } })
+        return content
+      })
+      .finally(() => {
+        if (pendingPreviews.get(key) === request) pendingPreviews.delete(key)
+      })
+    pendingPreviews.set(key, request)
+    return request
   },
 
   async loadChanges(workspaceId) {
-    const current = currentRead(workspaceId)
+    const current = currentRead(workspaceId, 'changes')
     const changes = await window.loom.git.status(workspaceId)
     if (!current()) return
     set({ changesByWorkspace: { ...get().changesByWorkspace, [workspaceId]: changes } })
@@ -136,7 +216,7 @@ export const useFiles = create<FilesState>((set, get) => ({
     const push = useToasts.getState().push
     let content: FilePreview
     try {
-      content = await window.loom.files.preview(workspaceId, path)
+      content = await get().preview(workspaceId, path, true)
     } catch (err) {
       if (!current()) return false
       // Keep whatever file was showing; a failed read must not blank the viewer or spin forever.
@@ -162,9 +242,9 @@ export const useFiles = create<FilesState>((set, get) => ({
       openPathByWorkspace: { ...get().openPathByWorkspace, [workspaceId]: path },
       viewerModeByWorkspace: { ...get().viewerModeByWorkspace, [workspaceId]: 'content' },
       revealLineByWorkspace: { ...get().revealLineByWorkspace, [workspaceId]: null },
-      contentByPath: { ...get().contentByPath, [cacheKey(workspaceId, path)]: content },
       diagnosticsByPath: { ...get().diagnosticsByPath, [cacheKey(workspaceId, path)]: diagnostics }
     })
+    activateViewer(workspaceId)
     return true
   },
 
@@ -178,7 +258,7 @@ export const useFiles = create<FilesState>((set, get) => ({
   },
 
   async openDiff(workspaceId, path) {
-    const current = currentRead(workspaceId)
+    const current = currentRead(workspaceId, `diff:${path}`)
     const push = useToasts.getState().push
     const key = cacheKey(workspaceId, path)
     if (get().diffByPath[key] === undefined) {
@@ -197,10 +277,11 @@ export const useFiles = create<FilesState>((set, get) => ({
       viewerModeByWorkspace: { ...get().viewerModeByWorkspace, [workspaceId]: 'diff' },
       revealLineByWorkspace: { ...get().revealLineByWorkspace, [workspaceId]: null }
     })
+    activateViewer(workspaceId)
   },
 
   async openCheckpointDiff(workspaceId, id) {
-    const current = currentRead(workspaceId)
+    const current = currentRead(workspaceId, `diff:@checkpoint/${id}`)
     const push = useToasts.getState().push
     const pseudo = `@checkpoint/${id}`
     const key = cacheKey(workspaceId, pseudo)
@@ -220,6 +301,7 @@ export const useFiles = create<FilesState>((set, get) => ({
       viewerModeByWorkspace: { ...get().viewerModeByWorkspace, [workspaceId]: 'diff' },
       revealLineByWorkspace: { ...get().revealLineByWorkspace, [workspaceId]: null }
     })
+    activateViewer(workspaceId)
   },
 
   closeViewer(workspaceId) {

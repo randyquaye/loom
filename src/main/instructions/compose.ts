@@ -1,6 +1,6 @@
 import type { InstructionScope } from '../../shared/ipc-contract'
 import type { KnowledgeSource } from '../../shared/models'
-import { AUTOLINK_SYSTEM_PROMPT } from '../agents/prompts/autolink'
+import { AUTOLINK_SYSTEM_PROMPT, CHAT_IMAGES_SYSTEM_PROMPT } from '../agents/prompts/autolink'
 import { LOOM_CONTAINER_WORKSPACE_RULES, LOOM_WORKSPACE_RULES } from './rules'
 
 export interface InstructionInput {
@@ -27,7 +27,7 @@ const PRIORITY_GUIDANCE = [
 
 /** Adds the priority contract to sources loaded by the session service. */
 export function composeInstructions(input: InstructionInput): string {
-  return `${PRIORITY_GUIDANCE}\n\n${composeLegacyInstructions(input)}`
+  return `${PRIORITY_GUIDANCE}\n\n${CHAT_IMAGES_SYSTEM_PROMPT}\n\n${composeLegacyInstructions(input)}`
 }
 
 /** Reconstructs the old format only to prove ownership before retiring a generated companion. */

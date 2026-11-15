@@ -1,8 +1,9 @@
-import { isValidElement, memo, type ReactNode } from 'react'
+import { isValidElement, memo, useMemo, type ReactNode } from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { CodeFence } from './CodeFence'
 import { PATH_RE } from '../viewer/linkify'
+import { ChatImage } from './ChatImage'
 
 type FileOpen = (path: string, line?: number) => void
 
@@ -75,9 +76,24 @@ function textOf(node: ReactNode): string {
   return ''
 }
 
-function components(onFileOpen: FileOpen | undefined, streaming: boolean): Components {
+function components(
+  onFileOpen: FileOpen | undefined,
+  streaming: boolean,
+  workspaceId: string | undefined
+): Components {
   return {
-    a: ({ href, children }) => {
+    img: ({ src, alt }) => (
+      <ChatImage
+        src={typeof src === 'string' ? src : undefined}
+        alt={alt}
+        workspaceId={workspaceId}
+        onOpen={onFileOpen}
+      />
+    ),
+    a: ({ href, children, node }) => {
+      // A linked local image already has its own viewer action; avoid nested buttons.
+      if (node?.children.some((child) => child.type === 'element' && child.tagName === 'img'))
+        return <span>{children}</span>
       // Navigation is locked app-wide: repo paths open the viewer; web links leave through
       // the OS default browser on an explicit click; every other scheme stays inert text.
       if (href === undefined || href === '') return <span>{children}</span>
@@ -146,18 +162,24 @@ function components(onFileOpen: FileOpen | undefined, streaming: boolean): Compo
 export const ChatMarkdown = memo(function ChatMarkdown({
   text,
   streaming,
-  onFileOpen
+  onFileOpen,
+  workspaceId
 }: {
   text: string
   streaming?: boolean
   onFileOpen: FileOpen | undefined
+  workspaceId?: string | undefined
 }) {
+  const renderers = useMemo(
+    () => components(onFileOpen, streaming === true, workspaceId),
+    [onFileOpen, streaming, workspaceId]
+  )
   return (
     <div className="chat-md" data-streaming={streaming === true ? 'true' : undefined}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, linkFilePaths]}
         urlTransform={urlTransform}
-        components={components(onFileOpen, streaming === true)}
+        components={renderers}
       >
         {text}
       </ReactMarkdown>

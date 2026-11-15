@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Composer } from '../components/chat/Composer'
 import { MessageList } from '../components/chat/MessageList'
 import { SessionTabs } from '../components/chat/SessionTabs'
@@ -56,9 +56,12 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
   const load = useSessions((s) => s.load)
   const loadTree = useFiles((s) => s.loadTree)
   const openAt = useFiles((s) => s.openAt)
+  const onFileOpen = useCallback(
+    (path: string, line?: number) => void openAt(workspaceId, path, line),
+    [workspaceId, openAt]
+  )
   const closeViewer = useFiles((s) => s.closeViewer)
   const openPath = useFiles((s) => s.openPathByWorkspace[workspaceId] ?? null)
-  const viewerMode = useFiles((s) => s.viewerModeByWorkspace[workspaceId] ?? 'content')
   const rightW = usePanels((s) => s.rightW)
   const maxRight = usePanels(rightMax)
   const setRightW = usePanels((s) => s.setRightW)
@@ -157,13 +160,6 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
       disposed = true
     }
   }, [workspaceId, ready, push])
-
-  // Conductor-style: one pinned viewer tab, present only while a file is open; opening any file
-  // activates it, selecting a session tab returns to the chat. Mode is in the deps so a diff
-  // reopen of the already-open path still brings the viewer forward.
-  useEffect(() => {
-    setPane(openPath !== null ? 'viewer' : 'chat')
-  }, [openPath, viewerMode])
 
   // ⌘T mirrors the tab strip's +: a fresh compose tab, chat pane in front of the viewer.
   // Same guards as the button: never past the per-workspace cap, never while already drafting.
@@ -329,8 +325,9 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
             {!voiceStage && (
               <MessageList
                 sessionId={activeId || undefined}
+                workspaceId={workspaceId}
                 events={events}
-                onFileOpen={(path, line) => void openAt(workspaceId, path, line)}
+                onFileOpen={onFileOpen}
                 onPrompt={(text) => useUi.getState().setDraft(text)}
                 readOnly={readOnly}
               />

@@ -48,12 +48,14 @@ function sideData(events: AgentEvent[], blocks: Block[]) {
 
 export function MessageList({
   sessionId,
+  workspaceId,
   events,
   onFileOpen,
   onPrompt,
   readOnly = false
 }: {
   sessionId?: string | undefined
+  workspaceId?: string | undefined
   events: AgentEvent[]
   onFileOpen?: FileOpen
   onPrompt?: (text: string) => void
@@ -92,14 +94,14 @@ export function MessageList({
   useLayoutEffect(() => {
     const el = listRef.current
     const column = el?.firstElementChild
-    if (!running || el === null || column === undefined || column === null) return
+    if (el === null || column === undefined || column === null) return
     // Image loads and width changes can grow Markdown without appending an event.
     const observer = new ResizeObserver(() => {
       if (followRef.current) el.scrollTop = el.scrollHeight
     })
     observer.observe(column)
     return () => observer.disconnect()
-  }, [running])
+  }, [sessionId, events.length === 0])
 
   if (events.length === 0) return <ChatEmptyState onPrompt={readOnly ? undefined : onPrompt} />
 
@@ -128,14 +130,28 @@ export function MessageList({
       case 'text':
         if (block.text === '') return null
         return (
-          <AssistantText key={block.id} text={block.text} streaming={streaming} onFileOpen={onFileOpen} />
+          <AssistantText
+            key={block.id}
+            text={block.text}
+            streaming={streaming}
+            onFileOpen={onFileOpen}
+            workspaceId={workspaceId}
+          />
         )
       case 'reasoning':
         return <ReasoningBlock key={block.id} text={block.text} />
       case 'tool':
         return <ToolRow key={block.id} block={block} patches={side.patches.get(block.id)} live={live} />
       case 'subagent':
-        return <SubagentRow key={block.id} block={block} live={live} onFileOpen={onFileOpen} />
+        return (
+          <SubagentRow
+            key={block.id}
+            block={block}
+            live={live}
+            onFileOpen={onFileOpen}
+            workspaceId={workspaceId}
+          />
+        )
       case 'error':
         return <ErrorRow key={block.id} message={block.message} code={side.errorCodes.get(block.id)} />
       case 'user':

@@ -133,13 +133,15 @@ export function UserBubble({ text, onFileOpen }: { text: string; onFileOpen: Fil
 export function AssistantText({
   text,
   streaming,
-  onFileOpen
+  onFileOpen,
+  workspaceId
 }: {
   text: string
   streaming: boolean
   onFileOpen: FileOpen | undefined
+  workspaceId?: string | undefined
 }) {
-  return <ChatMarkdown text={text} streaming={streaming} onFileOpen={onFileOpen} />
+  return <ChatMarkdown text={text} streaming={streaming} onFileOpen={onFileOpen} workspaceId={workspaceId} />
 }
 
 export function ReasoningBlock({ text }: { text: string }) {
@@ -287,12 +289,14 @@ function subagentProgress(block: SubagentBlock): string {
 export function SubagentRow({
   block,
   live,
-  onFileOpen
+  onFileOpen,
+  workspaceId
 }: {
   block: SubagentBlock
   /** The turn is still running, so an unended subagent shows a spinner. */
   live: boolean
   onFileOpen: FileOpen | undefined
+  workspaceId?: string | undefined
 }) {
   const [open, setOpen] = useState(false)
   const ended = block.ok !== undefined
@@ -358,7 +362,7 @@ export function SubagentRow({
             </>
           )}
           {hasReport ? (
-            <ChatMarkdown text={block.report ?? ''} onFileOpen={onFileOpen} />
+            <ChatMarkdown text={block.report ?? ''} onFileOpen={onFileOpen} workspaceId={workspaceId} />
           ) : (
             ended && <span className="chat-subagent-empty">No report returned.</span>
           )}
