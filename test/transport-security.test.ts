@@ -37,11 +37,14 @@ beforeAll(async () => {
   const openssl = (...args: string[]) => execFileSync('openssl', args, { cwd: root, stdio: 'ignore' })
   openssl(
     'req',
+    '-sha256',
     '-x509',
     '-newkey',
     'ec',
     '-pkeyopt',
     'ec_paramgen_curve:P-256',
+    '-pkeyopt',
+    'ec_param_enc:named_curve',
     '-nodes',
     '-days',
     '2',
@@ -61,11 +64,14 @@ beforeAll(async () => {
   const leaf = async (name: string, serial: string): Promise<Leaf> => {
     openssl(
       'req',
+      '-sha256',
       '-new',
       '-newkey',
       'ec',
       '-pkeyopt',
       'ec_paramgen_curve:P-256',
+      '-pkeyopt',
+      'ec_param_enc:named_curve',
       '-nodes',
       '-subj',
       '/CN=localhost',
@@ -76,6 +82,7 @@ beforeAll(async () => {
     )
     openssl(
       'x509',
+      '-sha256',
       '-req',
       '-in',
       `${name}.csr`,
