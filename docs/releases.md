@@ -10,6 +10,7 @@ Enable GitHub Actions and **immutable releases** in the Loom repository's settin
 Release verification refuses editable releases. Grant the designated maintainers access
 to run the workflows; company operators also need read access to this private repository's
 releases. Neither workflow needs AWS credentials or deploys infrastructure.
+Fine-grained GitHub tokens also need **Attestations: read** for release verification.
 
 The desktop workflow defaults to an unsigned team-pilot build. It needs no Apple
 Developer account or Apple secrets. To enable **Code sign and notarize**, configure

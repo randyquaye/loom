@@ -12,6 +12,7 @@ on:
         type: string
 permissions:
   contents: read
+  attestations: read
 concurrency:
   group: runner-release-${{ inputs.version }}
   cancel-in-progress: false
@@ -39,6 +40,8 @@ jobs:
         run: node scripts/release.mjs inspect runner "$VERSION"
       - name: Install
         run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends zsh
           npm install --global pnpm@11.7.0
           pnpm install --frozen-lockfile
       - name: Check source and build
@@ -66,6 +69,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      attestations: read
     env:
       VERSION: ${{ inputs.version }}
       GH_TOKEN: ${{ github.token }}

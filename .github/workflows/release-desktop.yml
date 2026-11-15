@@ -99,6 +99,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      attestations: read
     env:
       VERSION: ${{ inputs.version }}
       GH_TOKEN: ${{ github.token }}
