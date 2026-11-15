@@ -34,9 +34,13 @@ const closers: Array<() => Promise<unknown> | void> = []
 
 beforeAll(async () => {
   root = await mkdtemp(path.join(tmpdir(), 'loom-transport-security-'))
+  // Ambient OpenSSL configurations can append duplicate certificate extensions.
+  await writeFile(path.join(root, 'openssl.cnf'), '[req]\ndistinguished_name=dn\n[dn]\n')
   const openssl = (...args: string[]) => execFileSync('openssl', args, { cwd: root, stdio: 'ignore' })
   openssl(
     'req',
+    '-config',
+    'openssl.cnf',
     '-sha256',
     '-x509',
     '-newkey',
@@ -64,6 +68,8 @@ beforeAll(async () => {
   const leaf = async (name: string, serial: string): Promise<Leaf> => {
     openssl(
       'req',
+      '-config',
+      'openssl.cnf',
       '-sha256',
       '-new',
       '-newkey',
