@@ -339,13 +339,14 @@ async function publish(kind, version, directory) {
     api(`commits/${tag}`).sha === info.commit,
     'Published immutable tag differs from source manifest'
   )
+  // GitHub generates release attestations asynchronously after publication.
   for (let attempt = 0; ; attempt++) {
     try {
       gh(['release', 'verify', tag])
       break
     } catch (error) {
-      if (attempt === 9) throw error
-      await new Promise((resolve) => setTimeout(resolve, 2000))
+      if (attempt === 30) throw error
+      await new Promise((resolve) => setTimeout(resolve, 10_000))
     }
   }
   for (const name of [`${kind}.json`, ...names(kind, version)])
