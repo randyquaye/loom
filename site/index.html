@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LoomBox — your coding agents, one place to build</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="nav">
+      <div class="wrap">
+        <a class="brand" href="#">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 2h2v20H5zM11 2h2v20h-2zM17 2h2v20h-2zM2 5h20v2H2zM2 11h20v2H2zM2 17h20v2H2z" />
+          </svg>
+          LoomBox
+        </a>
+        <nav class="nav-links" aria-label="Main">
+          <a href="#workflow">Workflow</a>
+          <a href="#questions">Questions</a>
+          <a class="btn btn-sm" href="#download">Download</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <div class="bleed">
+        <section class="wrap hero">
+          <div>
+            <h1>Your coding agents.<br />One place to build.</h1>
+            <p class="lede">
+              Run Claude and Codex in separate workspaces, follow each task, and review changes
+              without losing context.
+            </p>
+            <div class="actions">
+              <a class="btn" href="#download">Download for macOS</a>
+              <a class="link" href="#workflow">See how it works <span aria-hidden="true">→</span></a>
+            </div>
+            <p class="support">For Apple Silicon Macs</p>
+          </div>
+
+          <figure class="media stage">
+            <div
+              class="shot shot--app"
+              role="img"
+              aria-label="Placeholder for screenshot S01: a project with three workspaces and one open conversation"
+              data-shot="S01 · project, three workspaces, one conversation open"
+              data-crop="S05 · mobile crop: workspace list + conversation"
+            >
+              <span>Projects / workspaces</span>
+              <span>Agent conversation</span>
+              <span>Changes</span>
+            </div>
+          </figure>
+        </section>
+      </div>
+
+      <div class="wrap">
+        <section class="chapter" id="workflow" aria-labelledby="ch-workspaces">
+          <div class="chapter-copy">
+            <p class="eyebrow">02</p>
+            <h2 id="ch-workspaces">Give each task its own workspace.</h2>
+            <p class="lede">
+              Every workspace is a fresh git worktree on its own branch, with up to five agent
+              conversations inside it.
+            </p>
+          </div>
+          <figure class="media">
+            <div
+              class="shot"
+              style="--ratio: 9 / 7"
+              role="img"
+              aria-label="Placeholder for screenshot S02: the workspace list with names, branches and agents"
+              data-shot="S02 · workspace list: names, branches, agent labels"
+              data-crop="S02 · mobile crop: workspace list"
+            >
+              <span>Workspace list</span>
+            </div>
+          </figure>
+        </section>
+
+        <section class="chapter chapter--wide" aria-labelledby="ch-changes">
+          <div class="chapter-copy">
+            <p class="eyebrow">03</p>
+            <h2 id="ch-changes">See what changed.</h2>
+            <p class="lede">Read each change and browse the project files without leaving LoomBox.</p>
+          </div>
+          <figure class="media">
+            <div
+              class="shot shot--split"
+              style="--ratio: 14 / 9"
+              role="img"
+              aria-label="Placeholder for screenshot S03: the changes view with a small diff"
+              data-shot="S03 · changes view with a small, readable diff"
+              data-crop="S03 · mobile crop: one file's diff"
+            >
+              <span>Changed files</span>
+              <span>Diff</span>
+            </div>
+            <figcaption>One workspace's changes, ready to review.</figcaption>
+          </figure>
+        </section>
+
+        <section class="chapter chapter--flip" aria-labelledby="ch-context">
+          <div class="chapter-copy">
+            <p class="eyebrow">04</p>
+            <h2 id="ch-context">Pick up where you left off.</h2>
+            <p class="lede">
+              Conversations stay with the workspace they belong to, and past sessions are
+              searchable.
+            </p>
+          </div>
+          <figure class="media">
+            <div
+              class="shot shot--split"
+              style="--ratio: 3 / 2"
+              role="img"
+              aria-label="Placeholder for screenshot S04: recent sessions beside a saved conversation"
+              data-shot="S04 · recent sessions + a saved conversation"
+              data-crop="S04 · mobile crop: saved conversation"
+            >
+              <span>Recent sessions</span>
+              <span>Conversation</span>
+            </div>
+          </figure>
+        </section>
+
+        <section class="faq" id="questions" aria-labelledby="ch-questions">
+          <p class="eyebrow">05 · draft answers</p>
+          <h2 id="ch-questions">Practical answers.</h2>
+          <dl>
+            <div class="faq-row">
+              <dt>Which Macs does LoomBox run on?</dt>
+              <dd>Apple Silicon Macs. The minimum macOS version is still to be confirmed.</dd>
+            </div>
+            <div class="faq-row">
+              <dt>Which agents can I use?</dt>
+              <dd>
+                Claude and Codex through their own command-line tools. Gemini and Qwen work with an
+                API key stored in your macOS Keychain.
+              </dd>
+            </div>
+            <div class="faq-row">
+              <dt>Do I need new subscriptions?</dt>
+              <dd>No. Claude and Codex sign in with the plans you already have.</dd>
+            </div>
+            <div class="faq-row">
+              <dt>Where does my work run?</dt>
+              <dd>On your Mac. Each workspace is a git worktree of your own repository.</dd>
+            </div>
+            <div class="faq-row">
+              <dt>Do I need an organization?</dt>
+              <dd>
+                No. Organizations can add cloud workspaces on a host they run, but local work needs
+                no LoomBox account.
+              </dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="closing" id="download" aria-labelledby="ch-download">
+          <p class="eyebrow">06</p>
+          <h2 id="ch-download">Bring your next task into LoomBox.</h2>
+          <div class="actions">
+            <a class="btn" href="#download">Download for macOS</a>
+          </div>
+          <p class="support">v0.1.0 · Apple Silicon · macOS version to be confirmed</p>
+        </section>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="wrap">
+        <a class="brand" href="#">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 2h2v20H5zM11 2h2v20h-2zM17 2h2v20h-2zM2 5h20v2H2zM2 11h20v2H2zM2 17h20v2H2z" />
+          </svg>
+          LoomBox
+        </a>
+        <span>A workspace for coding agents on macOS.</span>
+        <!-- Stub: plain labels until public destinations exist. -->
+        <ul>
+          <li>Documentation</li>
+          <li>Release notes</li>
+          <li>Privacy</li>
+          <li>Terms</li>
+        </ul>
+      </div>
+    </footer>
+  </body>
+</html>
