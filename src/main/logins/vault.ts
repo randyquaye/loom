@@ -40,14 +40,18 @@ export type Login = z.infer<typeof login>
 /** The part of the runner's encrypted store the vault needs. */
 export interface SealedStore {
   getRaw(key: string): Promise<string | null>
-  setRaw(key: string, value: string): Promise<void>
-  deleteRaw(key: string): Promise<void>
+  setRaw(key: string, value: string, assertMayCommit?: () => void): Promise<void>
+  deleteRaw(key: string, assertMayCommit?: () => void): Promise<void>
 }
 
 export interface LoginVault {
-  get<P extends LoginProvider>(userId: string, provider: P): Promise<Extract<Login, { provider: P }> | null>
-  put(userId: string, login: Login): Promise<void>
-  remove(userId: string, provider: LoginProvider): Promise<void>
+  get<P extends LoginProvider>(
+    userId: string,
+    provider: P,
+    workspaceId?: string
+  ): Promise<Extract<Login, { provider: P }> | null>
+  put(userId: string, login: Login, assertMayCommit?: () => void): Promise<void>
+  remove(userId: string, provider: LoginProvider, assertMayCommit?: () => void): Promise<void>
 }
 
 /**
@@ -72,7 +76,8 @@ export function createLoginVault(store: SealedStore): LoginVault {
       if (!parsed.success || parsed.data.provider !== provider) return null
       return parsed.data as Extract<Login, { provider: P }>
     },
-    put: (userId, value) => store.setRaw(keyOf(userId, value.provider), JSON.stringify(login.parse(value))),
-    remove: (userId, provider) => store.deleteRaw(keyOf(userId, provider))
+    put: (userId, value, assertMayCommit) =>
+      store.setRaw(keyOf(userId, value.provider), JSON.stringify(login.parse(value)), assertMayCommit),
+    remove: (userId, provider, assertMayCommit) => store.deleteRaw(keyOf(userId, provider), assertMayCommit)
   }
 }

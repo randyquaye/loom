@@ -12,6 +12,8 @@ import { ShortcutsPage } from './settings/ShortcutsPage'
 import { OrgOverviewPage } from './settings/OrgOverviewPage'
 import { OrgMembersPage } from './settings/OrgMembersPage'
 import { OrgAdminLogPage } from './settings/OrgAdminLogPage'
+import { BotsPage } from './settings/BotsPage'
+import { SubscriptionsPage } from './settings/SubscriptionsPage'
 import { useOrganization } from '../state/organization'
 import './settings.css'
 
@@ -29,6 +31,11 @@ const PAGE_HEAD: Record<
     description: 'Invite colleagues and manage organization membership.'
   },
   'org-log': { title: 'Admin log', description: 'Changes made by your organization’s owners.' },
+  'org-bots': { title: 'Bots', description: 'Configure organization bots and open their work.' },
+  'org-subscriptions': {
+    title: 'Subscriptions',
+    description: 'Manage organization Claude and Codex accounts and bot capacity.'
+  },
   env: { title: 'Environment', description: 'Variables passed to agents, terminals and run actions.' },
   instructions: { title: 'Instructions', description: 'Markdown appended to every agent session.' },
   models: { title: 'Default models', description: 'The models and effort new sessions start on.' },
@@ -48,7 +55,12 @@ export function Settings() {
   const organization = useOrganization((state) => state.overview)
   const organizationError = useOrganization((state) => state.error)
   const organizationLoading = useOrganization((state) => state.loading)
-  const orgPage = page === 'org-overview' || page === 'org-members' || page === 'org-log'
+  const orgPage =
+    page === 'org-overview' ||
+    page === 'org-members' ||
+    page === 'org-log' ||
+    page === 'org-bots' ||
+    page === 'org-subscriptions'
   const projectName = useProjects((s) =>
     projectId === null ? undefined : s.projects.find((p) => p.id === projectId)?.name
   )
@@ -83,6 +95,8 @@ export function Settings() {
         {organization !== null && page === 'org-overview' && <OrgOverviewPage />}
         {organization !== null && page === 'org-members' && <OrgMembersPage />}
         {organization !== null && page === 'org-log' && <OrgAdminLogPage />}
+        {organization !== null && page === 'org-bots' && <BotsPage />}
+        {organization !== null && page === 'org-subscriptions' && <SubscriptionsPage />}
         {page === 'env' && <EnvPage />}
         {page === 'instructions' && <InstructionsPage />}
         {page === 'models' && <Loadout />}

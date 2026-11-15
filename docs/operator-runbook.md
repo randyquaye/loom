@@ -37,7 +37,7 @@ Do not pretend the old release supports draining. No automatic downgrade is supp
 A bad release is fixed by rolling forward or restoring a snapshot with its data loss.
 The desktop and runner use stable protocol 6, not matching release numbers. New desktops
 work with older runners; optional features remain unavailable until the runner supports
-them. Existing personal-workspace behavior stays compatible across routine releases. /download
+them. Legacy desktops keep personal-workspace behavior on newer runners. /download
 offers the compatible desktop selected by the operator. Desktop updates never upgrade
 the host automatically. See docs/releases.md for the compatibility principle, independent
 releases and verified operator bundles.
@@ -366,7 +366,7 @@ checks passed until they are executed against the intended release and org.
 | Drain/update              | New work is refused, active work remains visible, existing turns finish, matching release becomes ready      |
 | Actual transport          | Refresh, reconnect and forwards refuse relayed metadata on a different TLS key before credentials are sent   |
 | Publisher lifecycle       | Minute refresh follows certificate renewal; failed updates expire closed; root-only code ownership is intact |
-| Cross-version             | New desktop keeps personal work/forwards on an older runner; optional features need explicit support   |
+| Cross-version             | New desktop keeps personal work/forwards on an older runner; legacy desktop receives no bot workspace data   |
 | Download                  | A cloud protocol refusal offers the host-selected compatible DMG; ordinary updates stay connected           |
 | Monitoring                | Both SNS confirmations complete; forced harmless failure delivers actual operator email                      |
 | Snapshot age              | Completed snapshots, DLM failure signal and missing/stale-backup alarms are observable                       |

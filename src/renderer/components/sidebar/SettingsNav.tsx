@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react'
+import { supportsBots, supportsSubscriptions } from '../../../shared/runner-capabilities'
 import { useCloud } from '../../state/cloud'
 import { useOrganization } from '../../state/organization'
 import { useProjects } from '../../state/projects'
@@ -66,7 +67,10 @@ function NavRow({ page, label, glyph, trailing }: NavPage) {
 /** Sidebar body while Settings is open: grouped page nav in place of the project tree. */
 export function SettingsNav() {
   const projects = useProjects((s) => s.projects)
-  const connected = useCloud((state) => state.status.state === 'connected')
+  const status = useCloud((state) => state.status)
+  const connected = status.state === 'connected'
+  const botsAvailable = connected && supportsBots(status.capabilities)
+  const subscriptionsAvailable = connected && supportsSubscriptions(status.capabilities)
   const owner = useOrganization((state) => state.overview?.role === 'owner')
   useEffect(() => {
     if (connected) void useOrganization.getState().refresh()
@@ -85,6 +89,10 @@ export function SettingsNav() {
           <div className="section-label">Organization</div>
           <div className="project-block">
             <NavRow page="org-overview" label="Overview" glyph={<CloudIcon />} />
+            {botsAvailable && <NavRow page="org-bots" label="Bots" glyph={<BotIcon />} />}
+            {owner && subscriptionsAvailable && (
+              <NavRow page="org-subscriptions" label="Subscriptions" glyph={<ModelIcon />} />
+            )}
             {owner && <NavRow page="org-members" label="Members and invites" glyph={<BotIcon />} />}
             {owner && <NavRow page="org-log" label="Admin log" glyph={<ConsoleIcon />} />}
           </div>
@@ -98,14 +106,16 @@ export function SettingsNav() {
       </div>
       <div className="section-label">Projects</div>
       <div className="project-block">
-        {projects.map((p) => (
-          <NavRow
-            key={p.id}
-            page={`project:${p.id}`}
-            label={p.name}
-            glyph={<span className="project-glyph">{p.name.slice(0, 1).toUpperCase()}</span>}
-          />
-        ))}
+        {projects
+          .filter((p) => !p.id.startsWith('loom-bot-project:'))
+          .map((p) => (
+            <NavRow
+              key={p.id}
+              page={`project:${p.id}`}
+              label={p.name}
+              glyph={<span className="project-glyph">{p.name.slice(0, 1).toUpperCase()}</span>}
+            />
+          ))}
       </div>
       {projects.length === 0 && <div className="side-empty">No projects yet</div>}
     </nav>

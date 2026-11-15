@@ -45,7 +45,12 @@ export const agentEvent = z.discriminatedUnion('type', [
   questionRequest,
   questionAnswer.extend({ type: z.literal('question.answered'), turnId: z.string() }),
   z.object({ type: z.literal('question.resolved'), requestId: z.string(), turnId: z.string() }),
-  z.object({ type: z.literal('user.text'), turnId: z.string(), text: z.string() }),
+  z.object({
+    type: z.literal('user.text'),
+    turnId: z.string(),
+    text: z.string(),
+    actorId: z.string().optional()
+  }),
   z.object({
     type: z.literal('user.steer'),
     turnId: z.string(),

@@ -5,6 +5,38 @@ import { CLAUDE_MODES, CODEX_MODES, EFFORTS } from './models'
 import type { AgentModes, AuthStatus, BackendId, Effort, ModelDescriptor } from './models'
 import type { Notification } from './notifications'
 import type { OrgAdminEvent, OrgInvite, OrgMember, OrgOverview, OrgRole } from './org'
+import {
+  botAccessSchema,
+  botConfigSchema,
+  botSlugSchema,
+  type BotAccess,
+  type BotConfig,
+  type BotGrant,
+  type BotInvocation,
+  type BotRecord
+} from './bots'
+import {
+  subscriptionLabelSchema,
+  subscriptionProviderSchema,
+  subscriptionUpdateSchema,
+  type SubscriptionAccess,
+  type SubscriptionAccount,
+  type SubscriptionProvider
+} from './subscriptions'
+
+export const BOTS_CHANGED_CHANNEL = 'bots:changed'
+export interface BotChangedPush {
+  botId: string
+  /** Metadata-only updates retain existing previews and cached workspace routing. */
+  accessChanged: boolean
+}
+
+export interface BotWorkspace {
+  invocation: BotInvocation
+  project: ProjectRow | null
+  workspace: WorkspaceRow | null
+  session: SessionRow | null
+}
 
 export interface ProjectRow {
   id: string
@@ -43,6 +75,8 @@ export interface WorkspaceRow {
   ownerId: string | null
   /** Set by the desktop on a workspace a runner owns; absent on one that lives on this Mac. */
   cloud?: true
+  /** Explicit permissions for a shared bot workspace; omitted for personal workspaces. */
+  bot?: { id: string; access: BotAccess }
 }
 
 /** How a workspace holds its files: a worktree of the project repository, or a self-contained clone. */
@@ -501,6 +535,43 @@ export interface IpcContract {
   'org:removeMember': { in: { userId: string }; out: void }
   'org:purgeMember': { in: { userId: string }; out: void }
   'org:log': { in: { before?: number | undefined }; out: OrgAdminEvent[] }
+  'bots:list': { in: void; out: BotRecord[] }
+  'bots:create': { in: { slug: string; config: BotConfig }; out: BotRecord }
+  'bots:update': {
+    in: { botId: string; config: BotConfig; enabled: boolean; revision: number }
+    out: BotRecord
+  }
+  'bots:grants': { in: { botId: string }; out: BotGrant[] }
+  'bots:setGrant': { in: { botId: string; userId: string; access: BotAccess | null }; out: void }
+  'bots:logins': { in: { botId: string }; out: AgentLogins }
+  'bots:connectClaude': { in: { botId: string; token: string }; out: void }
+  'bots:connectCodex': { in: { botId: string }; out: CodexSignIn }
+  'bots:setGithub': {
+    in: { botId: string; appId: string; installationId: string; privateKey: string }
+    out: void
+  }
+  'bots:disconnect': { in: { botId: string; provider: AgentLoginProvider }; out: void }
+  'bots:invoke': {
+    in: { botId: string; repository: string; prompt: string; requestKey: string }
+    out: BotInvocation
+  }
+  'bots:invocations': { in: { botId: string }; out: BotInvocation[] }
+  'bots:open': { in: { invocationId: string }; out: BotWorkspace }
+  'subscriptions:list': { in: void; out: SubscriptionAccount[] }
+  'subscriptions:create': { in: { provider: SubscriptionProvider; label: string }; out: SubscriptionAccount }
+  'subscriptions:update': {
+    in: { accountId: string; label: string; enabled: boolean; expectedEnabled: boolean }
+    out: SubscriptionAccount
+  }
+  'subscriptions:connectClaude': { in: { accountId: string; token: string }; out: void }
+  'subscriptions:connectCodex': { in: { accountId: string }; out: CodexSignIn }
+  'subscriptions:status': { in: { accountId: string }; out: AgentLogins }
+  'subscriptions:disconnect': { in: { accountId: string }; out: void }
+  'subscriptions:grants': { in: { botId: string }; out: SubscriptionAccess }
+  'subscriptions:setGrant': {
+    in: { botId: string; provider: SubscriptionProvider; allowed: boolean }
+    out: void
+  }
   'logins:status': { in: void; out: AgentLogins }
   /** The token `claude setup-token` printed. It goes to the runner's vault and nowhere else. */
   'logins:connectClaude': { in: { token: string }; out: void }
@@ -735,6 +806,53 @@ export const ipcSchemas = {
   'org:removeMember': z.object({ userId: id }),
   'org:purgeMember': z.object({ userId: id }),
   'org:log': z.object({ before: z.number().int().positive().optional() }),
+  'bots:list': z.undefined(),
+  'bots:create': z.object({ slug: botSlugSchema, config: botConfigSchema }).strict(),
+  'bots:update': z
+    .object({
+      botId: id,
+      config: botConfigSchema,
+      enabled: z.boolean(),
+      revision: z.number().int().positive()
+    })
+    .strict(),
+  'bots:grants': z.object({ botId: id }).strict(),
+  'bots:setGrant': z.object({ botId: id, userId: id, access: botAccessSchema.nullable() }).strict(),
+  'bots:logins': z.object({ botId: id }).strict(),
+  'bots:connectClaude': z.object({ botId: id, token: z.string().min(1).max(8192) }).strict(),
+  'bots:connectCodex': z.object({ botId: id }).strict(),
+  'bots:setGithub': z
+    .object({
+      botId: id,
+      appId: z.string().regex(/^[1-9]\d{0,19}$/),
+      installationId: z.string().regex(/^[1-9]\d{0,19}$/),
+      privateKey: z.string().min(1).max(32768)
+    })
+    .strict(),
+  'bots:disconnect': z.object({ botId: id, provider: z.enum(['claude', 'codex', 'github']) }).strict(),
+  'bots:invoke': z
+    .object({
+      botId: id,
+      repository: z.string().min(1).max(512),
+      prompt: z.string().trim().min(1).max(32000),
+      requestKey: z.string().min(1).max(128)
+    })
+    .strict(),
+  'bots:invocations': z.object({ botId: id }).strict(),
+  'bots:open': z.object({ invocationId: id }).strict(),
+  'subscriptions:list': z.undefined(),
+  'subscriptions:create': z
+    .object({ provider: subscriptionProviderSchema, label: subscriptionLabelSchema })
+    .strict(),
+  'subscriptions:update': subscriptionUpdateSchema.extend({ accountId: id, expectedEnabled: z.boolean() }),
+  'subscriptions:connectClaude': z.object({ accountId: id, token: z.string().min(1).max(8192) }).strict(),
+  'subscriptions:connectCodex': z.object({ accountId: id }).strict(),
+  'subscriptions:status': z.object({ accountId: id }).strict(),
+  'subscriptions:disconnect': z.object({ accountId: id }).strict(),
+  'subscriptions:grants': z.object({ botId: id }).strict(),
+  'subscriptions:setGrant': z
+    .object({ botId: id, provider: subscriptionProviderSchema, allowed: z.boolean() })
+    .strict(),
   'logins:status': z.undefined(),
   'logins:connectClaude': z.object({ token: z.string().min(1).max(4096) }),
   'logins:connectCodex': z.undefined(),
@@ -746,6 +864,8 @@ export const ipcSchemas = {
 export const SESSION_EVENT_CHANNEL = 'session:event'
 export const SESSION_ACTIVITY_CHANNEL = 'session:activity'
 export interface SessionEventPush {
+  /** Runner attachment allows access revocation to fence even previously unknown sessions. */
+  workspaceId?: string
   sessionId: string
   event: AgentEvent
   unread?: SessionUnread
@@ -999,6 +1119,41 @@ export interface LoomApi {
     removeMember(userId: string): Promise<void>
     purgeMember(userId: string): Promise<void>
     log(before?: number): Promise<OrgAdminEvent[]>
+  }
+  bots: {
+    list(): Promise<BotRecord[]>
+    create(slug: string, config: BotConfig): Promise<BotRecord>
+    update(botId: string, config: BotConfig, enabled: boolean, revision: number): Promise<BotRecord>
+    grants(botId: string): Promise<BotGrant[]>
+    setGrant(botId: string, userId: string, access: BotAccess | null): Promise<void>
+    logins(botId: string): Promise<AgentLogins>
+    connectClaude(botId: string, token: string): Promise<void>
+    connectCodex(botId: string): Promise<CodexSignIn>
+    setGithub(
+      botId: string,
+      credentials: { appId: string; installationId: string; privateKey: string }
+    ): Promise<void>
+    disconnect(botId: string, provider: AgentLoginProvider): Promise<void>
+    invoke(botId: string, repository: string, prompt: string, requestKey: string): Promise<BotInvocation>
+    invocations(botId: string): Promise<BotInvocation[]>
+    open(invocationId: string): Promise<BotWorkspace>
+  }
+  onBotsChanged(cb: (push: BotChangedPush) => void): () => void
+  subscriptions: {
+    list(): Promise<SubscriptionAccount[]>
+    create(provider: SubscriptionProvider, label: string): Promise<SubscriptionAccount>
+    update(
+      accountId: string,
+      label: string,
+      enabled: boolean,
+      expectedEnabled: boolean
+    ): Promise<SubscriptionAccount>
+    connectClaude(accountId: string, token: string): Promise<void>
+    connectCodex(accountId: string): Promise<CodexSignIn>
+    status(accountId: string): Promise<AgentLogins>
+    disconnect(accountId: string): Promise<void>
+    grants(botId: string): Promise<SubscriptionAccess>
+    setGrant(botId: string, provider: SubscriptionProvider, allowed: boolean): Promise<void>
   }
   /** Agent logins for cloud workspaces, kept by the runner. */
   logins: {

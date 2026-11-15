@@ -5,9 +5,13 @@ import { createTerminal, terminalIdForCwd, writeTerminal } from '../pty'
 import { runtimeFor } from '../runtime'
 import { createWorkspace, removeWorkspace, repositoryRoot, workspaceEnv } from '../workspace/bootstrap'
 import type { WorkspacePlacement } from '../workspace/placement'
-import { handle, type IpcDeps } from './registry'
+import { handle, type Caller, type IpcDeps } from './registry'
 
-export function registerWorkspacesIpc(deps: IpcDeps, placement: WorkspacePlacement): void {
+export function registerWorkspacesIpc(
+  deps: IpcDeps,
+  placement: WorkspacePlacement,
+  authorize?: (caller: Caller | undefined, workspaceId: string) => void
+): void {
   const cloudOnly = (): never => {
     throw new Error('This action requires a connected cloud workspace')
   }
@@ -50,7 +54,7 @@ export function registerWorkspacesIpc(deps: IpcDeps, placement: WorkspacePlaceme
     }
   })
 
-  handle('workspaces:runAction', async ({ workspaceId, actionId }) => {
+  handle('workspaces:runAction', async ({ workspaceId, actionId }, caller) => {
     const workspace = getWorkspaceOrThrow(deps.db, workspaceId)
     const project = getProjectOrThrow(deps.db, workspace.projectId)
     const settings = await readRepoSettings(repositoryRoot(project, workspace))
@@ -61,8 +65,10 @@ export function registerWorkspacesIpc(deps: IpcDeps, placement: WorkspacePlaceme
     if (terminalId === null) {
       const runtime = runtimeFor(workspace, deps.dataRoot)
       await runtime.ensureRunning()
+      authorize?.(caller, workspaceId)
       terminalId = createTerminal(workspace.worktreePath, env, runtime)
     }
+    authorize?.(caller, workspaceId)
     writeTerminal(terminalId, `${action.command}\n`)
     return terminalId
   })

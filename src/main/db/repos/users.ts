@@ -34,6 +34,15 @@ export function userForGoogle(db: Database.Database, person: { subject: string; 
     const addressed = db
       .prepare('SELECT id, google_subject FROM users WHERE email = ? COLLATE NOCASE')
       .get(email) as { id: string; google_subject: string | null } | undefined
+    for (const id of new Set([known?.id, addressed?.id])) {
+      if (
+        id !== undefined &&
+        (db.prepare('SELECT kind FROM org_members WHERE user_id=?').get(id) as { kind: string } | undefined)
+          ?.kind === 'bot'
+      ) {
+        throw new Error('Bot members cannot acquire a human Google identity')
+      }
+    }
     if (addressed !== undefined && addressed.id !== known?.id && addressed.google_subject !== null) {
       throw new Error('This address belongs to a different Google account; contact an organization owner')
     }

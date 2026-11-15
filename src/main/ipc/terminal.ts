@@ -1,4 +1,4 @@
-import { handle, type IpcDeps } from './registry'
+import { handle, type Caller, type IpcDeps } from './registry'
 import { attachmentFileName, writeAttachment } from '../context/materialize'
 import { getWorkspaceOrThrow } from '../db/repos/workspaces'
 import {
@@ -12,12 +12,17 @@ import {
 import { runtimeFor } from '../runtime'
 import { workspaceEnv } from '../workspace/bootstrap'
 
-export function registerTerminalIpc(deps: IpcDeps): void {
-  handle('terminal:create', async ({ workspaceId }) => {
+export function registerTerminalIpc(
+  deps: IpcDeps,
+  authorize?: (caller: Caller | undefined, workspaceId: string) => void
+): void {
+  handle('terminal:create', async ({ workspaceId }, caller) => {
     const workspace = getWorkspaceOrThrow(deps.db, workspaceId)
     const runtime = runtimeFor(workspace, deps.dataRoot)
     await runtime.ensureRunning()
-    return createTerminal(workspace.worktreePath, await workspaceEnv(deps.db, workspaceId), runtime)
+    const env = await workspaceEnv(deps.db, workspaceId)
+    authorize?.(caller, workspaceId)
+    return createTerminal(workspace.worktreePath, env, runtime)
   })
   handle('terminal:list', ({ workspaceId }) =>
     listTerminals(getWorkspaceOrThrow(deps.db, workspaceId).worktreePath)

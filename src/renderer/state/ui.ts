@@ -11,6 +11,8 @@ export type SettingsPage =
   | 'org-overview'
   | 'org-members'
   | 'org-log'
+  | 'org-bots'
+  | 'org-subscriptions'
   | 'env'
   | 'instructions'
   | 'models'

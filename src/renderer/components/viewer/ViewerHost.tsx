@@ -1,5 +1,6 @@
 import { cacheKey, useFiles } from '../../state/files'
 import { useSessions } from '../../state/sessions'
+import { useProjects } from '../../state/projects'
 import { MAX_ATTACHMENTS, useUi } from '../../state/ui'
 import { useToasts } from '../ui/Toast'
 import '../panels/panels.css'
@@ -10,6 +11,12 @@ import { MarkdownView } from './MarkdownView'
 import { MonacoView } from './MonacoView'
 
 export function ViewerHost({ workspaceId }: { workspaceId: string }) {
+  const workspace = useProjects((state) =>
+    Object.values(state.workspacesByProject)
+      .flat()
+      .find((row) => row.id === workspaceId)
+  )
+  const readOnly = workspace?.bot?.access === 'view'
   const openPath = useFiles((s) => s.openPathByWorkspace[workspaceId] ?? null)
   const mode = useFiles((s) => s.viewerModeByWorkspace[workspaceId] ?? 'content')
   const contentByPath = useFiles((s) => s.contentByPath)
@@ -52,7 +59,7 @@ export function ViewerHost({ workspaceId }: { workspaceId: string }) {
             {problemCount}
           </span>
         )}
-        {checkpointName === null && (
+        {checkpointName === null && !workspace?.cloud && (
           <button
             type="button"
             className="btn btn-ghost viewer-action"
@@ -66,7 +73,7 @@ export function ViewerHost({ workspaceId }: { workspaceId: string }) {
             Reveal in Finder
           </button>
         )}
-        {checkpointName === null && (
+        {checkpointName === null && !readOnly && (
           <AttachButton
             path={openPath}
             sessionId={sessionId}

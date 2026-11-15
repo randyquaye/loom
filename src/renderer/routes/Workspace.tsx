@@ -44,13 +44,15 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
       .find((w) => w.id === workspaceId)
   )
   const loadWorkspaces = useProjects((s) => s.loadWorkspaces)
+  const readOnly = workspace?.bot?.access === 'view'
+  const botWorkspace = workspace?.bot !== undefined
   const activeId = useSessions((s) => s.activeSessionByWorkspace[workspaceId] ?? null)
   const unreadSeq = useSessions((s) => (activeId ? (s.unreadBySession[activeId]?.seq ?? 0) : 0))
   const transcriptLoaded = useSessions((s) => !!activeId && s.eventsBySession[activeId] !== undefined)
   const markRead = useSessions((s) => s.markRead)
   const events = useSessions((s) => (activeId ? s.eventsBySession[activeId] : undefined)) ?? []
   // Voice mode replaces the transcript only once there is a session to talk to.
-  const voiceStage = useUi((s) => s.voiceMode) && !!activeId
+  const voiceStage = useUi((s) => s.voiceMode) && !!activeId && !readOnly
   const load = useSessions((s) => s.load)
   const loadTree = useFiles((s) => s.loadTree)
   const openAt = useFiles((s) => s.openAt)
@@ -81,11 +83,26 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
     workspaceState === 'ready' &&
     (!workspace?.cloud || (cloudState === 'connected' && (!cloudContainer || power?.state === 'running')))
   const actions = scripts?.workspaceId === workspaceId ? scripts.actions : []
+  const filesReady = workspaceState === 'ready' && (!workspace?.cloud || cloudState === 'connected')
   const projectId = workspace?.projectId
+  const botId = workspace?.bot?.id
+  const botSetupState = botWorkspace ? workspaceState : undefined
 
   useEffect(() => {
-    void load(workspaceId)
-  }, [workspaceId, load])
+    let active = true
+    const refresh = () =>
+      void load(workspaceId).catch((cause: unknown) => {
+        if (active) push(`Could not load conversations: ${String(cause)}`, 'err')
+      })
+    refresh()
+    const unsubscribe = window.loom.onBotsChanged((change) => {
+      if (botId === change.botId) refresh()
+    })
+    return () => {
+      active = false
+      unsubscribe()
+    }
+  }, [workspaceId, load, botId, botSetupState, push])
 
   useEffect(() => {
     const read = () => {
@@ -112,8 +129,8 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
   }, [activeId, transcriptLoaded, pane, voiceStage, unreadSeq, markRead, push])
 
   useEffect(() => {
-    if (ready) void loadTree(workspaceId)
-  }, [workspaceId, ready, loadTree])
+    if (filesReady) void loadTree(workspaceId)
+  }, [workspaceId, filesReady, loadTree])
 
   // Pushes carry only state. Re-read persisted runtime metadata once per transition so a new
   // workspace's setup log becomes available without waiting for a project reload.
@@ -152,6 +169,7 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
   // Same guards as the button: never past the per-workspace cap, never while already drafting.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (readOnly || botWorkspace) return
       if (e.key !== 't' || !e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
       const store = useSessions.getState()
       const rows = store.sessionsByWorkspace[workspaceId] ?? []
@@ -164,7 +182,7 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [workspaceId])
+  }, [workspaceId, readOnly, botWorkspace])
   useEffect(() => {
     setPane('chat')
   }, [activeId])
@@ -184,6 +202,9 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
             ◧
           </button>
           <span className="grow">{workspace?.name ?? workspaceId}</span>
+          {workspace?.bot && (
+            <span className="settings-state">Bot · {readOnly ? 'View only' : 'Control'}</span>
+          )}
           <div className="row workspace-topbar-actions">
             {actions.length > 0 && (
               <div className="workspace-run-actions" role="group" aria-label="Run actions">
@@ -193,7 +214,7 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
                     type="button"
                     className="btn btn-ghost workspace-run-action"
                     data-default={action.isDefault}
-                    disabled={!ready}
+                    disabled={!ready || readOnly}
                     title={
                       ready
                         ? `Run ${action.id} in the terminal`
@@ -224,6 +245,7 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
                 setupReady={workspaceState === 'ready'}
                 setupFailed={workspaceState === 'error'}
                 setupLogPath={workspace?.setupLogPath}
+                readOnly={readOnly}
               />
             )}
           </div>
@@ -296,6 +318,8 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
             workspaceId={workspaceId}
             chatShown={pane === 'chat'}
             onSelect={() => setPane('chat')}
+            readOnly={readOnly}
+            botWorkspace={botWorkspace}
           />
         </div>
         {pane === 'viewer' && openPath !== null ? (
@@ -308,13 +332,16 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
                 events={events}
                 onFileOpen={(path, line) => void openAt(workspaceId, path, line)}
                 onPrompt={(text) => useUi.getState().setDraft(text)}
+                readOnly={readOnly}
               />
             )}
-            <Composer
-              workspaceId={workspaceId}
-              sessionId={activeId === '' ? null : activeId}
-              disabled={!ready}
-            />
+            {!readOnly && (!botWorkspace || !!activeId) && (
+              <Composer
+                workspaceId={workspaceId}
+                sessionId={activeId === '' ? null : activeId}
+                disabled={!ready}
+              />
+            )}
           </>
         )}
       </main>
@@ -331,10 +358,10 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
         onCommit={commitPanels}
       />
       <section className="rightpane glass">
-        {ready && (
+        {filesReady && (
           <>
             <FileTree workspaceId={workspaceId} />
-            <XtermPane workspaceId={workspaceId} />
+            {ready && !readOnly && <XtermPane workspaceId={workspaceId} />}
           </>
         )}
       </section>

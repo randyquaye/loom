@@ -9,13 +9,15 @@ export function QuestionCard({
   sessionId,
   disabled,
   answers: savedAnswers,
-  followUp = false
+  followUp = false,
+  readOnly = false
 }: {
   request: QuestionRequest
   sessionId: string | undefined
   disabled: boolean
   answers?: QuestionAnswer['answers'] | undefined
   followUp?: boolean
+  readOnly?: boolean
 }) {
   const draftKey = `${sessionId}:${request.requestId}`
   const [selected, setSelected] = useState<Record<string, string[]>>(
@@ -66,12 +68,13 @@ export function QuestionCard({
     setSelected(updated)
     useUi.getState().saveQuestionDraft(draftKey, { selected: updated, text })
   }
-  const locked = disabled || savedAnswers !== undefined || !sessionId || status !== 'idle'
+  const locked = readOnly || disabled || savedAnswers !== undefined || !sessionId || status !== 'idle'
   let submitLabel = 'Submit answer'
   if (request.purpose === 'approval') submitLabel = 'Submit approval'
   if (followUp) submitLabel = 'Send follow-up'
   if (status === 'sending') submitLabel = 'Sending…'
   if (disabled) submitLabel = 'Closed'
+  if (readOnly) submitLabel = 'View only'
   if (status === 'submitted') submitLabel = 'Submitted'
   if (savedAnswers !== undefined) submitLabel = 'Submitted'
 
@@ -97,33 +100,37 @@ export function QuestionCard({
   return (
     <form className="chat-question" onSubmit={(event) => void submit(event)}>
       {request.questions.map((question) => (
-        <fieldset key={question.id} disabled={locked} className="field">
-          <legend>{question.header}</legend>
+        <fieldset key={question.id} disabled={locked}>
+          {question.header && <legend>{question.header}</legend>}
           <p>{question.question}</p>
-          {question.options?.map((option, index) => (
-            <label key={index} className="list-option">
-              <input
-                type={question.multiSelect ? 'checkbox' : 'radio'}
-                name={`${request.requestId}:${question.id}`}
-                checked={selected[question.id]?.includes(String(index)) ?? false}
-                onChange={() => select(question, String(index))}
-              />
-              <span className="field">
-                {option.label}
-                <small className="field-hint">{option.description}</small>
-              </span>
-            </label>
-          ))}
-          {!!question.options?.length && question.isOther && (
-            <label className="list-option">
-              <input
-                type={question.multiSelect ? 'checkbox' : 'radio'}
-                name={`${request.requestId}:${question.id}`}
-                checked={selected[question.id]?.includes('other') ?? false}
-                onChange={() => select(question, 'other')}
-              />
-              Other
-            </label>
+          {!!question.options?.length && (
+            <div className="chat-question-options">
+              {question.options.map((option, index) => (
+                <label key={index} className="chat-question-choice" data-disabled={locked}>
+                  <input
+                    type={question.multiSelect ? 'checkbox' : 'radio'}
+                    name={`${request.requestId}:${question.id}`}
+                    checked={selected[question.id]?.includes(String(index)) ?? false}
+                    onChange={() => select(question, String(index))}
+                  />
+                  <span className="btn chat-question-choice-body">
+                    <span>{option.label}</span>
+                    {option.description && <small>{option.description}</small>}
+                  </span>
+                </label>
+              ))}
+              {question.isOther && (
+                <label className="chat-question-choice" data-disabled={locked}>
+                  <input
+                    type={question.multiSelect ? 'checkbox' : 'radio'}
+                    name={`${request.requestId}:${question.id}`}
+                    checked={selected[question.id]?.includes('other') ?? false}
+                    onChange={() => select(question, 'other')}
+                  />
+                  <span className="btn chat-question-choice-body">Other</span>
+                </label>
+              )}
+            </div>
           )}
           {(!question.options?.length || selected[question.id]?.includes('other')) && (
             <input

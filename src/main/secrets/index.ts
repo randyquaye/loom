@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
-import { chmod, mkdir, open, readFile, rename } from 'node:fs/promises'
+import { renameSync } from 'node:fs'
+import { chmod, mkdir, open, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
 import type { SecretId } from '../../shared/models'
@@ -73,18 +74,26 @@ export function createSecretStore(file: string, cipher: Cipher) {
     return blobSchema.parse(JSON.parse(raw))
   }
 
-  async function save(blob: Record<string, string>): Promise<void> {
+  async function save(blob: Record<string, string>, assertMayCommit?: () => void): Promise<void> {
     await mkdir(path.dirname(file), { recursive: true })
     const tmp = `${file}.tmp`
-    const fh = await open(tmp, 'w', 0o600)
+    let published = false
     try {
-      await fh.writeFile(JSON.stringify(blob))
-      await fh.sync()
+      const fh = await open(tmp, 'w', 0o600)
+      try {
+        await fh.writeFile(JSON.stringify(blob))
+        await fh.sync()
+      } finally {
+        await fh.close()
+      }
+      await chmod(tmp, 0o600)
+      // Authorization and atomic publication share one JS turn: no async rename gap.
+      assertMayCommit?.()
+      renameSync(tmp, file)
+      published = true
     } finally {
-      await fh.close()
+      if (!published) await rm(tmp, { force: true })
     }
-    await rename(tmp, file)
-    await chmod(file, 0o600)
   }
 
   return {
@@ -104,18 +113,20 @@ export function createSecretStore(file: string, cipher: Cipher) {
         return entry === undefined ? null : cipher.decrypt(Buffer.from(entry, 'base64'))
       })
     },
-    setRaw(key: string, value: string): Promise<void> {
+    setRaw(key: string, value: string, assertMayCommit?: () => void): Promise<void> {
       return serialized(async () => {
+        assertMayCommit?.()
         const blob = await load()
         blob[key] = cipher.encrypt(value).toString('base64')
-        await save(blob)
+        await save(blob, assertMayCommit)
       })
     },
-    deleteRaw(key: string): Promise<void> {
+    deleteRaw(key: string, assertMayCommit?: () => void): Promise<void> {
       return serialized(async () => {
+        assertMayCommit?.()
         const blob = await load()
         delete blob[key]
-        await save(blob)
+        await save(blob, assertMayCommit)
       })
     },
     listRaw(prefix: string): Promise<string[]> {

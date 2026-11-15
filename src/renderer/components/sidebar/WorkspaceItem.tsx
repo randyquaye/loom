@@ -88,6 +88,7 @@ export function WorkspaceItem({
   onDelete: () => void
 }) {
   const navigate = useUi((s) => s.navigate)
+  const readOnly = workspace.bot?.access === 'view'
   const running = useSessions((s) => Object.values(s.activity.bySession).includes(workspace.id))
   const unread = useSessions((s) =>
     Object.values(s.unreadBySession).some((row) => row.workspaceId === workspace.id && row.seq > 0)
@@ -129,6 +130,7 @@ export function WorkspaceItem({
           : null
 
   function toggleArchived() {
+    if (readOnly) return
     closeMenu()
     const next = !workspace.archived
     const verb = next ? 'archive' : 'unarchive'
@@ -223,26 +225,30 @@ export function WorkspaceItem({
             >
               Checkpoints…
             </button>
-            <button
-              type="button"
-              role="menuitem"
-              className="list-option popover-item"
-              onClick={toggleArchived}
-            >
-              {workspace.archived ? 'Unarchive' : 'Archive'}
-            </button>
-            <div className="popover-sep" role="separator" />
-            <button
-              type="button"
-              role="menuitem"
-              className="list-option popover-item popover-item-danger"
-              onClick={() => {
-                closeMenu()
-                onDelete()
-              }}
-            >
-              Delete…
-            </button>
+            {!readOnly && (
+              <button
+                type="button"
+                role="menuitem"
+                className="list-option popover-item"
+                onClick={toggleArchived}
+              >
+                {workspace.archived ? 'Unarchive' : 'Archive'}
+              </button>
+            )}
+            {!readOnly && <div className="popover-sep" role="separator" />}
+            {!readOnly && (
+              <button
+                type="button"
+                role="menuitem"
+                className="list-option popover-item popover-item-danger"
+                onClick={() => {
+                  closeMenu()
+                  onDelete()
+                }}
+              >
+                Delete…
+              </button>
+            )}
           </RowMenu>
         )}
         {checkpointsOpen && (

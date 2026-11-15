@@ -106,7 +106,6 @@ function desktop(url: string, protocol?: number) {
   const client = connectRunner({
     url,
     token: async () => 'fixture',
-    capabilities: ['bots.v1'],
     ...(protocol === undefined ? {} : { protocol }),
     onState: (state) => states.push(state),
     onPush: (channel, payload) => pushes.push({ channel, payload })
@@ -137,12 +136,13 @@ async function rawClient(port: number, capabilities?: string) {
 }
 
 describe('independent desktop and runner releases', () => {
-  it('keeps unimplemented optional features disabled in the default desktop and server', async () => {
-    const peer = await oldPeer(['bots.v1'])
+  it('honors an explicit desktop feature opt-out while personal calls continue working', async () => {
+    const peer = await oldPeer(['bots.v1', 'subscriptions.v1'])
     const states: ClientState[] = []
     const client = connectRunner({
       url: peer.url,
       token: async () => 'fixture',
+      capabilities: [],
       onState: (state) => states.push(state),
       onPush: () => {}
     })
@@ -151,26 +151,44 @@ describe('independent desktop and runner releases', () => {
     expect(peer.requests[0]?.capabilities).toBe('')
     expect(connected(states)[0]).toMatchObject({ capabilities: [] })
     await expect(client.call('bots:list', undefined)).rejects.toThrow(/support|available|updat/i)
+    await expect(client.call('subscriptions:list', undefined)).rejects.toThrow(/support|available|updat/i)
     await expect(client.call('app:ping', undefined)).resolves.toBe('pong')
     expect(peer.calls.map((call) => call.channel)).toEqual(['app:ping'])
+  })
 
+  it('negotiates only explicitly configured server features for calls and forwarded streams', async () => {
     const callers: Caller[] = []
     const server = await startRunnerServer({
       host: '127.0.0.1',
       port: 0,
+      capabilities: ['bots.v1'],
       authenticate: () => ({ userId: 'member' }),
       stillAllowed: () => true,
       dispatch(caller) {
         callers.push(caller)
         return 'pong'
+      },
+      forward: async (caller) => {
+        callers.push(caller)
+        const stream = new PassThrough()
+        return { input: stream, output: stream, close: () => stream.destroy() }
       }
     })
     closers.push(() => server.close())
-    const modern = await rawClient(server.port, 'bots.v1')
-    expect(modern.frames[0]).toMatchObject({ type: 'hello', protocol: 6, capabilities: [] })
+    const modern = await rawClient(server.port, 'bots.v1,subscriptions.v1,mobile.v1')
+    expect(modern.frames[0]).toMatchObject({ capabilities: ['bots.v1'] })
     modern.socket.send(JSON.stringify({ type: 'call', id: 1, channel: 'app:ping' }))
     await wait(() => expect(callers).toHaveLength(1))
-    expect(callers[0]).toMatchObject({ capabilities: [] })
+    const forwarded = new WebSocket(`ws://127.0.0.1:${server.port}/v1/forward/workspace/4321?protocol=6`, {
+      headers: {
+        authorization: 'Bearer fixture',
+        'x-loom-capabilities': 'bots.v1,subscriptions.v1,mobile.v1'
+      }
+    })
+    forwarded.on('error', () => {})
+    closers.push(() => forwarded.terminate())
+    await once(forwarded, 'open')
+    expect(callers.map((caller) => caller.capabilities)).toEqual([['bots.v1'], ['bots.v1']])
   })
 
   it('keeps literal protocol 6 personal RPC and push events working without a capability hello', async () => {
@@ -245,14 +263,15 @@ describe('independent desktop and runner releases', () => {
     const received = once(socket, 'data')
     socket.write(Buffer.from('private development service'))
     expect(String((await received)[0])).toBe('private development service')
-    expect(peer.requests).toEqual([{ path: '/v1/forward/workspace/4321?protocol=6', capabilities: '' }])
+    expect(peer.requests).toEqual([
+      { path: '/v1/forward/workspace/4321?protocol=6', capabilities: expect.stringContaining('bots.v1') }
+    ])
   })
 
   it('adds capability metadata to the current server while legacy callers keep an isolated empty array', async () => {
     const identity: Caller = { userId: 'member', signInId: 'signin' }
     const callers: Caller[] = []
     const server = await startRunnerServer({
-      capabilities: ['bots.v1'],
       host: '127.0.0.1',
       port: 0,
       authenticate: () => identity,
@@ -280,7 +299,6 @@ describe('independent desktop and runner releases', () => {
   it('lets the new desktop use bot calls only after the current server confirms the capability', async () => {
     const callers: Caller[] = []
     const server = await startRunnerServer({
-      capabilities: ['bots.v1'],
       host: '127.0.0.1',
       port: 0,
       authenticate: () => ({ userId: 'member' }),
@@ -301,7 +319,6 @@ describe('independent desktop and runner releases', () => {
   it('projects each push using that connection’s capabilities and workspace metadata', async () => {
     const seen: Array<{ capabilities: readonly string[] | undefined; workspaceId: string | undefined }> = []
     const server = await startRunnerServer({
-      capabilities: ['bots.v1'],
       host: '127.0.0.1',
       port: 0,
       authenticate: () => ({ userId: 'member' }),
@@ -328,7 +345,6 @@ describe('independent desktop and runner releases', () => {
   it('decorates forwarded connections with their requested capabilities as well', async () => {
     const callers: Caller[] = []
     const server = await startRunnerServer({
-      capabilities: ['bots.v1'],
       host: '127.0.0.1',
       port: 0,
       authenticate: () => ({ userId: 'member' }),

@@ -47,7 +47,8 @@ export async function workspacesByAddress(): Promise<Map<string, string>> {
 export interface ContainerLogins {
   hosts: readonly string[]
   environment(ownerId: string): Promise<Record<string, string>>
-  secureHome(ownerId: string, homePath: string): Promise<void>
+  workspaceHome?(ownerId: string, workspaceId: string): string
+  secureHome(ownerId: string, homePath: string, workspaceId?: string): Promise<void>
 }
 
 let logins: ContainerLogins | null = null
@@ -144,6 +145,10 @@ export function runtimeFor(
   }
   const kept = logins
   const owner = workspace.ownerId
+  const homePath =
+    owner === null
+      ? homeFolder(dataRoot, null)
+      : (kept?.workspaceHome?.(owner, workspace.id) ?? homeFolder(dataRoot, owner))
   const runtime = createContainerRuntime({
     name: containerName(workspace.id),
     image:
@@ -151,7 +156,7 @@ export function runtimeFor(
         ? (process.env['LOOM_WORKSPACE_KATA_IMAGE'] ?? 'loom-workspace-kata:latest')
         : (process.env['LOOM_WORKSPACE_IMAGE'] ?? 'loom-workspace:latest'),
     checkoutPath: workspace.worktreePath,
-    homePath: homeFolder(dataRoot, workspace.ownerId),
+    homePath,
     seccompProfilePath: path.join(dataRoot, 'workspace-seccomp.json'),
     memory: process.env['LOOM_WORKSPACE_MEMORY'] ?? '4g',
     cpus: process.env['LOOM_WORKSPACE_CPUS'] ?? '2',
@@ -172,8 +177,12 @@ export function runtimeFor(
           hosts: kept.hosts,
           // Kata's own read-only mounts do not hold against root in a workspace, so a Kata
           // workspace takes login files from the view the host has already made read-only.
-          loginFilesPath: path.join(dataRoot, engine === 'kata' ? 'login-files-view' : 'login-files', owner),
-          secureHome: (homePath: string) => kept.secureHome(owner, homePath)
+          loginFilesPath: path.join(
+            dataRoot,
+            engine === 'kata' ? 'login-files-view' : 'login-files',
+            path.basename(homePath)
+          ),
+          secureHome: (homePath: string) => kept.secureHome(owner, homePath, workspace.id)
         })
   })
   const gate = powerGate

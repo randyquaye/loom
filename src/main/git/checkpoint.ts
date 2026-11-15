@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { CheckpointInfo } from '../../shared/ipc-contract'
-import { git, gitWithEnv } from './run'
+import { git, gitRuntimeFor, gitWithEnv } from './run'
 
 export const CHECKPOINT_REF_PREFIX = 'refs/loom/checkpoints/'
 export const CHECKPOINT_CAP = 50
@@ -89,7 +89,13 @@ export async function saveCheckpoint(worktreePath: string, label: string): Promi
   await assertOwnRoot(worktreePath)
   const busy = await busyReason(worktreePath)
   if (busy !== null) throw new CheckpointBusyError(busy)
-  const tmp = await mkdtemp(path.join(tmpdir(), 'loom-ckpt-'))
+  const runtime = gitRuntimeFor(worktreePath)
+  const tmp =
+    runtime === null
+      ? await mkdtemp(path.join(tmpdir(), 'loom-ckpt-'))
+      : (await runtime.exec('mktemp', ['-d', '/tmp/loom-ckpt-XXXXXXXX'], { cwd: worktreePath })).stdout.trim()
+  if (runtime !== null && !/^\/tmp\/loom-ckpt-[A-Za-z0-9_-]{1,128}$/.test(tmp))
+    throw new Error('The container returned an invalid checkpoint temporary index directory')
   const env = { GIT_INDEX_FILE: path.join(tmp, 'index') }
   try {
     const hasHead = await git(worktreePath, ['rev-parse', '--verify', 'HEAD']).catch(() => '')
@@ -103,7 +109,8 @@ export async function saveCheckpoint(worktreePath: string, label: string): Promi
     await prune(worktreePath)
     return id
   } finally {
-    await rm(tmp, { recursive: true, force: true })
+    if (runtime === null) await rm(tmp, { recursive: true, force: true })
+    else await runtime.exec('rm', ['-rf', '--', tmp], { cwd: worktreePath })
   }
 }
 

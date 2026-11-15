@@ -40,7 +40,8 @@ export function NewWorkspaceModal({
 }) {
   const closeModals = useUi((s) => s.closeModals)
   const navigate = useUi((s) => s.navigate)
-  const projects = useProjects((s) => s.projects)
+  const storedProjects = useProjects((s) => s.projects)
+  const projects = storedProjects.filter((project) => !project.id.startsWith('loom-bot-project:'))
   const workspacesByProject = useProjects((s) => s.workspacesByProject)
   const addWorkspace = useProjects((s) => s.addWorkspace)
   const createSession = useSessions((s) => s.create)
@@ -48,7 +49,9 @@ export function NewWorkspaceModal({
   const modelsByBackend = useSessions((s) => s.modelsByBackend)
   const loadout = useDefaults((s) => s.loadout)
   const push = useToasts((s) => s.push)
-  const [projectId, setProjectId] = useState<string | null>(initialProjectId)
+  const [projectId, setProjectId] = useState<string | null>(
+    initialProjectId?.startsWith('loom-bot-project:') ? null : initialProjectId
+  )
   const [baseRef, setBaseRef] = useState<string | null>(null)
   const cloudState = useCloud((s) => s.status.state)
   const [wantsCloud, setWantsCloud] = useState(false)
