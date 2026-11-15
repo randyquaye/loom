@@ -1,0 +1,48 @@
+---
+import Brand from '../components/Brand.astro'
+import '../styles/site.css'
+
+interface Props {
+  title: string
+}
+const { title } = Astro.props
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <header class="nav">
+      <div class="wrap">
+        <Brand />
+        <nav class="nav-links" aria-label="Main">
+          <a href="#workflow">Workflow</a>
+          <a href="#questions">Questions</a>
+          <a class="btn btn-sm" href="#download">Download</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <slot />
+    </main>
+
+    <footer class="footer">
+      <div class="wrap">
+        <Brand />
+        <span>A workspace for coding agents on macOS.</span>
+        <!-- Stub: plain labels until public destinations exist. -->
+        <ul>
+          <li>Documentation</li>
+          <li>Release notes</li>
+          <li>Privacy</li>
+          <li>Terms</li>
+        </ul>
+      </div>
+    </footer>
+  </body>
+</html>

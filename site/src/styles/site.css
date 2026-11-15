@@ -1,0 +1,494 @@
+/* Values lifted from src/renderer/theme/tokens.css so the site matches the app. */
+:root {
+  --bg: #0a0a0b;
+  --surface: #17171a;
+  --text: #f4f4f5;
+  --muted: #a3a3ad;
+  --faint: #8b8b95;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --font: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+  --page: 1200px;
+  --gutter: 24px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 3px;
+}
+
+.wrap {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+/* Navigation */
+
+.nav {
+  border-bottom: 1px solid var(--border);
+}
+
+.nav .wrap {
+  display: flex;
+  align-items: center;
+  height: 64px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.brand svg {
+  width: 20px;
+  height: 20px;
+  fill: var(--text);
+}
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.nav-links a:not(.btn):hover {
+  color: var(--text);
+}
+
+/* Actions and type */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 20px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.btn:hover {
+  background: #fff;
+}
+
+.btn-sm {
+  height: 36px;
+  padding: 0 14px;
+  font-size: 14px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 24px;
+}
+
+.link {
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.link:hover {
+  color: var(--text);
+}
+
+.support {
+  margin: 16px 0 0;
+  color: var(--faint);
+  font-size: 14px;
+}
+
+h1,
+h2 {
+  margin: 0;
+  font-weight: 400;
+  letter-spacing: -0.03em;
+}
+
+.lede {
+  margin: 20px 0 32px;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1.55;
+}
+
+.eyebrow {
+  margin: 0 0 16px;
+  color: var(--faint);
+  font: 13px var(--mono);
+}
+
+/* Product captures, written by `pnpm site:shots` (site/capture/). */
+
+.media {
+  margin: 0;
+}
+
+.media figcaption {
+  margin-top: 16px;
+  color: var(--faint);
+  font-size: 14px;
+}
+
+.shot img,
+video.shot {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border-strong);
+}
+
+/* Hero: large type beside a capture that bleeds off the right edge. */
+
+.bleed {
+  overflow-x: clip;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: 540px 1fr;
+  gap: 56px;
+  align-items: center;
+  padding-block: 96px 128px;
+}
+
+.hero h1 {
+  font-size: 68px;
+  line-height: 1;
+  letter-spacing: -0.035em;
+}
+
+.hero .stage {
+  position: relative;
+  isolation: isolate;
+  width: 960px;
+}
+
+/* Neutral light only: the app's tokens rule out violet tints and glow washes. */
+.hero .stage::before {
+  content: '';
+  position: absolute;
+  inset: -20% -10% -20% -25%;
+  z-index: -1;
+  /* It reaches over the copy; it must not take its clicks. */
+  pointer-events: none;
+  background: radial-gradient(closest-side, rgba(255, 255, 255, 0.07), transparent);
+}
+
+/*
+ * "See how it works": copy and window share one cell; the window, on top, takes the full
+ * width (capped so it fits the viewport) and the copy passes behind it. Hero.astro animates
+ * between the two layouts.
+ */
+
+.hero--demo {
+  grid-template-columns: 1fr;
+}
+
+.hero--demo > * {
+  grid-area: 1 / 1;
+}
+
+.hero--demo .hero-copy {
+  width: 540px;
+}
+
+.hero--demo .stage {
+  z-index: 1;
+  justify-self: center;
+  width: min(100%, calc((100svh - 192px) * 1.6));
+}
+
+.demo {
+  position: absolute;
+  inset: 0;
+}
+
+.demo-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--border-strong);
+  opacity: 0;
+}
+
+.demo-progress {
+  position: absolute;
+  inset-inline: 0;
+  bottom: -14px;
+  height: 2px;
+  background: var(--border);
+}
+
+.demo-progress span {
+  display: block;
+  height: 100%;
+  background: var(--muted);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
+/* Same light-on-dark as the primary buttons, as a round icon button in the window's corner. */
+.demo-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--text);
+  color: var(--bg);
+  cursor: pointer;
+}
+
+.demo-close:hover {
+  background: #fff;
+}
+
+.demo-close svg,
+.flight-mark svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+}
+
+/* Close shows once its flying copy lands; the progress bar once the demo plays. */
+.demo:not([data-landed]) .demo-close,
+.demo:not([data-playing]) .demo-progress {
+  visibility: hidden;
+}
+
+/* The copy of Download that is tossed into the corner (Hero.astro, scripts/throw.ts). */
+.flight {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  pointer-events: none;
+}
+
+.flight-skin {
+  position: fixed;
+  margin: 0;
+}
+
+.flight-drop,
+.flight-mark {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 32px;
+  height: 32px;
+}
+
+/* Turned so the corner that sharpens into the tail trails the direction of travel. */
+.flight-body {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: var(--text);
+  rotate: 45deg;
+}
+
+.flight-mark {
+  display: grid;
+  place-items: center;
+  color: var(--bg);
+}
+
+/* Chapters: compact copy beside or above a large capture. */
+
+.chapter {
+  display: grid;
+  grid-template-columns: 400px 1fr;
+  gap: 80px;
+  align-items: center;
+  padding-block: 112px;
+}
+
+.chapter--flip {
+  grid-template-columns: 1fr 400px;
+}
+
+.chapter--flip .chapter-copy {
+  order: 2;
+}
+
+.chapter--wide {
+  grid-template-columns: 1fr;
+  gap: 48px;
+}
+
+.chapter--wide .chapter-copy {
+  max-width: 560px;
+}
+
+h2 {
+  font-size: 48px;
+  line-height: 1.05;
+}
+
+.chapter .lede {
+  margin-bottom: 0;
+}
+
+/* Practical answers: ruled rows, not cards. */
+
+.faq {
+  padding-block: 112px;
+}
+
+.faq dl {
+  margin: 48px 0 0;
+}
+
+.faq-row {
+  display: grid;
+  grid-template-columns: 400px 1fr;
+  gap: 80px;
+  padding-block: 24px;
+  border-top: 1px solid var(--border);
+}
+
+.faq dt {
+  font-size: 17px;
+  font-weight: 500;
+}
+
+.faq dd {
+  margin: 0;
+  color: var(--muted);
+}
+
+/* Closing download and footer */
+
+.closing {
+  padding-block: 128px;
+  border-top: 1px solid var(--border);
+}
+
+.closing .actions {
+  margin-top: 32px;
+}
+
+.footer {
+  border-top: 1px solid var(--border);
+}
+
+.footer .wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px 32px;
+  padding-block: 32px;
+  color: var(--faint);
+  font-size: 14px;
+}
+
+.footer .brand {
+  color: var(--text);
+}
+
+.footer ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  margin: 0 0 0 auto;
+  padding: 0;
+  list-style: none;
+}
+
+/* Responsive */
+
+@media (max-width: 1000px) {
+  .hero,
+  .chapter,
+  .chapter--flip {
+    grid-template-columns: 1fr;
+    gap: 48px;
+  }
+
+  .faq-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .hero .stage {
+    width: auto;
+  }
+
+  .chapter--flip .chapter-copy {
+    order: 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .nav-links a:not(.btn) {
+    display: none;
+  }
+
+  .hero {
+    padding-block: 56px 72px;
+  }
+
+  .hero h1 {
+    font-size: min(48px, 10.5vw);
+  }
+
+  .chapter {
+    gap: 32px;
+    padding-block: 64px;
+  }
+
+  h2 {
+    font-size: 32px;
+  }
+
+  .faq,
+  .closing {
+    padding-block: 64px;
+  }
+
+  .footer ul {
+    margin-left: 0;
+  }
+}

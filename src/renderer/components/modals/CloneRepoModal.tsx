@@ -210,7 +210,7 @@ export function CloneRepoModal({
               aria-labelledby={`${baseId}-location`}
               value={location}
               onChange={(e) => setLocation(e.target.value)}
-              placeholder="Default: Loom repos folder"
+              placeholder="Default: LoomBox repos folder"
               spellCheck={false}
             />
             <button type="button" className="btn" onClick={() => void browse()}>
