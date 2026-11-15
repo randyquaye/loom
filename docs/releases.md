@@ -11,34 +11,42 @@ Release verification refuses editable releases. Grant the designated maintainers
 to run the workflows; company operators also need read access to this private repository's
 releases. Neither workflow needs AWS credentials or deploys infrastructure.
 
-Set these repository Actions secrets for the desktop workflow:
+The desktop workflow defaults to an unsigned team-pilot build. It needs no Apple
+Developer account or Apple secrets. To enable **Code sign and notarize**, configure
+these repository Actions secrets:
 
-| Secret | Value |
-| --- | --- |
-| CSC_LINK | Base64-encoded Developer ID Application `.p12` certificate |
-| CSC_KEY_PASSWORD | Certificate password |
-| CSC_NAME | Developer ID Application signing identity |
-| APPLE_ID | Apple account used for notarization |
-| APPLE_APP_SPECIFIC_PASSWORD | That account's app-specific password |
-| APPLE_TEAM_ID | Apple Developer team ID |
+| Secret                      | Value                                                      |
+| --------------------------- | ---------------------------------------------------------- |
+| CSC_LINK                    | Base64-encoded Developer ID Application `.p12` certificate |
+| CSC_KEY_PASSWORD            | Certificate password                                       |
+| CSC_NAME                    | Developer ID Application signing identity                  |
+| APPLE_ID                    | Apple account used for notarization                        |
+| APPLE_APP_SPECIFIC_PASSWORD | That account's app-specific password                       |
+| APPLE_TEAM_ID               | Apple Developer team ID                                    |
 
-The release config requires signing and notarization. Missing credentials or failed
-verification stop publication; the unsigned local `pnpm package` path remains available
-for development. Current desktop releases support Apple Silicon macOS only.
+With signing enabled, the strict release config requires signing and notarization.
+Missing credentials or failed verification stop that build; it never switches to unsigned.
+The unchecked flag selects an explicit unsigned override. Both modes produce Apple
+Silicon DMG and ZIP assets with the same naming scheme.
 
 ## Publish a desktop
 
 In Actions, run **Release desktop** on `main`, supplying a new semantic `version`, such
-as `0.1.0`. The workflow validates the source, builds the app, signs and notarizes the
-app and DMG, and publishes tag `desktop-v0.1.0` with:
+as `0.1.0`. Leave **Code sign and notarize** unchecked for the initial unsigned release.
+Enable it when Apple credentials are configured. The workflow validates the source,
+builds in the selected mode, and publishes tag `desktop-v0.1.0` with:
 
 - `Loom-0.1.0-arm64.dmg` and `.zip`.
-- `desktop.json`: version, source commit, protocol, asset sizes and SHA-256 checksums.
+- `desktop.json`: version, source commit, protocol, explicit `signed` or `unsigned`
+  signing status, asset sizes and SHA-256 checksums.
 
 All assets are attached to a draft before publication. Existing tags/releases cannot
 be overwritten. A failed draft remains for diagnosis. Use a fresh version for corrected
 published artifacts. Publishing a release does not configure automatic desktop updates;
-members install the DMG manually.
+members install the DMG manually. Unsigned releases are labelled in their notes and
+manifest. For a trusted team build, use Finder's Open or the specific Privacy & Security
+approval if macOS blocks it. Do not disable Gatekeeper globally. A later signed build
+uses a new version; published assets remain immutable.
 
 Publication claims the tag before uploading assets, so a failed attempt cannot simply
 rerun under the same version. Inspect the workflow, source commit, tag and draft first.
@@ -52,13 +60,15 @@ immutability settings before retrying an attempt that returned an editable relea
 Run **Release runner** on `main`, supplying a new `version` and an existing
 `desktop_tag`, such as `desktop-v0.1.0`. The selected desktop must be a verified immutable
 release whose protocol equals the runner's protocol. Their version numbers and source
-commits may differ. The workflow publishes `runner-v0.1.0` with:
+commits may differ. The runner manifest retains the selected desktop's signing status,
+so bundling an unsigned desktop does not imply it was signed. The workflow publishes
+`runner-v0.1.0` with:
 
-| Asset | Contents |
-| --- | --- |
-| loom-runner-0.1.0.tgz | Built runner, runtime scripts, locked dependency manifests, workspace image recipes and compatible desktop DMG |
-| loom-operator-0.1.0.tgz | Terraform, operator commands, example stack settings and operator documentation |
-| runner.json | Runner version, protocol, source commit, selected desktop identity, asset sizes and SHA-256 checksums |
+| Asset                   | Contents                                                                                                       |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------- |
+| loom-runner-0.1.0.tgz   | Built runner, runtime scripts, locked dependency manifests, workspace image recipes and compatible desktop DMG |
+| loom-operator-0.1.0.tgz | Terraform, operator commands, example stack settings and operator documentation                                |
+| runner.json             | Runner version, protocol, source commit, selected desktop identity, asset sizes and SHA-256 checksums          |
 
 The runner's `/download` serves that selected desktop, even when a newer desktop release
 exists. No private stack files, Terraform state, credentials, or developer workspace files
@@ -135,11 +145,11 @@ personal work and port forwarding continue using their established protocol-6 pa
 and authentication, including TLS host verification. Capability declarations never
 replace membership, ownership, or grant checks.
 
-| Change | Does the operator need to update the runner? |
-| --- | --- |
-| New desktop UI/local fix | No |
-| Desktop adds an optional cloud feature | Only to enable that feature |
-| Runner adds an optional cloud feature | Existing desktops keep baseline behavior |
+| Change                                            | Does the operator need to update the runner?             |
+| ------------------------------------------------- | -------------------------------------------------------- |
+| New desktop UI/local fix                          | No                                                       |
+| Desktop adds an optional cloud feature            | Only to enable that feature                              |
+| Runner adds an optional cloud feature             | Existing desktops keep baseline behavior                 |
 | Breaking change to the established cloud contract | Requires a separate compatibility and migration decision |
 
 Release checks exercise a frozen older-runner fixture, including requests, events and
@@ -165,7 +175,8 @@ only for intended host maintenance. Runner database downgrades remain unsupporte
 ## First-release acceptance
 
 The workflows must be merged into `main`, configured, and actually run before a release
-exists. A local code check does not establish Apple signing, notarization, immutable
-publication, clean-machine operator installation, or AWS activation. Exercise those on
-a disposable stack, then complete the live checklist in `docs/operator-runbook.md` before
-widening company access.
+exists. For the unsigned mode, verify immutable publication and clean-machine
+installation with its explicit macOS approval. Signing and notarization acceptance
+apply when the signing flag is enabled. A local code check proves none of those live
+results or AWS activation. Exercise deployment on a disposable stack, then complete
+the live checklist in `docs/operator-runbook.md` before widening company access.

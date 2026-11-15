@@ -6,6 +6,10 @@ on:
         description: Desktop version (X.Y.Z)
         required: true
         type: string
+      sign:
+        description: Code sign and notarize (requires Apple Developer credentials)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -43,7 +47,13 @@ jobs:
           npm rebuild better-sqlite3 node-pty
           pnpm test
           pnpm build
+      - name: Build unsigned desktop
+        if: ${{ !inputs.sign }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: pnpm exec electron-builder --mac --arm64 --publish never --config electron-builder.unsigned.yml --config.extraMetadata.version="$VERSION"
       - name: Sign and notarize
+        if: ${{ inputs.sign }}
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -70,7 +80,10 @@ jobs:
           xcrun stapler staple "$DMG"
           xcrun stapler validate "$DMG"
           codesign --verify --strict "$DMG"
-          node scripts/release.mjs desktop "$VERSION" release/desktop
+      - name: Record desktop signing status
+        env:
+          SIGNING: ${{ inputs.sign && 'signed' || 'unsigned' }}
+        run: node scripts/release.mjs desktop "$VERSION" release/desktop "$SIGNING"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: desktop-release

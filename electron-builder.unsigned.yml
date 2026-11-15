@@ -1,0 +1,8 @@
+# Explicit team-pilot build; signed releases retain the strict parent configuration.
+extends: ./electron-builder.release.yml
+forceCodeSigning: false
+mac:
+  identity: null
+  notarize: false
+dmg:
+  sign: false

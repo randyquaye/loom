@@ -153,10 +153,11 @@ six minutes; inspect the publisher journal if it times out. Caddy's later certif
 key renewals are picked up by the minute timer without changing the org's TXT record.
 Missing/failed refreshes expire closed; do not stop this timer as a monitoring shortcut.
 
-Release workflows require an Apple Developer ID signature and notarization. Source-built
-development packages remain unsigned: for a trusted team pilot, use Finder's Open/Privacy
-& Security approval if macOS blocks installation. Do not disable Gatekeeper globally.
-Use the signed release workflow before distributing outside the team.
+The desktop release workflow defaults to an unsigned team-pilot build, identified in
+its manifest and release notes. For that trusted build, use Finder's Open/Privacy & Security
+approval if macOS blocks installation. Do not disable Gatekeeper globally. The optional
+**Code sign and notarize** flag enables the strict Apple Developer ID signing path;
+configure its credentials and use that mode before distributing outside the team.
 
 ## Create the org and invite colleagues
 

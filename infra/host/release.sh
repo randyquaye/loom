@@ -21,6 +21,7 @@ fetch_release() {
     (.commit | type == "string" and test("^[a-f0-9]{40}$")) and
     (.protocol | type == "number" and . > 0 and . == floor) and
     (.desktop | .protocol == $release.protocol and
+      (.signing == "signed" or .signing == "unsigned") and
       (.version | type == "string") and .tag == ("desktop-v" + .version) and
       (.commit | type == "string" and test("^[a-f0-9]{40}$"))) and
     (.assets | type == "array" and length == 2 and
@@ -33,6 +34,7 @@ fetch_release() {
   [ "$(jq -r .commit "$manifest")" = "$commit" ] || {
     echo 'Runner manifest does not match its source tag' >&2; return 1
   }
+  printf 'Included desktop: %s (%s)\n' "$(jq -r .desktop.tag "$manifest")" "$(jq -r .desktop.signing "$manifest")"
   gh release download "$tag" --repo "$repository" --pattern "$archive" --dir "$directory" || return 1
   gh release verify-asset "$tag" "$directory/$archive" --repo "$repository" >/dev/null || return 1
   expected_sha=$(jq -r --arg name "$archive" '.assets[] | select(.name == $name) | .sha256' "$manifest")

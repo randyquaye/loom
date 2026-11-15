@@ -4,9 +4,10 @@ You need an Apple Silicon Mac, your Google Workspace account, an invitation from
 owner, and your own Claude or Codex subscription. One Mac follows one org at a time.
 
 1. Download the matching Loom app from the org's https://HOST/download link. Install the
-   DMG. Published releases are signed and notarized. An operator-provided source-built
-   pilot may be unsigned: use Finder's Open or the specific Privacy & Security approval
-   if blocked. Do not disable macOS security globally.
+   DMG. The release notes and manifest identify signed or unsigned builds. The initial
+   team pilot uses an unsigned build: use Finder's Open or the specific Privacy & Security
+   approval if blocked, after confirming the download with your operator. Do not disable
+   macOS security globally.
 2. Open Settings, Cloud, and enter your primary Google Workspace email independently,
    then paste the invitation. Check the hostname Loom shows before
    confirming contact. Sign in with the work account the invite names. The code expires

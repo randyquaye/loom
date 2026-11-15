@@ -118,6 +118,11 @@ function checkManifest(manifest, kind, version) {
       /^[a-f0-9]{40}$/.test(manifest.commit),
     'Invalid release manifest identity'
   )
+  if (kind === 'desktop') signingOf(manifest.signing)
+}
+function signingOf(value) {
+  requireValue(value === 'signed' || value === 'unsigned', 'Signing must be signed or unsigned')
+  return value
 }
 async function saveManifest(info, directory, extra = {}) {
   const manifest = {
@@ -130,8 +135,9 @@ async function saveManifest(info, directory, extra = {}) {
   await writeFile(path.join(directory, `${info.kind}.json`), `${JSON.stringify(manifest, null, 2)}\n`)
   return manifest
 }
-async function desktop(version, directory) {
-  return saveManifest(await source('desktop', version), directory)
+async function desktop(version, directory, signing) {
+  signingOf(signing)
+  return saveManifest(await source('desktop', version), directory, { signing })
 }
 async function verifiedDesktop(tag, directory) {
   requireValue(/^desktop-v/.test(tag), 'Select an existing desktop-vVERSION release')
@@ -259,7 +265,8 @@ async function runner(version, desktopTag, output) {
         tag: desktopTag,
         version: selected.version,
         protocol: selected.protocol,
-        commit: selected.commit
+        commit: selected.commit,
+        signing: selected.signing
       }
     })
   } finally {
@@ -281,6 +288,7 @@ async function publish(kind, version, directory) {
         /^[a-f0-9]{40}$/.test(manifest.desktop.commit),
       'Invalid desktop binding'
     )
+  const signing = signingOf(kind === 'desktop' ? manifest.signing : manifest.desktop.signing)
   await checkAssets(manifest, directory)
   const tag = info.tag
   // Creating the tag atomically prevents a concurrent publisher from changing its source.
@@ -301,9 +309,12 @@ async function publish(kind, version, directory) {
     '--target',
     info.commit,
     '--title',
-    tag,
+    `${tag}${signing === 'unsigned' ? ' (unsigned pilot)' : ''}`,
     '--notes',
-    `${kind} ${version}; protocol ${info.protocol}; source ${info.commit}`,
+    `${kind} ${version}; protocol ${info.protocol}; source ${info.commit}\n\nDesktop: ${signing}.` +
+      (signing === 'unsigned'
+        ? '\nThis pilot desktop is unsigned and not notarized. After opening the installed app, use System Settings > Privacy & Security > Open Anyway if macOS blocks it. Managed company devices may require administrator approval.'
+        : '\nThe desktop is signed with Developer ID and notarized by Apple.'),
     '--latest=false'
   ])
   gh([
@@ -345,10 +356,10 @@ async function publish(kind, version, directory) {
 try {
   const [command, ...args] = process.argv.slice(2)
   const commands = { inspect, desktop, runner, publish }
-  const arity = { inspect: 2, desktop: 2, runner: 3, publish: 3 }
+  const arity = { inspect: 2, desktop: 3, runner: 3, publish: 3 }
   requireValue(
     Object.hasOwn(commands, command) && args.length === arity[command],
-    'Usage: release.mjs inspect KIND VERSION | desktop VERSION DIR | runner VERSION DESKTOP_TAG DIR | publish KIND VERSION DIR'
+    'Usage: release.mjs inspect KIND VERSION | desktop VERSION DIR signed|unsigned | runner VERSION DESKTOP_TAG DIR | publish KIND VERSION DIR'
   )
   console.log(JSON.stringify(await commands[command](...args)))
 } catch (error) {
