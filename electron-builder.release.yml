@@ -1,0 +1,26 @@
+# Independent of the local unsigned config: identity is discovered from required CSC_NAME/CSC_LINK.
+appId: dev.loom.app
+productName: Loom
+forceCodeSigning: true
+directories:
+  buildResources: resources
+  output: release/desktop
+files:
+  - out/**
+  - package.json
+asarUnpack:
+  - '**/*.node'
+artifactName: Loom-${version}-${arch}.${ext}
+mac:
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+  notarize: true
+  extendInfo:
+    NSMicrophoneUsageDescription: Loom uses the microphone only while you hold the Talk button to dictate a message.
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+dmg:
+  sign: true

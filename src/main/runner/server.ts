@@ -13,11 +13,14 @@ import {
   type RunnerFrame
 } from '../../shared/runner-contract'
 import type { Caller } from '../ipc/registry'
+import { RUNNER_CAPABILITIES, RUNNER_CAPABILITIES_HEADER } from '../../shared/runner-capabilities'
 import { createForwardingServer, type ForwardTarget } from './forwarding'
 
 export interface RunnerServerOptions {
   host: string
   port: number
+  /** Optional features implemented by this runner. */
+  capabilities?: readonly string[]
   /** Answers ordinary requests, which is how people sign in; without it there are none. */
   http?: RequestListener | undefined
   /** Says who a bearer token belongs to; null refuses the connection. */
@@ -27,12 +30,14 @@ export interface RunnerServerOptions {
   /** Answers one call on behalf of the connection's user. */
   dispatch(caller: Caller, channel: string, input: unknown): unknown
   forward?: (caller: Caller, workspaceId: string, port: number) => Promise<ForwardTarget>
+  /** Projects a push for one connection; undefined suppresses that connection's update. */
+  pushFor?(caller: Caller, channel: string, payload: unknown, workspaceId?: string): unknown | undefined
 }
 
 export interface RunnerServer {
   readonly port: number
   /** Sends a live update to every desktop of one user that has completed its hello. */
-  sendTo(userId: string | null, channel: string, payload: unknown): void
+  sendTo(userId: string | null, channel: string, payload: unknown, workspaceId?: string): void
   /** The users with at least one desktop connected. */
   connectedUsers(): string[]
   /** The workspaces with a connection live through a port forward. */
@@ -62,11 +67,20 @@ type Admission = { caller: Caller } | { status: number; reason: string }
  * and a web page must never drive agents, so any origin at all is refused; a desktop sends
  * none. After that, the bearer token says who is connecting.
  */
-function admit(request: IncomingMessage, authenticate: RunnerServerOptions['authenticate']): Admission {
+function admit(
+  request: IncomingMessage,
+  authenticate: RunnerServerOptions['authenticate'],
+  supportedCapabilities: readonly string[]
+): Admission {
   if (request.headers.origin !== undefined) return { status: 403, reason: 'Forbidden' }
   const header = request.headers.authorization ?? ''
   const caller = header.startsWith('Bearer ') ? authenticate(header.slice('Bearer '.length)) : null
-  return caller === null ? { status: 401, reason: 'Unauthorized' } : { caller }
+  if (caller === null) return { status: 401, reason: 'Unauthorized' }
+  const requested = request.headers[RUNNER_CAPABILITIES_HEADER]
+  const names = (Array.isArray(requested) ? requested.join(',') : (requested ?? ''))
+    .split(',')
+    .map((name) => name.trim())
+  return { caller: { ...caller, capabilities: supportedCapabilities.filter((name) => names.includes(name)) } }
 }
 
 function reject(socket: Duplex, status: number, reason: string): void {
@@ -98,7 +112,7 @@ export function startRunnerServer(options: RunnerServerOptions): Promise<RunnerS
   http.on('upgrade', (request, socket, head) => {
     const forward = request.url?.startsWith(`${RUNNER_FORWARD_PATH}/`) ?? false
     if (request.url !== RUNNER_PATH && !forward) return reject(socket, 404, 'Not Found')
-    const admission = admit(request, options.authenticate)
+    const admission = admit(request, options.authenticate, options.capabilities ?? RUNNER_CAPABILITIES)
     if ('status' in admission) return reject(socket, admission.status, admission.reason)
     if (forward) {
       void forwarding.upgrade(request, socket, head, admission.caller).catch(() => socket.destroy())
@@ -121,7 +135,7 @@ export function startRunnerServer(options: RunnerServerOptions): Promise<RunnerS
       }
       if (frame.type === 'hello') {
         clearTimeout(helloTimer)
-        send(socket, { type: 'hello', protocol: RUNNER_PROTOCOL })
+        send(socket, { type: 'hello', protocol: RUNNER_PROTOCOL, capabilities: caller.capabilities ?? [] })
         if (frame.protocol !== RUNNER_PROTOCOL) return socket.close(CLOSE_UPDATE_REQUIRED, 'update')
         greeted.set(socket, caller)
         return
@@ -181,11 +195,14 @@ export function startRunnerServer(options: RunnerServerOptions): Promise<RunnerS
       http.off('error', reject)
       resolve({
         port: (http.address() as AddressInfo).port,
-        sendTo(userId, channel, payload) {
+        sendTo(userId, channel, payload, workspaceId) {
           if (userId === null) return
-          const frame = JSON.stringify({ type: 'push', channel, payload } satisfies RunnerFrame)
           for (const [socket, owner] of greeted) {
-            if (owner.userId === userId && socket.readyState === socket.OPEN) socket.send(frame)
+            if (owner.userId !== userId || socket.readyState !== socket.OPEN) continue
+            const projected =
+              options.pushFor === undefined ? payload : options.pushFor(owner, channel, payload, workspaceId)
+            if (options.pushFor !== undefined && projected === undefined) continue
+            send(socket, { type: 'push', channel, payload: projected })
           }
         },
         connectedUsers() {

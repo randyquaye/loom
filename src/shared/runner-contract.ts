@@ -14,9 +14,9 @@ import {
 } from './limits'
 
 /**
- * What a desktop and a runner must agree on. Bump this whenever this file changes, or a
- * channel the runner serves changes its input, output or meaning: a desktop and a runner
- * that disagree refuse each other with "update" instead of misbehaving.
+ * Required request/response shapes and their meanings must agree. Bump this only when
+ * changing an existing requirement; optional additions use runner capabilities so that
+ * independent desktop updates can keep using an older runner's existing features.
  */
 export const RUNNER_PROTOCOL = 6
 
@@ -36,7 +36,7 @@ export type ClientFrame =
 
 /** Runner to desktop. Errors carry only their message, as they do across Electron's IPC. */
 export type RunnerFrame =
-  | { type: 'hello'; protocol: number }
+  | { type: 'hello'; protocol: number; capabilities?: readonly string[] }
   | { type: 'result'; id: number; ok: true; value?: unknown }
   | { type: 'result'; id: number; ok: false; error: string }
   | { type: 'push'; channel: string; payload: unknown }

@@ -4,8 +4,8 @@ load_stack() {
   local name="${1:-loom}" actual file
   [[ "$name" =~ ^[a-z][a-z0-9-]{0,16}$ ]] || { echo 'Invalid stack name' >&2; return 1; }
   LOOM_INFRA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  file="$LOOM_INFRA_DIR/stacks/$name.env"
-  [ -f "$file" ] || { echo "Create $file from stacks/example.env first" >&2; return 1; }
+  file="${LOOM_STACK_DIR:-$LOOM_INFRA_DIR/stacks}/$name.env"
+  [ -f "$file" ] || { echo "Create $file from infra/host/stacks/example.env first" >&2; return 1; }
   # A tfvars file takes precedence over TF_VAR inputs without saying so.
   if find "$LOOM_INFRA_DIR" -maxdepth 1 -type f \( -name '*.tfvars' -o -name '*.tfvars.json' \) | read -r _; then
     echo 'Remove tfvars files; the stack file is the only configuration source' >&2
@@ -16,6 +16,7 @@ load_stack() {
   while IFS= read -r variable; do unset "$variable"; done < <(compgen -A variable TF_VAR_)
   unset AWS_PROFILE AWS_REGION AWS_DEFAULT_REGION EXPECTED_ACCOUNT_ID STACK_NAME
   unset LOOM_MAX_RUNNING_WORKSPACES LOOM_MIN_FREE_DISK_GB
+  unset LOOM_RELEASE_REPOSITORY
   set -a
   # shellcheck source=/dev/null
   source "$file"

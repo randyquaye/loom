@@ -12,8 +12,10 @@ remain acceptance work. Do not count an unrun check as passed.
 - A DNS hostname for the runner, on any domain, and permission to add a TXT record on
   every Workspace domain whose people may sign in.
 - A GitHub organization owner who can register and install a private GitHub App.
-- An Apple Silicon Mac with this private repository, Node 24, pnpm 11, Terraform 1.10+,
-  AWS CLI v2 with `aws login`, jq and the macOS build tools.
+- A verified operator release bundle from docs/releases.md, Node 24, Terraform 1.10+,
+  AWS CLI v2 with `aws login`, GitHub CLI release verification, jq, tar and shasum.
+- For development deployments built from source instead: an Apple Silicon Mac with this
+  private repository, pnpm 11 and the macOS build tools.
 - Members' own Claude or Codex subscriptions. The pilot supports these two agents only.
 
 The AWS account holder can read all data on the host. Read docs/security.md before using
@@ -21,8 +23,11 @@ company data. One Mac follows one organization; one organization has one host.
 
 ## Choose a stack and account
 
-Copy infra/host/stacks/example.env to infra/host/stacks/NAME.env. Keep it private and
-untracked. Set the profile, Region, expected account ID, stack name, hostname, instance
+For a packaged release, set LOOM_STACK_DIR to your infrastructure repository's absolute
+stack-directory path, as shown in docs/releases.md. Otherwise the default is
+infra/host/stacks. Copy infra/host/stacks/example.env to NAME.env in that directory.
+Keep the source checkout's stack settings private and untracked. Set the profile,
+Region, expected account ID, stack name, hostname, instance
 and disk sizes. Do not put credentials in it. Do not create terraform.tfvars or auto
 variable files: the stack file is the sole source of configuration.
 
@@ -96,15 +101,19 @@ successful deployment. The app shows Google client ID and domains read-only to o
 
 ## Build and deploy
 
-Review and commit the complete release yourself before deployment. The deploy script
-refuses any tracked or untracked changes. It builds the runner and matching arm64 DMG
-from the same source, pins the agent CLI versions in the workspace image, and uses
-release-specific image tags. Node and OS packages are prepared separately from ordinary
-activation. No commit or deployment is authorized merely by this guide.
+Use the verified operator bundle and its pinned runner release from docs/releases.md:
 
 ```sh
-infra/host/deploy.sh NAME
+infra/host/deploy.sh NAME --release runner-v0.1.0
 ```
+
+This downloads verified artifacts without rebuilding Loom. The runtime bundle includes
+a desktop with the same cloud protocol; its version can differ from the runner's.
+For a development source deployment, use `infra/host/deploy.sh NAME` instead. That path
+requires a clean, reviewed, committed source checkout and builds both packages locally.
+Both paths pin agent CLI versions in the workspace image and use release-specific image
+tags. Node and OS packages are prepared separately from ordinary activation. No commit
+or deployment is authorized merely by this guide.
 
 A new host receives its packages, data mount and runtime. Settings, data free space,
 release artifacts and domain proof are checked before activation. Any access or network
@@ -144,9 +153,10 @@ six minutes; inspect the publisher journal if it times out. Caddy's later certif
 key renewals are picked up by the minute timer without changing the org's TXT record.
 Missing/failed refreshes expire closed; do not stop this timer as a monitoring shortcut.
 
-The current build is unsigned. For a trusted team pilot, install the DMG and use Finder's
-Open/Privacy & Security approval if macOS blocks it. Do not disable Gatekeeper globally.
-Sign and notarize with an Apple Developer ID before distributing outside the team.
+Release workflows require an Apple Developer ID signature and notarization. Source-built
+development packages remain unsigned: for a trusted team pilot, use Finder's Open/Privacy
+& Security approval if macOS blocks installation. Do not disable Gatekeeper globally.
+Use the signed release workflow before distributing outside the team.
 
 ## Create the org and invite colleagues
 
@@ -171,7 +181,7 @@ regional disk/snapshot/TLS alarms and the us-east-1 Route 53 readiness alarm.
 
 ```sh
 infra/host/drain.sh NAME on
-infra/host/deploy.sh NAME --prepare
+infra/host/deploy.sh NAME --release runner-v0.1.0 --prepare
 ```
 
 Monitoring covers public readiness, root/data disk percentage, failed DLM snapshots,

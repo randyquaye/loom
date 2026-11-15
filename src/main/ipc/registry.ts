@@ -23,6 +23,8 @@ export interface Caller {
   userId: string
   /** The sign-in the connection came in on; absent for a developer's stand-in token. */
   signInId?: string
+  /** Transport callers always supply an array; undefined is reserved for internal calls. */
+  capabilities?: readonly string[]
 }
 
 interface Registration {

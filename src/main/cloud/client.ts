@@ -3,6 +3,11 @@ import type { Agent } from 'node:https'
 import type { RunnerTransport } from './transport'
 import { HostProofError } from './host-proof'
 import {
+  RUNNER_CAPABILITIES,
+  RUNNER_CAPABILITIES_HEADER,
+  supportsBots
+} from '../../shared/runner-capabilities'
+import {
   CLOSE_SIGNED_OUT,
   CLOSE_UPDATE_REQUIRED,
   RUNNER_PATH,
@@ -12,7 +17,9 @@ import {
 } from '../../shared/runner-contract'
 
 export type ClientState =
-  { state: 'connecting' | 'connected' | 'unreachable' | 'signed-out' } | { state: 'update'; message: string }
+  | { state: 'connecting' | 'unreachable' | 'signed-out' }
+  | { state: 'connected'; capabilities?: readonly string[] }
+  | { state: 'update'; message: string }
 
 /** How the desktop proves itself to a runner. */
 export interface RunnerAuth {
@@ -28,6 +35,8 @@ export interface RunnerClientOptions extends RunnerAuth {
   url: string
   /** What this desktop speaks; a runner on another version ends in the `update` state. */
   protocol?: number
+  /** Optional features implemented by this client. */
+  capabilities?: readonly string[]
   onPush(channel: string, payload: unknown): void
   onState(state: ClientState): void
 }
@@ -62,7 +71,7 @@ export class SignedOutError extends RunnerUnreachableError {
 }
 
 interface Pending {
-  frame: ClientFrame
+  frame: Extract<ClientFrame, { type: 'call' }>
   identified: boolean
   /** True once it has gone out on some connection, so the runner may already be acting on it. */
   sent: boolean
@@ -84,9 +93,11 @@ function updateMessage(ours: number, theirs: number): string {
 /** The desktop's one connection to a runner. It reconnects on its own until closed. */
 export function connectRunner(options: RunnerClientOptions): RunnerClient {
   const protocol = options.protocol ?? RUNNER_PROTOCOL
+  const requestedCapabilities = options.capabilities ?? RUNNER_CAPABILITIES
   const pending = new Map<number, Pending>()
   let socket: WebSocket | null = null
   let ready = false
+  let capabilities: readonly string[] = []
   let closed = false
   let nextId = 1
   let retryMs = RETRY_FIRST_MS
@@ -100,6 +111,11 @@ export function connectRunner(options: RunnerClientOptions): RunnerClient {
   let silenceTimer: NodeJS.Timeout | undefined
 
   function send(call: Pending): void {
+    if (call.frame.channel.startsWith('bots:') && !supportsBots(capabilities)) {
+      pending.delete(call.frame.id)
+      call.reject(new Error('This runner does not support bots. Ask your operator to update it.'))
+      return
+    }
     call.sent = true
     socket?.send(JSON.stringify(call.frame))
   }
@@ -113,6 +129,7 @@ export function connectRunner(options: RunnerClientOptions): RunnerClient {
   /** Ordinary calls fail with the connection; identified ones wait for the next one. */
   function dropped(): void {
     ready = false
+    capabilities = []
     clearTimeout(silenceTimer)
     for (const [id, call] of pending) {
       if (call.identified && !closed) continue
@@ -134,11 +151,13 @@ export function connectRunner(options: RunnerClientOptions): RunnerClient {
         return stop({ state: 'update', message: updateMessage(protocol, frame.protocol) })
       }
       ready = true
+      const advertised = Array.isArray(frame.capabilities) ? frame.capabilities : []
+      capabilities = requestedCapabilities.filter((name) => advertised.includes(name))
       refused = false
       retryMs = RETRY_FIRST_MS
       // Whatever was waiting for a connection goes out again, under the identity it had.
       for (const call of pending.values()) send(call)
-      return options.onState({ state: 'connected' })
+      return options.onState({ state: 'connected', capabilities })
     }
     if (frame.type === 'push') return options.onPush(frame.channel, frame.payload)
     const call = pending.get(frame.id)
@@ -188,6 +207,7 @@ export function connectRunner(options: RunnerClientOptions): RunnerClient {
     const overtaken = (): boolean => closed || attempt !== attempts
     clearTimeout(retryTimer)
     signedOut = false
+    capabilities = []
     options.onState({ state: 'connecting' })
     let bearer: string | null
     let agent: Agent | undefined
@@ -209,7 +229,10 @@ export function connectRunner(options: RunnerClientOptions): RunnerClient {
     if (bearer === null) return awaitSignIn()
     let unauthorized = false
     const ws = new WebSocket(`${options.url}${RUNNER_PATH}`, {
-      headers: { authorization: `Bearer ${bearer}` },
+      headers: {
+        authorization: `Bearer ${bearer}`,
+        [RUNNER_CAPABILITIES_HEADER]: requestedCapabilities.join(',')
+      },
       agent,
       handshakeTimeout: 15000
     })

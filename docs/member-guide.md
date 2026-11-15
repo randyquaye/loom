@@ -4,8 +4,9 @@ You need an Apple Silicon Mac, your Google Workspace account, an invitation from
 owner, and your own Claude or Codex subscription. One Mac follows one org at a time.
 
 1. Download the matching Loom app from the org's https://HOST/download link. Install the
-   DMG. The current team pilot is unsigned: use Finder's Open or the specific Privacy &
-   Security approval if blocked. Do not disable macOS security globally.
+   DMG. Published releases are signed and notarized. An operator-provided source-built
+   pilot may be unsigned: use Finder's Open or the specific Privacy & Security approval
+   if blocked. Do not disable macOS security globally.
 2. Open Settings, Cloud, and enter your primary Google Workspace email independently,
    then paste the invitation. Check the hostname Loom shows before
    confirming contact. Sign in with the work account the invite names. The code expires
@@ -34,9 +35,10 @@ the new release; report unexpected behavior to your operator.
 A full host refuses new work with a capacity or free-space message. Stop an unused
 workspace or contact an owner. There is no queue promising eventual admission.
 
-An update may require the matching download. Operators drain the host before restarting
-it: running work can finish, while new turns/workspaces/starts are refused. Reconnect
-after the update and install the matching desktop if asked.
+You can update Loom independently of your company's host. Existing personal cloud work
+continues on older runners; optional features need host support before they appear. Operators drain the host before restarting it: running work can finish,
+while new turns/workspaces/starts are refused. Reconnect after the update. If Loom asks
+for a compatible desktop, use your organization's download link.
 
 If you are removed, your Loom sign-ins are revoked, open connections close and workspaces
 stop. Files are retained for 30 days, then deleted. An owner can delete them sooner.

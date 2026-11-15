@@ -159,7 +159,7 @@ export type AgentLoginProvider = 'claude' | 'codex' | 'github'
 export type CloudStatus =
   | { state: 'off' }
   | { state: 'connecting' }
-  | { state: 'connected' }
+  | { state: 'connected'; capabilities?: readonly string[] }
   | { state: 'unreachable' }
   /** The runner is there, but this desktop has no sign-in it accepts. */
   | { state: 'signed-out' }

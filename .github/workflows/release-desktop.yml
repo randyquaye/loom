@@ -1,0 +1,105 @@
+name: Release desktop
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Desktop version (X.Y.Z)
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: desktop-release-${{ inputs.version }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Require main
+        run: test "$GITHUB_REF" = refs/heads/main
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Check release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release.mjs inspect desktop "$VERSION"
+      - name: Install
+        run: |
+          npm install --global pnpm@11.7.0
+          pnpm install --frozen-lockfile
+      - name: Check source and build
+        run: |
+          pnpm typecheck
+          pnpm lint
+          npm rebuild better-sqlite3 node-pty
+          pnpm test
+          pnpm build
+      - name: Sign and notarize
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_NAME: ${{ secrets.CSC_NAME }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'true'
+        run: |
+          : "${CSC_LINK:?Missing CSC_LINK}" "${CSC_KEY_PASSWORD:?Missing CSC_KEY_PASSWORD}" "${CSC_NAME:?Missing CSC_NAME}"
+          : "${APPLE_ID:?Missing APPLE_ID}" "${APPLE_APP_SPECIFIC_PASSWORD:?Missing APPLE_APP_SPECIFIC_PASSWORD}" "${APPLE_TEAM_ID:?Missing APPLE_TEAM_ID}"
+          [[ "$CSC_NAME" == 'Developer ID Application: '* ]]
+          pnpm exec electron-builder --mac --arm64 --publish never --config electron-builder.release.yml --config.extraMetadata.version="$VERSION"
+          DMG="release/desktop/Loom-$VERSION-arm64.dmg"
+          ZIP="release/desktop/Loom-$VERSION-arm64.zip"
+          ditto -x -k "$ZIP" "$RUNNER_TEMP/desktop-zip"
+          APP="$RUNNER_TEMP/desktop-zip/Loom.app"
+          codesign --verify --deep --strict "$APP"
+          test "$(codesign -dvv "$APP" 2>&1 | sed -n 's/^TeamIdentifier=//p')" = "$APPLE_TEAM_ID"
+          xcrun stapler validate "$APP"
+          spctl --assess --type execute "$APP"
+          xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait --output-format json > "$RUNNER_TEMP/dmg-notarization.json"
+          jq -e '.status == "Accepted"' "$RUNNER_TEMP/dmg-notarization.json"
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          codesign --verify --strict "$DMG"
+          node scripts/release.mjs desktop "$VERSION" release/desktop
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-release
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            release/desktop/desktop.json
+            release/desktop/*.dmg
+            release/desktop/*.zip
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: desktop-release
+          path: release/desktop
+      - run: node scripts/release.mjs publish desktop "$VERSION" release/desktop

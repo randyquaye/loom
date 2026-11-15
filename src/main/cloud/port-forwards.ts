@@ -3,6 +3,7 @@ import WebSocket, { createWebSocketStream } from 'ws'
 import type { Agent } from 'node:https'
 import type { RunnerTransport } from './transport'
 import { HostProofError } from './host-proof'
+import { RUNNER_CAPABILITIES, RUNNER_CAPABILITIES_HEADER } from '../../shared/runner-capabilities'
 import type { PortForward } from '../../shared/ipc-contract'
 import { RUNNER_FORWARD_PATH, RUNNER_PROTOCOL } from '../../shared/runner-contract'
 
@@ -54,7 +55,10 @@ export function createPortForwards(options: ForwardOptions) {
       const ws = new WebSocket(
         `${options.url}${RUNNER_FORWARD_PATH}/${mapping.workspaceId}/${mapping.port}?protocol=${RUNNER_PROTOCOL}`,
         {
-          headers: { authorization: `Bearer ${bearer}` },
+          headers: {
+            authorization: `Bearer ${bearer}`,
+            [RUNNER_CAPABILITIES_HEADER]: RUNNER_CAPABILITIES.join(',')
+          },
           handshakeTimeout: 10_000,
           maxPayload: 128 * 1024,
           perMessageDeflate: false,

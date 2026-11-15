@@ -20,8 +20,8 @@ infra/host/alarms.sh NAME pause
 infra/host/drain.sh NAME on
 infra/host/drain.sh NAME status
 # Review active turns, terminals, forwards and setup; choose when members may be interrupted.
-infra/host/deploy.sh NAME
-# Use deploy.sh NAME --prepare for explicit host maintenance.
+infra/host/deploy.sh NAME --release runner-v0.1.0
+# Use the chosen runner's operator bundle; add --prepare for explicit host maintenance.
 infra/host/alarms.sh NAME resume
 ```
 
@@ -35,7 +35,12 @@ For the first update from an older runner without /admin/drain, announce downtim
 inspect active work, and stop loom-runner through Systems Manager before deployment.
 Do not pretend the old release supports draining. No automatic downgrade is supported.
 A bad release is fixed by rolling forward or restoring a snapshot with its data loss.
-The desktop and runner use the same release; get the matching build at /download.
+The desktop and runner use stable protocol 6, not matching release numbers. New desktops
+work with older runners; optional features remain unavailable until the runner supports
+them. Existing personal-workspace behavior stays compatible across routine releases. /download
+offers the compatible desktop selected by the operator. Desktop updates never upgrade
+the host automatically. See docs/releases.md for the compatibility principle, independent
+releases and verified operator bundles.
 
 To resize, drain and stop work, change TF_VAR_instance_type in the stack file, then plan
 and apply a saved plan. Stay on tested x86_64 nested-virtualization-capable instances.
@@ -361,7 +366,8 @@ checks passed until they are executed against the intended release and org.
 | Drain/update              | New work is refused, active work remains visible, existing turns finish, matching release becomes ready      |
 | Actual transport          | Refresh, reconnect and forwards refuse relayed metadata on a different TLS key before credentials are sent   |
 | Publisher lifecycle       | Minute refresh follows certificate renewal; failed updates expire closed; root-only code ownership is intact |
-| Download                  | A mismatched desktop links to the matching source-built DMG                                                  |
+| Cross-version             | New desktop keeps personal work/forwards on an older runner; optional features need explicit support   |
+| Download                  | A cloud protocol refusal offers the host-selected compatible DMG; ordinary updates stay connected           |
 | Monitoring                | Both SNS confirmations complete; forced harmless failure delivers actual operator email                      |
 | Snapshot age              | Completed snapshots, DLM failure signal and missing/stale-backup alarms are observable                       |
 | Recovery                  | Disposable production promotion preserves address/data/keys and revokes restored sign-ins/invites            |
