@@ -141,7 +141,10 @@ function publicRequest(url: string): Promise<Response> {
       )
       incoming.once('error', reject)
     })
-    outgoing.once('error', reject)
+    outgoing.once('error', (error: NodeJS.ErrnoException) => {
+      console.error('TLS fixture request failed:', error.code, error.message)
+      reject(error)
+    })
     outgoing.end()
   })
 }
