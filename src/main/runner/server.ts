@@ -13,7 +13,7 @@ import {
   type RunnerFrame
 } from '../../shared/runner-contract'
 import type { Caller } from '../ipc/registry'
-import { RUNNER_CAPABILITIES, RUNNER_CAPABILITIES_HEADER } from '../../shared/runner-capabilities'
+import { SERVER_CAPABILITIES, RUNNER_CAPABILITIES_HEADER } from '../../shared/runner-capabilities'
 import { createForwardingServer, type ForwardTarget } from './forwarding'
 
 export interface RunnerServerOptions {
@@ -99,7 +99,7 @@ function send(socket: WebSocket, frame: RunnerFrame): void {
  * updates leave on the same socket.
  */
 export function startRunnerServer(options: RunnerServerOptions): Promise<RunnerServer> {
-  const supportedCapabilities = options.capabilities ?? RUNNER_CAPABILITIES
+  const supportedCapabilities = options.capabilities ?? SERVER_CAPABILITIES
   const http = createServer(
     options.http ??
       ((_request, response) => {

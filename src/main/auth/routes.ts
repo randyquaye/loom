@@ -6,7 +6,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
 import { userForGoogle } from '../db/repos/users'
 import { OrgError, type OrgService } from '../org/service'
 import type { HostProof, TransportProof } from '../../shared/org'
-import { isDesktopCallback } from './callback'
+import { isSignInCallback } from './callback'
 import type { GoogleClient } from './google'
 import { challengeOf, newVerifier } from './pkce'
 import {
@@ -123,8 +123,8 @@ export function signInRoutes(deps: SignInRouteDeps): Hono {
     const codeChallenge = c.req.query('code_challenge') ?? ''
     const desktopState = c.req.query('state') ?? ''
     const nonce = c.req.query('nonce') ?? ''
-    if (!isDesktopCallback(redirectUri))
-      return refuse(c, 'the sign-in can only return to the Loom app on this computer')
+    if (!isSignInCallback(redirectUri))
+      return refuse(c, 'the sign-in can only return to a registered Loom app')
     if (
       !S256_CHALLENGE.test(codeChallenge) ||
       !/^[A-Za-z0-9_-]{32,128}$/.test(nonce) ||

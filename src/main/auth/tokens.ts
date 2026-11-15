@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import { challengeOf, VERIFIER_PATTERN } from './pkce'
+import { isMobileCallback, isSignInCallback } from './callback'
 import type { OrgService } from '../org/service'
 
 // Ported from Sentinel (apps/api/src/routes/oauth/token.ts, revoke.ts and
@@ -94,14 +95,16 @@ export function startSignIn(
   },
   now = Date.now()
 ): string {
+  if (!isSignInCallback(input.redirectUri)) throw new SignInError('Unregistered sign-in callback')
   const code = mint('code')
   const signInId = randomUUID()
   db.transaction(() => {
     db.prepare('UPDATE auth_codes SET identity_token = NULL, nonce = NULL WHERE expires_at <= ?').run(now)
-    db.prepare('INSERT INTO sign_ins (id, user_id, created_at) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO sign_ins (id, user_id, created_at, client_kind) VALUES (?, ?, ?, ?)').run(
       signInId,
       input.userId,
-      now
+      now,
+      isMobileCallback(input.redirectUri) ? 'mobile' : 'desktop'
     )
     db.prepare(
       `INSERT INTO auth_codes (code_hash, sign_in_id, redirect_uri, code_challenge, expires_at, invite_id, identity_token, nonce)

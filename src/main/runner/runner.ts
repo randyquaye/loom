@@ -82,6 +82,7 @@ import { getWorkspaceOrThrow } from '../db/repos/workspaces'
 import { openForwardTarget } from '../runtime/forward'
 import { containerIsRunning } from '../runtime/container'
 import { createAccess } from './access'
+import { createMobileAccess } from './mobile'
 import { createRunnerGit } from './git'
 import { ensureProject, registerRunnerHandlers } from './handlers'
 import { sameSecret, startRunnerServer } from './server'
@@ -360,6 +361,7 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
     (config.devIdentities.some((identity) => identity.userId === userId) ||
       (org?.active(userId) === true && (!isBot(userId) || readBot(db, userId)?.enabled === true)))
   const access = createAccess(db, (userId) => org?.owner(userId) === true)
+  const mobileAccess = createMobileAccess(db)
   const admission = createRunnerAdmission({
     db,
     isAdmitted,
@@ -668,7 +670,7 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
       authorized(token) {
         if (config.operatorToken !== undefined && sameSecret(token, config.operatorToken)) return true
         const caller = signIn === null ? null : whoHolds(signIn, token)
-        return caller !== null && org?.owner(caller.userId) === true
+        return caller !== null && mobileAccess.isDesktop(caller) && org?.owner(caller.userId) === true
       }
     })
   )
@@ -684,9 +686,11 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
     stillAllowed: (caller) =>
       caller.signInId === undefined || (signIn !== null && signInIsLive(signIn, caller.signInId)),
     mayForward: (caller, workspaceId) =>
+      mobileAccess.isDesktop(caller) &&
       isAdmitted(caller.userId) &&
       access.mayControlWorkspace(caller.userId, workspaceId, caller.capabilities),
     pushFor(caller, channel, payload, workspaceId) {
+      if (!mobileAccess.mayReceive(caller, channel)) return undefined
       if (supportsBots(caller.capabilities ?? RUNNER_CAPABILITIES)) return payload
       if (channel.startsWith('bots:') || (workspaceId !== undefined && access.isBotWorkspace(workspaceId)))
         return undefined
@@ -695,6 +699,8 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
         : payload
     },
     async forward(caller, workspaceId, port) {
+      if (!mobileAccess.isDesktop(caller))
+        throw new Error('Port forwarding is not available to mobile sign-ins')
       access.assertMayCall(caller, 'ports:forward', { workspaceId, port })
       const workspace = getWorkspaceOrThrow(db, workspaceId)
       if (
@@ -707,6 +713,7 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
     },
     // The same input checks as the window's calls, then: is this the caller's to touch?
     async dispatch(caller, channel, input) {
+      mobileAccess.assertMayCall(caller, channel)
       const parsed = parseInput(channel, input)
       admission.assertMember(caller.userId)
       access.assertMayCall(caller, channel, parsed)
