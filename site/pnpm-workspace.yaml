@@ -1,0 +1,4 @@
+# Its own workspace root, so the site never joins the app's install.
+allowBuilds:
+  esbuild: true
+  sharp: true

@@ -9,9 +9,8 @@ export const DEMO_ROOT = '/tmp/loombox-demo'
 const REPO = path.join(DEMO_ROOT, 'notes')
 const PROFILE = path.join(DEMO_ROOT, 'profile')
 
-// Fixed identity and no user hooks or signing: the demo must never carry the developer's config.
-const GIT_ENV = {
-  ...process.env,
+/** Fixed identity and no user hooks or signing: the demo, and the app filming it, never read the developer's git config. */
+export const DEMO_GIT_ENV = {
   GIT_CONFIG_GLOBAL: '/dev/null',
   GIT_CONFIG_NOSYSTEM: '1',
   GIT_AUTHOR_NAME: 'LoomBox Demo',
@@ -19,6 +18,7 @@ const GIT_ENV = {
   GIT_COMMITTER_NAME: 'LoomBox Demo',
   GIT_COMMITTER_EMAIL: 'demo@loombox.invalid'
 }
+const GIT_ENV = { ...process.env, ...DEMO_GIT_ENV }
 
 const git = (cwd: string, ...args: string[]): void => {
   execFileSync('git', args, { cwd, env: GIT_ENV, stdio: 'ignore' })
@@ -91,13 +91,19 @@ function buildRepo(slugs: string[]): void {
   for (const slug of slugs) {
     git(REPO, 'worktree', 'add', '-q', '-b', `loombox/${slug}`, path.join(DEMO_ROOT, 'workspaces', slug))
   }
-  // The uncommitted work the Changes view shows: one modified file, one new test.
-  write(path.join(DEMO_ROOT, 'workspaces', 'add-project-search'), {
-    'src/search.ts': SEARCH_BEFORE + SEARCH_ADDITION,
-    'test/search.test.ts': SEARCH_TEST
-  })
-  // Intent-to-add, so the new test lists by name rather than as an untracked folder.
-  git(path.join(DEMO_ROOT, 'workspaces', 'add-project-search'), 'add', '-N', 'test/search.test.ts')
+}
+
+/** The uncommitted work the Changes view shows: one modified file, one new test. */
+export const SEARCH_CHANGE: Record<string, string> = {
+  'src/search.ts': SEARCH_BEFORE + SEARCH_ADDITION,
+  'test/search.test.ts': SEARCH_TEST
+}
+
+/** Writes a file into a worktree as an agent would; Changes then lists it by name, new or not. */
+export function writeChange(worktree: string, file: string, text: string): void {
+  write(worktree, { [file]: text })
+  // Intent-to-add, so a new file lists by name rather than as an untracked folder.
+  git(worktree, 'add', '-N', file)
 }
 
 type Turn = { ask: string; tools: Array<[name: string, args: object, output: string]>; answer: string }
@@ -113,7 +119,7 @@ function turnEvents(id: string, turn: Turn, endAt: number): AgentEvent[] {
   return events
 }
 
-const SEARCH_TURN: Turn = {
+export const SEARCH_TURN: Turn = {
   ask: 'Add project search: match notes by title and body, best matches first. Add tests.',
   tools: [
     ['read_file', { path: 'src/search.ts' }, SEARCH_BEFORE],
@@ -150,11 +156,13 @@ type Session = {
   closed?: true
 }
 const MODELS = { claude: 'claude-opus-5-5', codex: 'gpt-6.1-sol' }
+/** The session the stills show finished and the hero video plays live. */
+export const SEARCH_SESSION_ID = 's-search'
 
 const SESSIONS: Session[] = [
   {
     ws: 'add-project-search',
-    id: 's-search',
+    id: SEARCH_SESSION_ID,
     agent: 'claude',
     title: 'Add project search',
     ago: 40,
@@ -224,11 +232,16 @@ const SESSIONS: Session[] = [
   }
 ]
 
-/** Recreates the demo from scratch and returns the profile directory for LOOM_DATA_DIR. */
-export function buildFixture(): string {
+/**
+ * Recreates the demo from scratch and returns the profile directory for LOOM_DATA_DIR.
+ * `live` leaves the search session and its worktree empty, for the hero recording to fill.
+ */
+export function buildFixture({ live = false } = {}): string {
   rmSync(DEMO_ROOT, { recursive: true, force: true })
   const slugs = [...new Set(SESSIONS.map((s) => s.ws))]
   buildRepo(slugs)
+  const searchWorktree = path.join(DEMO_ROOT, 'workspaces', 'add-project-search')
+  if (!live) for (const [file, text] of Object.entries(SEARCH_CHANGE)) writeChange(searchWorktree, file, text)
   mkdirSync(PROFILE, { recursive: true })
   const db = openDb(path.join(PROFILE, 'loom.db'))
   const now = Date.now()
@@ -260,7 +273,7 @@ export function buildFixture(): string {
     'INSERT INTO events (session_id, seq, ts, type, payload) VALUES (?, ?, ?, ?, ?)'
   )
   for (const s of SESSIONS) {
-    const events = turnEvents(s.id, s.turn, minutesAgo(s.ago))
+    const events = live && s.id === SEARCH_SESSION_ID ? [] : turnEvents(s.id, s.turn, minutesAgo(s.ago))
     const closedAt = s.closed ? minutesAgo(s.ago - 2) : null
     addSession.run(
       s.id,

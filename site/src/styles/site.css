@@ -164,7 +164,8 @@ h2 {
   font-size: 14px;
 }
 
-.shot img {
+.shot img,
+video.shot {
   display: block;
   width: 100%;
   height: auto;
@@ -203,7 +204,135 @@ h2 {
   position: absolute;
   inset: -20% -10% -20% -25%;
   z-index: -1;
+  /* It reaches over the copy; it must not take its clicks. */
+  pointer-events: none;
   background: radial-gradient(closest-side, rgba(255, 255, 255, 0.07), transparent);
+}
+
+/*
+ * "See how it works": copy and window share one cell; the window, on top, takes the full
+ * width (capped so it fits the viewport) and the copy passes behind it. Hero.astro animates
+ * between the two layouts.
+ */
+
+.hero--demo {
+  grid-template-columns: 1fr;
+}
+
+.hero--demo > * {
+  grid-area: 1 / 1;
+}
+
+.hero--demo .hero-copy {
+  width: 540px;
+}
+
+.hero--demo .stage {
+  z-index: 1;
+  justify-self: center;
+  width: min(100%, calc((100svh - 192px) * 1.6));
+}
+
+.demo {
+  position: absolute;
+  inset: 0;
+}
+
+.demo-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--border-strong);
+  opacity: 0;
+}
+
+.demo-progress {
+  position: absolute;
+  inset-inline: 0;
+  bottom: -14px;
+  height: 2px;
+  background: var(--border);
+}
+
+.demo-progress span {
+  display: block;
+  height: 100%;
+  background: var(--muted);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
+/* Same light-on-dark as the primary buttons, as a round icon button in the window's corner. */
+.demo-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--text);
+  color: var(--bg);
+  cursor: pointer;
+}
+
+.demo-close:hover {
+  background: #fff;
+}
+
+.demo-close svg,
+.flight-mark svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+}
+
+/* Close shows once its flying copy lands; the progress bar once the demo plays. */
+.demo:not([data-landed]) .demo-close,
+.demo:not([data-playing]) .demo-progress {
+  visibility: hidden;
+}
+
+/* The copy of Download that is tossed into the corner (Hero.astro, scripts/throw.ts). */
+.flight {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  pointer-events: none;
+}
+
+.flight-skin {
+  position: fixed;
+  margin: 0;
+}
+
+.flight-drop,
+.flight-mark {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 32px;
+  height: 32px;
+}
+
+/* Turned so the corner that sharpens into the tail trails the direction of travel. */
+.flight-body {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: var(--text);
+  rotate: 45deg;
+}
+
+.flight-mark {
+  display: grid;
+  place-items: center;
+  color: var(--bg);
 }
 
 /* Chapters: compact copy beside or above a large capture. */

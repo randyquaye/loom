@@ -1,0 +1,255 @@
+---
+// The hero and its "See how it works" sequence: the copy drifts behind the window while the
+// window takes the full width, Download is tossed into the window's corner to become Close,
+// and the hero loop hands off to the full demo.
+---
+
+<div class="bleed">
+  <section class="wrap hero" data-hero>
+    <div class="hero-copy">
+      <h1 data-split>Your coding agents.<br />One place to build.</h1>
+      <p class="lede" data-split>
+        Run Claude and Codex in separate workspaces, follow each task, and review changes without
+        losing context.
+      </p>
+      <div class="actions">
+        <a class="btn" href="#download" data-launch>Download for macOS</a>
+        <a class="link" href="#workflow" data-open-demo data-fade>See how it works <span aria-hidden="true">→</span></a>
+      </div>
+      <p class="support" data-fade>For Apple Silicon Macs</p>
+    </div>
+
+    <figure class="media stage">
+      <picture class="shot">
+        <source media="(max-width: 720px)" srcset="/shots/s01-m.png" width="1408" height="1758" />
+        <!-- The video's first frame, so swapping in the video does not jump. -->
+        <source
+          media="(prefers-reduced-motion: no-preference)"
+          srcset="/shots/hero-poster.png"
+          width="1920"
+          height="1200"
+        />
+        <img
+          src="/shots/s01.png"
+          width="2816"
+          height="1758"
+          alt="LoomBox with a notes project open: three workspaces in the sidebar, a finished Claude task with its tool calls, and two changed files."
+        />
+      </picture>
+      <template data-hero-video>
+        <video
+          class="shot"
+          src="/shots/hero.mp4"
+          poster="/shots/hero-poster.png"
+          width="1920"
+          height="1200"
+          muted
+          loop
+          playsinline
+          aria-label="A Claude task running in LoomBox: the request is typed and sent, tool calls run, two changed files appear, and the summary streams in."
+        ></video>
+      </template>
+      <template data-demo>
+        <div class="demo">
+          <video
+            class="demo-video"
+            src="/shots/demo.mp4"
+            width="2400"
+            height="1500"
+            muted
+            loop
+            playsinline
+            preload="auto"
+            aria-label="A GitHub project cloned and a task started in a new workspace; other workspaces visited while it runs; its change reviewed with a line comment, and a follow-up prompt sent."
+          ></video>
+          <div class="demo-progress" aria-hidden="true"><span></span></div>
+          <button class="demo-close" type="button" aria-label="Close demo">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+          </button>
+        </div>
+      </template>
+    </figure>
+  </section>
+</div>
+
+<script>
+  import { gsap } from 'gsap'
+  import { Flip } from 'gsap/Flip'
+  import { SplitText } from 'gsap/SplitText'
+  import { centre, createFlight, EASE_IN_OUT, EASE_OUT, land, launch, type Flight } from '../scripts/throw'
+
+  gsap.registerPlugin(Flip, SplitText)
+
+  const hero = document.querySelector<HTMLElement>('[data-hero]')!
+  const stage = hero.querySelector<HTMLElement>('.stage')!
+  const copy = hero.querySelector<HTMLElement>('.hero-copy')!
+  const trigger = hero.querySelector<HTMLAnchorElement>('[data-open-demo]')!
+  const download = hero.querySelector<HTMLElement>('[data-launch]')!
+  // Videos need room and motion; the sequence also needs the two-column hero.
+  const motion = matchMedia('(min-width: 721px) and (prefers-reduced-motion: no-preference)')
+  const twoColumns = matchMedia('(min-width: 1001px) and (prefers-reduced-motion: no-preference)')
+
+  const clone = <T extends Element>(template: string): T =>
+    hero.querySelector<HTMLTemplateElement>(`template[${template}]`)!.content.firstElementChild!.cloneNode(true) as T
+
+  /** Plays an animation forward or back and resolves when it gets there. */
+  const finish = (animation: gsap.core.Animation, back = false) =>
+    new Promise<void>((done) => {
+      animation.eventCallback(back ? 'onReverseComplete' : 'onComplete', () => done())
+      if (back) animation.reverse()
+      else animation.play()
+    })
+
+  /** True once the video can play through its start; false if it fails to load. */
+  const playable = (video: HTMLVideoElement) =>
+    video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA
+      ? Promise.resolve(true)
+      : new Promise<boolean>((done) => {
+          video.addEventListener('canplay', () => done(true), { once: true })
+          video.addEventListener('error', () => done(false), { once: true })
+        })
+
+  type Opened = {
+    split: SplitText
+    demo: HTMLElement
+    close: HTMLElement
+    video: HTMLVideoElement
+    crossfade: gsap.core.Tween
+    flight: Flight
+    frame: number
+  }
+
+  // Clicks and Esc only act from a resting state, so a transition is never interrupted.
+  let mode: 'idle' | 'opening' | 'demo' | 'closing' = 'idle'
+  let opened: Opened | undefined
+  let loop: HTMLVideoElement | undefined
+
+  const fading = () => copy.querySelectorAll('[data-fade]')
+
+  async function open(): Promise<void> {
+    if (mode !== 'idle' || loop === undefined) return
+    mode = 'opening'
+    const demo = clone<HTMLElement>('data-demo')
+    const video = demo.querySelector('video')!
+    const close = demo.querySelector<HTMLElement>('.demo-close')!
+    // Autoplay checks the property; a cloned attribute alone may not set it.
+    video.muted = true
+    close.addEventListener('click', () => void closeDemo())
+    // Loading starts now; the opening covers most of the wait.
+    stage.append(demo)
+    copy.inert = true
+
+    const split = SplitText.create(copy.querySelectorAll('[data-split]'), { type: 'words' })
+    const state = Flip.getState([copy, stage])
+    hero.classList.add('hero--demo')
+    const flight = createFlight()
+    await Promise.all([
+      finish(Flip.from(state, { duration: 1, delay: 0.12, ease: EASE_IN_OUT })),
+      finish(
+        gsap.to(split.words, {
+          x: () => gsap.utils.random(140, 360),
+          y: () => gsap.utils.random(-28, 28),
+          rotate: () => gsap.utils.random(-6, 6),
+          opacity: 0,
+          duration: 0.7,
+          ease: EASE_OUT,
+          stagger: { each: 0.018, from: 'end' }
+        })
+      ),
+      finish(gsap.to(fading(), { x: 120, opacity: 0, duration: 0.45, ease: EASE_OUT })),
+      // Read live, so the drop meets the corner as the window grows.
+      finish(launch(flight, download, () => centre(close.getBoundingClientRect())))
+    ])
+    // The real Close takes over from its flying copy, pixel for pixel.
+    demo.dataset.landed = ''
+    gsap.set([flight.drop, flight.mark], { autoAlpha: 0 })
+    close.focus()
+
+    const crossfade = gsap.to(video, { opacity: 1, duration: 0.3, ease: 'none', paused: true })
+    opened = { split, demo, close, video, crossfade, flight, frame: 0 }
+    mode = 'demo'
+    // A demo that fails to load leaves the hero loop in the wide window; Close still works.
+    if (!(await playable(video)) || mode !== 'demo') return
+    await video.play().catch(() => {})
+    await finish(crossfade)
+    loop.pause()
+    demo.dataset.playing = ''
+    const bar = demo.querySelector<HTMLElement>('.demo-progress span')!
+    const tick = () => {
+      if (opened === undefined) return
+      if (video.duration > 0) bar.style.transform = `scaleX(${video.currentTime / video.duration})`
+      opened.frame = requestAnimationFrame(tick)
+    }
+    tick()
+  }
+
+  /**
+   * Plays the way back forward, never as a rewind: a fresh Flip to the restored layout and a
+   * fresh toss home, so both end exactly where things rest. `instant` skips the animation.
+   */
+  async function closeDemo(instant = false): Promise<void> {
+    if (mode !== 'demo' || opened === undefined || loop === undefined) return
+    mode = 'closing'
+    const { split, demo, close, video, crossfade, flight, frame } = opened
+    cancelAnimationFrame(frame)
+    delete demo.dataset.playing
+    void loop.play().catch(() => {})
+    if (instant) {
+      crossfade.progress(0)
+      hero.classList.remove('hero--demo')
+    } else {
+      const from = centre(close.getBoundingClientRect())
+      delete demo.dataset.landed
+      const state = Flip.getState([copy, stage])
+      hero.classList.remove('hero--demo')
+      // Download is invisible but laid out: where the drop has to land.
+      const home = download.getBoundingClientRect()
+      const words = { x: 0, y: 0, rotate: 0, opacity: 1, duration: 0.7, ease: EASE_OUT, delay: 0.35 }
+      await Promise.all([
+        crossfade.progress() > 0 ? finish(crossfade, true) : Promise.resolve(),
+        finish(Flip.from(state, { duration: 1, ease: EASE_IN_OUT })),
+        finish(gsap.to(split.words, { ...words, stagger: { each: 0.018, from: 'start' } })),
+        finish(gsap.to(fading(), words)),
+        finish(land(flight, from, download, home))
+      ])
+    }
+    video.pause()
+    demo.remove()
+    flight.layer.remove()
+    gsap.set([copy, stage, download, ...fading()], { clearProps: 'all' })
+    split.revert()
+    copy.inert = false
+    opened = undefined
+    mode = 'idle'
+    if (!instant) trigger.focus()
+  }
+
+  if (motion.matches) {
+    loop = clone<HTMLVideoElement>('data-hero-video')
+    loop.muted = true
+    stage.querySelector('picture')!.replaceWith(loop)
+    // Whichever video is showing plays only while the window is mostly in view.
+    new IntersectionObserver(
+      ([entry]) => {
+        const video = opened?.video ?? loop!
+        if (entry!.isIntersecting) void video.play().catch(() => {})
+        else video.pause()
+      },
+      { threshold: 0.5 }
+    ).observe(stage)
+
+    trigger.addEventListener('click', (event) => {
+      if (!twoColumns.matches) return
+      event.preventDefault()
+      void open()
+    })
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') void closeDemo()
+    })
+    matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', (event) => {
+      if (!event.matches) return
+      void closeDemo(true)
+      loop!.pause()
+    })
+  }
+</script>
