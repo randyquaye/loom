@@ -19,7 +19,8 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
     "rebuild": "electron-rebuild -f -w better-sqlite3,node-pty",
     "postinstall": "electron-rebuild -f -w better-sqlite3,node-pty || echo '[loom] native rebuild skipped (toolchain or modules not ready yet)'",
-    "package": "electron-vite build && electron-builder --mac"
+    "package": "electron-vite build && electron-builder --mac",
+    "site:shots": "electron-vite build && playwright test -c site/capture"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.7",

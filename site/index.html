@@ -40,17 +40,15 @@
           </div>
 
           <figure class="media stage">
-            <div
-              class="shot shot--app"
-              role="img"
-              aria-label="Placeholder for screenshot S01: a project with three workspaces and one open conversation"
-              data-shot="S01 · project, three workspaces, one conversation open"
-              data-crop="S05 · mobile crop: workspace list + conversation"
-            >
-              <span>Projects / workspaces</span>
-              <span>Agent conversation</span>
-              <span>Changes</span>
-            </div>
+            <picture class="shot">
+              <source media="(max-width: 720px)" srcset="shots/s01-m.png" width="1408" height="1758" />
+              <img
+                src="shots/s01.png"
+                width="2816"
+                height="1758"
+                alt="LoomBox with a notes project open: three workspaces in the sidebar, a finished Claude task with its tool calls, and two changed files."
+              />
+            </picture>
           </figure>
         </section>
       </div>
@@ -66,16 +64,15 @@
             </p>
           </div>
           <figure class="media">
-            <div
-              class="shot"
-              style="--ratio: 9 / 7"
-              role="img"
-              aria-label="Placeholder for screenshot S02: the workspace list with names, branches and agents"
-              data-shot="S02 · workspace list: names, branches, agent labels"
-              data-crop="S02 · mobile crop: workspace list"
-            >
-              <span>Workspace list</span>
-            </div>
+            <picture class="shot">
+              <source media="(max-width: 720px)" srcset="shots/s02-m.png" width="640" height="800" />
+              <img
+                src="shots/s02.png"
+                width="1268"
+                height="986"
+                alt="The sidebar listing three workspaces in the notes project, beside a task and its tool calls."
+              />
+            </picture>
           </figure>
         </section>
 
@@ -86,17 +83,15 @@
             <p class="lede">Read each change and browse the project files without leaving LoomBox.</p>
           </div>
           <figure class="media">
-            <div
-              class="shot shot--split"
-              style="--ratio: 14 / 9"
-              role="img"
-              aria-label="Placeholder for screenshot S03: the changes view with a small diff"
-              data-shot="S03 · changes view with a small, readable diff"
-              data-crop="S03 · mobile crop: one file's diff"
-            >
-              <span>Changed files</span>
-              <span>Diff</span>
-            </div>
+            <picture class="shot">
+              <source media="(max-width: 720px)" srcset="shots/s03-m.png" width="1408" height="1758" />
+              <img
+                src="shots/s03.png"
+                width="2816"
+                height="1758"
+                alt="A diff of src/search.ts adding a searchNotes function, beside the list of changed files."
+              />
+            </picture>
             <figcaption>One workspace's changes, ready to review.</figcaption>
           </figure>
         </section>
@@ -111,17 +106,15 @@
             </p>
           </div>
           <figure class="media">
-            <div
-              class="shot shot--split"
-              style="--ratio: 3 / 2"
-              role="img"
-              aria-label="Placeholder for screenshot S04: recent sessions beside a saved conversation"
-              data-shot="S04 · recent sessions + a saved conversation"
-              data-crop="S04 · mobile crop: saved conversation"
-            >
-              <span>Recent sessions</span>
-              <span>Conversation</span>
-            </div>
+            <picture class="shot">
+              <source media="(max-width: 720px)" srcset="shots/s04-m.png" width="804" height="1006" />
+              <img
+                src="shots/s04.png"
+                width="1980"
+                height="1320"
+                alt="The Recent chats menu listing two earlier conversations in this workspace."
+              />
+            </picture>
           </figure>
         </section>
 
