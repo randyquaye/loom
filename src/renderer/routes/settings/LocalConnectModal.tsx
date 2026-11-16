@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Modal } from '../../components/ui/Modal'
 import { CopyIcon } from '../../components/ui/icons'
+import type { AuthStatus } from '../../../shared/models'
+import type { GithubStatus } from '../../../shared/ipc-contract'
 
-const COMMANDS = { claude: 'claude', codex: 'codex login', github: 'gh auth login' }
+const COMMANDS = { claude: 'claude auth login', codex: 'codex login', github: 'gh auth login' }
 const NAMES = { claude: 'Claude', codex: 'Codex', github: 'GitHub' }
 
 export function LocalConnectModal({
@@ -17,33 +19,33 @@ export function LocalConnectModal({
   const [copied, setCopied] = useState(false)
   const [checking, setChecking] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [hint, setHint] = useState<string | null>(null)
-  const loadHint = useCallback(async () => {
+  const [status, setStatus] = useState<AuthStatus | GithubStatus | null>(null)
+  const loadStatus = useCallback(async () => {
     if (provider === null) return null
-    const status =
-      provider === 'github'
-        ? (await window.loom.integrations.status()).github
-        : (await window.loom.providers.status())[provider]
-    return 'hint' in status ? status.hint : null
+    return provider === 'github'
+      ? (await window.loom.integrations.status()).github
+      : (await window.loom.providers.status())[provider]
   }, [provider])
   useEffect(() => {
     let live = true
     setCopied(false)
     setError(null)
-    setHint(null)
-    void loadHint()
+    setStatus(null)
+    void loadStatus()
       .then((next) => {
-        if (live) setHint(next)
+        if (live) setStatus(next)
       })
-      .catch(() => {})
+      .catch(() => {
+        if (live) setError('Could not check sign-in. Try again.')
+      })
     return () => {
       live = false
     }
-  }, [loadHint])
+  }, [loadStatus])
   return (
     <Modal
       open={provider !== null}
-      title={`Connect ${provider === null ? '' : NAMES[provider]} on this Mac`}
+      title={`${provider === null ? '' : NAMES[provider]} on this Mac`}
       onClose={onClose}
       footer={
         <>
@@ -57,8 +59,8 @@ export function LocalConnectModal({
               setChecking(true)
               setError(null)
               void onRefresh()
-                .then(loadHint)
-                .then(setHint)
+                .then(loadStatus)
+                .then(setStatus)
                 .catch(() => setError('Could not check. Try again.'))
                 .finally(() => setChecking(false))
             }}
@@ -68,8 +70,15 @@ export function LocalConnectModal({
         </>
       }
     >
-      <p className="settings-note">Run this command in a terminal on your Mac and finish signing in.</p>
-      {hint !== null && <p className="settings-note">{hint}</p>}
+      <p className="settings-note">
+        {status === null
+          ? 'Checking sign-in…'
+          : status.state === 'ready'
+            ? 'Connected. To switch accounts, run this command and sign in again.'
+            : 'Run this command in a terminal on your Mac and finish signing in.'}
+      </p>
+      {status !== null && 'hint' in status && <p className="settings-note">{status.hint}</p>}
+      {status?.state === 'error' && <p role="alert">{status.message}</p>}
       <div className="connection-command">
         <code>{provider === null ? '' : COMMANDS[provider]}</code>
         <button
@@ -95,7 +104,7 @@ export function LocalConnectModal({
       )}
       {provider !== 'github' && (
         <p className="settings-note">
-          Loom can check that the CLI is installed. Your CLI manages its own login.
+          Loom checks your CLI’s sign-in status. Your CLI manages its own login.
         </p>
       )}
       {error && (

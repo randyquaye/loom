@@ -90,6 +90,7 @@ export interface PromptImage {
 
 export type AuthStatus =
   | { state: 'ready' }
+  | { state: 'not-installed'; hint: string }
   | { state: 'needs-login'; hint: string }
   | { state: 'needs-key'; hint: string }
   | { state: 'error'; message: string }
