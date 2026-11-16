@@ -52,7 +52,7 @@ run "private_preview" {
     error_message = "Preview must not activate custom TLS before DNS delegation."
   }
   assert {
-    condition     = length(aws_acm_certificate_validation.site) == 0 && length(aws_iam_role.deploy) == 0
+    condition     = length(aws_acm_certificate_validation.site) == 0 && length(aws_iam_user.deploy) == 0
     error_message = "Initial hosting must not wait for certificate validation or require IAM."
   }
   assert {
@@ -72,24 +72,11 @@ run "private_preview" {
 run "production_publisher" {
   command = apply
   variables {
-    enable_github_deploy     = true
-    github_oidc_provider_arn = "arn:aws:iam::184375957026:oidc-provider/token.actions.githubusercontent.com"
-  }
-  assert {
-    condition     = jsondecode(aws_iam_role.deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:randyquaye@69855400/loom@1449833159:environment:production"
-    error_message = "Only this repository's protected production environment can assume the deployment role."
-  }
-  assert {
-    condition     = jsondecode(aws_iam_role.deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:aud"] == "sts.amazonaws.com"
-    error_message = "OIDC tokens must target AWS STS."
-  }
-  assert {
-    condition     = length(aws_iam_openid_connect_provider.github) == 0
-    error_message = "A shared existing GitHub provider must never be recreated."
+    enable_github_deploy = true
   }
   assert {
     condition = alltrue([
-      for statement in jsondecode(aws_iam_role_policy.deploy[0].policy).Statement :
+      for statement in jsondecode(aws_iam_user_policy.deploy[0].policy).Statement :
       statement.Resource == ["arn:aws:s3:::loombox-public-184375957026-eu-north-1/site/*"]
       if contains(statement.Action, "s3:PutObject") || contains(statement.Action, "s3:GetObject") || contains(statement.Action, "s3:AbortMultipartUpload") || contains(statement.Action, "s3:DeleteObject")
     ])
@@ -97,12 +84,12 @@ run "production_publisher" {
   }
   assert {
     condition = alltrue([
-      for prefix in jsondecode(aws_iam_role_policy.deploy[0].policy).Statement[0].Condition.StringLike["s3:prefix"] : startswith(prefix, "site/")
+      for prefix in jsondecode(aws_iam_user_policy.deploy[0].policy).Statement[0].Condition.StringLike["s3:prefix"] : startswith(prefix, "site/")
     ])
     error_message = "Website synchronization must list only its site prefix."
   }
   assert {
-    condition     = jsondecode(aws_iam_role_policy.deploy[0].policy).Statement[2].Action == ["s3:DeleteObject"] && jsondecode(aws_iam_role_policy.deploy[0].policy).Statement[2].Resource == ["arn:aws:s3:::loombox-public-184375957026-eu-north-1/site/*"]
+    condition     = jsondecode(aws_iam_user_policy.deploy[0].policy).Statement[2].Action == ["s3:DeleteObject"] && jsondecode(aws_iam_user_policy.deploy[0].policy).Statement[2].Resource == ["arn:aws:s3:::loombox-public-184375957026-eu-north-1/site/*"]
     error_message = "Website synchronization must never delete installers or update files."
   }
 }

@@ -27,8 +27,8 @@ output "nameservers" {
   description = "Set all four as custom nameservers at GoDaddy; do not add NS records inside its DNS editor."
   value       = var.manage_dns ? aws_route53_zone.site[0].name_servers : []
 }
-output "github_deploy_role_arn" {
-  value = var.enable_github_deploy ? aws_iam_role.deploy[0].arn : null
+output "github_deploy_user_arn" {
+  value = var.enable_github_deploy ? aws_iam_user.deploy[0].arn : null
 }
 output "desktop_update_url" {
   description = "Use only after the custom domain is activated and signed release assets are published."

@@ -92,59 +92,64 @@ Certificate validation CNAMEs remain in Route53 for automatic renewal.
 
 ## Enable GitHub deployment
 
-The initial default `enable_github_deploy=false` skips all IAM resources. Confirm the
-account's GitHub issuer and specific IAM permissions before enabling deployment.
-The current organization policy denies OIDC inspection; that denial does not establish
-whether role creation or updates are allowed. Do not create another issuer without
-confirming whether this account already has
-`arn:aws:iam::184375957026:oidc-provider/token.actions.githubusercontent.com`.
+The initial default `enable_github_deploy=false` skips deployment IAM resources.
+Enable it to create the dedicated programmatic user `loombox-site-deploy` and its
+`site-assets-only` inline policy. No console login is configured. The user can list
+only `site/`, read/write its objects, abort their multipart uploads, delete obsolete
+`site/*` files, and create/read invalidations for this one CloudFront distribution.
+It cannot read or publish `downloads/` or `updates/mac/` assets, manage IAM, or change
+Terraform, DNS, certificates, or hosting configuration.
 
-Pass an existing issuer ARN through `github_oidc_provider_arn` to reuse it. If the issuer
-is confirmed absent, leave the ARN null to create it when enabling
-`enable_github_deploy=true`. Review/apply those changes while preserving the active
-custom-domain settings. Read `github_deploy_role_arn` for the workflow.
-
-The role trusts the native GitHub OIDC subject
-`repo:randyquaye@69855400/loom@1449833159:environment:production`, with AWS STS as
-audience. The prefix matches this repository's observed immutable owner/repository
-IDs in its GitHub OIDC settings. Environment
-subjects do not include a branch. Configure the repository's `production` environment
-with a deployment branch policy allowing **only `main`** and required reviewer
-**randyquaye** before enabling the deployment workflow. The deployment job must use
-`environment: production`; its workflow also restricts execution to `main`. These
-GitHub protections supply the branch restriction and human approval before AWS tokens
-are issued. Do not replace them with a branch-only trust subject that skips approval.
-
-Configure these variables in the GitHub `production` environment:
-
-| Variable | Terraform output |
-| --- | --- |
-| `LOOM_SITE_DEPLOY_ROLE_ARN` | `github_deploy_role_arn` |
-| `LOOM_SITE_BUCKET` | `bucket` |
-| `LOOM_SITE_DISTRIBUTION_ID` | `distribution_id` |
-
-`.github/workflows/deploy-site.yml` builds on website changes pushed to `main`, or
-on a manual run from `main`. The build job has no AWS credentials. The separate
-deployment job uses `production` and waits for the required review before assuming
-the role. Self-review is allowed so the sole reviewer can approve runs they trigger.
-The workflow synchronizes only `site/`, then invalidates CloudFront's cache.
-
-For later infrastructure plans, retain both activation flags and the existing issuer:
+Review the IAM migration plan while retaining the active custom-domain flag:
 
 ```sh
 terraform -chdir=infra/site plan \
   -var=activate_custom_domain=true \
-  -var=enable_github_deploy=true \
-  -var=github_oidc_provider_arn=arn:aws:iam::184375957026:oidc-provider/token.actions.githubusercontent.com
+  -var=enable_github_deploy=true
 ```
 
-The role can list only `site/`, read/write its objects, abort their multipart uploads,
-delete obsolete `site/*` files, and create/read invalidations for this one CloudFront
-distribution. It cannot publish or remove `downloads/` or `updates/mac/` assets. Use
-`site/` destinations with the trailing slash and the configured AWS Region. There are
-no long-lived AWS keys in GitHub. The role has no Terraform, IAM, DNS, certificate, or
-administrator rights. Website deployment neither publishes a release nor advances
-the signed desktop update feed.
+The transition creates the user and user policy and removes the previous deployment
+role and role policy: two creates, two destroys, with no hosting changes. The external
+canonical GitHub OIDC provider remains unmanaged and must remain untouched. Discard
+old saved plans that still create or trust the previous role. The user ARN is exposed
+through `github_deploy_user_arn`; no keys or secret values appear in Terraform outputs.
+
+Create the user's access-key pair outside Terraform, using the authorized operator
+profile, and transfer it directly into these GitHub `production` environment secrets:
+
+| Secret | Value |
+| --- | --- |
+| `AWS_ACCESS_KEY_ID` | Dedicated user's access-key ID |
+| `AWS_SECRET_ACCESS_KEY` | Its matching secret access key |
+
+Capture the key-creation response in memory and pass each value directly to GitHub's
+secret input. Do not print it, write credential files, add it to source, or store keys
+in Terraform resources/state. The secret is returned only at creation. Terraform uses
+`force_destroy=false`: revoke and delete external access keys explicitly before
+removing the user. During rotation, create a replacement key, update the production
+secrets, verify an approved deployment, then deactivate and delete the previous key.
+IAM permits at most two access-key pairs per user, including inactive keys.
+
+Configure these GitHub `production` environment variables from Terraform outputs:
+
+| Variable | Terraform output |
+| --- | --- |
+| `LOOM_SITE_BUCKET` | `bucket` |
+| `LOOM_SITE_DISTRIBUTION_ID` | `distribution_id` |
+
+Keep the `production` environment's deployment branch policy restricted to **only
+`main`**, with required reviewer **randyquaye**. The deployment job must use
+`environment: production`, and the workflow must restrict execution to `main`.
+Self-review is allowed so the sole reviewer can approve runs they trigger. The build
+job has no AWS credentials; only the approved deployment job receives these secrets.
+IAM limits what the keys can access; GitHub environment protections control their
+release to workflow jobs.
+
+`.github/workflows/deploy-site.yml` builds on website changes pushed to `main`, or a
+manual run from `main`. It synchronizes only `site/`, then invalidates CloudFront's
+cache. Use the `site/` destination with its trailing slash and the configured Region.
+Website deployment neither publishes a release nor advances the signed desktop feed.
+Retain `activate_custom_domain=true` and `enable_github_deploy=true` in later plans.
 
 ## Desktop files and caching
 
@@ -167,7 +172,8 @@ installer upload is part of website provisioning.
 ## Local checks
 
 `terraform validate` checks the pinned provider schema. `terraform test` uses mock AWS
-providers to exercise private hosting, initial DNS/IAM independence, production-environment role
-trust, prefix-limited deletion, and feed revalidation. These tests make no AWS calls.
+providers to exercise private hosting, initial DNS/IAM independence, deployment-user
+prefix permissions, installer isolation, and feed revalidation. These tests make no
+AWS calls.
 Live acceptance still needs a reviewed apply, public CloudFront and domain HTTPS,
 private S3 refusal, cache/header checks, and eventual signed-update installation.

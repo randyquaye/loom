@@ -49,9 +49,7 @@ jobs:
     environment: production
     permissions:
       contents: read
-      id-token: write
     env:
-      LOOM_SITE_DEPLOY_ROLE_ARN: ${{ vars.LOOM_SITE_DEPLOY_ROLE_ARN }}
       LOOM_SITE_BUCKET: ${{ vars.LOOM_SITE_BUCKET }}
       LOOM_SITE_DISTRIBUTION_ID: ${{ vars.LOOM_SITE_DISTRIBUTION_ID }}
     steps:
@@ -62,17 +60,16 @@ jobs:
       - name: Validate deployment settings
         run: |
           test "$GITHUB_REF" = refs/heads/main
-          [[ "$LOOM_SITE_DEPLOY_ROLE_ARN" =~ ^arn:aws:iam::184375957026:role/[A-Za-z0-9+=,.@_/-]+$ ]]
           [[ "$LOOM_SITE_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]
           [[ "$LOOM_SITE_DISTRIBUTION_ID" =~ ^E[A-Z0-9]+$ ]]
           test -s "$RUNNER_TEMP/website/index.html"
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ env.LOOM_SITE_DEPLOY_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-north-1
           allowed-account-ids: '184375957026'
-          role-session-name: site-${{ github.run_id }}
           unset-current-credentials: true
           translate-env-variables: false
       - name: Upload website

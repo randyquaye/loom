@@ -36,17 +36,7 @@ variable "activate_custom_domain" {
 }
 
 variable "enable_github_deploy" {
-  description = "Create the protected production-environment website deployment role."
+  description = "Create the limited website deployment IAM user."
   type        = bool
   default     = false
-}
-
-variable "github_oidc_provider_arn" {
-  description = "Existing GitHub OIDC provider in this account; null creates one when deployment IAM is enabled."
-  type        = string
-  default     = null
-  validation {
-    condition     = var.github_oidc_provider_arn == null || var.github_oidc_provider_arn == "arn:aws:iam::${var.expected_account_id}:oidc-provider/token.actions.githubusercontent.com"
-    error_message = "Use this account's token.actions.githubusercontent.com provider ARN."
-  }
 }
