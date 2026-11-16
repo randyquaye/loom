@@ -1,4 +1,6 @@
 ---
+import { DOWNLOAD_URL } from '../download'
+
 // The hero and its "See how it works" sequence: the copy drifts behind the window while the
 // window takes the full width, Download is tossed into the window's corner to become Close,
 // and the hero loop hands off to the full demo.
@@ -13,7 +15,7 @@
         losing context.
       </p>
       <div class="actions">
-        <a class="btn" href="#download" data-launch>Download for macOS</a>
+        <a class="btn" href={DOWNLOAD_URL} data-launch>Download for macOS</a>
         <a class="link" href="#workflow" data-open-demo data-fade>See how it works <span aria-hidden="true">→</span></a>
       </div>
       <p class="support" data-fade>For Apple Silicon Macs</p>

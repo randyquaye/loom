@@ -1,5 +1,6 @@
 ---
 import Hero from '../components/Hero.astro'
+import { DOWNLOAD_URL, DOWNLOAD_VERSION } from '../download'
 import Base from '../layouts/Base.astro'
 ---
 
@@ -77,7 +78,7 @@ import Base from '../layouts/Base.astro'
       <dl>
         <div class="faq-row">
           <dt>Which Macs does LoomBox run on?</dt>
-          <dd>Apple Silicon Macs. The minimum macOS version is still to be confirmed.</dd>
+          <dd>Apple Silicon Macs.</dd>
         </div>
         <div class="faq-row">
           <dt>Which agents can I use?</dt>
@@ -108,9 +109,9 @@ import Base from '../layouts/Base.astro'
       <p class="eyebrow">06</p>
       <h2 id="ch-download">Bring your next task into LoomBox.</h2>
       <div class="actions">
-        <a class="btn" href="#download">Download for macOS</a>
+        <a class="btn" href={DOWNLOAD_URL}>Download for macOS</a>
       </div>
-      <p class="support">v0.1.0 · Apple Silicon · macOS version to be confirmed</p>
+      <p class="support">v{DOWNLOAD_VERSION} · Apple Silicon · Signed and notarized</p>
     </section>
   </div>
 </Base>

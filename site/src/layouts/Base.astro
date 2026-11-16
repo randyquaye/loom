@@ -1,5 +1,6 @@
 ---
 import Brand from '../components/Brand.astro'
+import { DOWNLOAD_URL } from '../download'
 import '../styles/site.css'
 
 interface Props {
@@ -21,7 +22,7 @@ const { title } = Astro.props
         <Brand />
         <nav class="nav-links" aria-label="Main">
           <a href="#questions">FAQs</a>
-          <a class="btn btn-sm" href="#download">Download</a>
+          <a class="btn btn-sm" href={DOWNLOAD_URL}>Download</a>
         </nav>
       </div>
     </header>
