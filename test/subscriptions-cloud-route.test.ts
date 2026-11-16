@@ -64,3 +64,12 @@ describe('subscription desktop routing', () => {
     expect(harness.local).not.toHaveBeenCalled()
   })
 })
+
+it('keeps desktop updates local while connected to a company runner', async () => {
+  harness.call.mockClear()
+  for (const channel of ['updates:status', 'updates:check', 'updates:download', 'updates:install']) {
+    await route.route(channel, undefined)
+  }
+  expect(harness.local).toHaveBeenCalledTimes(4)
+  expect(harness.call).not.toHaveBeenCalled()
+})

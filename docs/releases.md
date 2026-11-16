@@ -7,9 +7,9 @@ host. The AWS operator chooses when to deploy each runner release.
 ## Configure release publishing once
 
 Enable GitHub Actions and **immutable releases** in the Loom repository's settings.
-Release verification refuses editable releases. Grant the designated maintainers access
-to run the workflows; company operators also need read access to this private repository's
-releases. Neither workflow needs AWS credentials or deploys infrastructure.
+Release verification refuses editable releases. Sources and release assets are public;
+only designated maintainers can run the release workflows. Neither release workflow
+needs AWS credentials or deploys infrastructure.
 Fine-grained GitHub tokens also need **Attestations: read** for release verification.
 
 The desktop workflow defaults to an unsigned team-pilot build. It needs no Apple
@@ -25,27 +25,76 @@ these repository Actions secrets:
 | APPLE_APP_SPECIFIC_PASSWORD | That account's app-specific password                       |
 | APPLE_TEAM_ID               | Apple Developer team ID                                    |
 
-With signing enabled, the strict release config requires signing and notarization.
-Missing credentials or failed verification stop that build; it never switches to unsigned.
-The unchecked flag selects an explicit unsigned override. Both modes produce Apple
-Silicon DMG and ZIP assets with the same naming scheme.
+Set the repository Actions variable `LOOM_DESKTOP_UPDATE_URL` to the real HTTPS
+website directory that will serve desktop installers and update files. Use a directory
+URL without credentials, query, or fragment. There is no default host. Signed builds
+refuse a missing URL; unsigned builds embed no update feed.
+
+With signing enabled, `electron-builder.signed.mjs` extends the strict signing config,
+embeds the website URL and Apple team, and notarizes the app before creating its ZIP.
+The workflow then notarizes and staples the DMG. It verifies the app and installer
+signatures, expected Apple team, stapled tickets, and Gatekeeper acceptance. Missing
+credentials or failed verification stop that build; it never switches to unsigned.
+Both modes produce Apple Silicon DMG and ZIP assets with the same naming scheme.
+
+## Validate without publishing
+
+**Publish an immutable GitHub release after validation** defaults to **unchecked**.
+Keep it unchecked to run source checks, build, sign and notarize, and preserve the
+resulting artifacts without creating a Git tag or release. Nothing uploads to the
+website. Use `main`, a new unused version, and enable **Code sign and notarize** to
+exercise the signed path once credentials and the real feed URL are configured.
+This setup does not itself authorize publishing a release.
+
+## Resume Apple processing
+
+Each Apple submission is recorded before waiting. A recovery archive preserves the
+exact signed app, submitted ZIP or DMG, checksums, source SHA, version, Apple team,
+feed URL, and submission ID. Recovery and Apple diagnostic workflow artifacts are
+retained for 30 days, including when notarization fails. Download them before expiry
+when a submission remains pending.
+
+When Apple processing outlasts the 20-minute wait, rerun **Release desktop** with the
+same version, signing enabled, and the previous run's numeric ID in
+**notarization_run_id**. Keep publishing unchecked during validation.
+Recovery verifies the original run came from this repository's `main` desktop workflow,
+then reads the source SHA from its preserved checkpoint. That SHA must equal or precede
+the verified run's `main` commit before checkout, so repeated recovery retains the
+original source even when later recovery runs were dispatched from newer `main`
+commits. It verifies the checkpoint identity and reconstructs the app from its hash-verified submitted ZIP before
+contacting Apple. It waits on the saved submission ID and never resubmits it. The
+accepted Apple log must match the submitted bytes before stapling. If the app submission finishes, the
+workflow packages that stapled app and submits the resulting DMG once. If the DMG
+submission was already pending, it reuses the exact DMG and ZIP without rebuilding.
+A changed checkpoint source, version, platform, team, feed URL, or submitted file
+refuses recovery.
+
+If submission succeeded but its response was lost before an ID was saved, recovery
+stops. Inspect that team's `xcrun notarytool history` and the preserved input rather
+than starting another upload. Resolve the existing submission manually; the workflow
+does not guess an ID. An invalid submission needs diagnosis and corrected artifacts
+under a new version, rather than repeated submissions of the same rejected bytes.
 
 ## Publish a desktop
 
 In Actions, run **Release desktop** on `main`, supplying a new semantic `version`, such
 as `0.1.0`. Leave **Code sign and notarize** unchecked for the initial unsigned release.
-Enable it when Apple credentials are configured. The workflow validates the source,
-builds in the selected mode, and publishes tag `desktop-v0.1.0` with:
+Enable it when Apple credentials and the website feed are configured. Explicitly enable
+**Publish an immutable GitHub release after validation** only when publication is intended.
+The workflow validates the source, builds in the selected mode, and publishes tag
+`desktop-v0.1.0` with:
 
 - `Loom-0.1.0-arm64.dmg` and `.zip`.
 - `desktop.json`: version, source commit, protocol, explicit `signed` or `unsigned`
   signing status, asset sizes and SHA-256 checksums.
+- Signed website builds also include `latest-mac.yml` and the generated ZIP `.blockmap`,
+  plus an `updates` URL and Apple team in `desktop.json`.
 
 All assets are attached to a draft before publication. Existing tags/releases cannot
 be overwritten. A failed draft remains for diagnosis. Use a fresh version for corrected
-published artifacts. Publishing a release does not configure automatic desktop updates;
-members install the DMG manually. Unsigned releases are labelled in their notes and
-manifest. For a trusted team build, use Finder's Open or the specific Privacy & Security
+published artifacts. GitHub publication does not upload or advance the website feed.
+Unsigned releases are labelled in their notes and manifest and do not support automatic
+updates. For a trusted team build, use Finder's Open or the specific Privacy & Security
 approval if macOS blocks it. Do not disable Gatekeeper globally. A later signed build
 uses a new version; published assets remain immutable.
 
@@ -55,6 +104,34 @@ If the release has never been published, a maintainer can explicitly remove that
 draft and its tag, then rerun. The workflows never delete them automatically. If it was
 published at any point, or that is uncertain, use a new version. Fix repository
 immutability settings before retrying an attempt that returned an editable release to draft.
+
+## Host the signed update feed
+
+The website provider and deployment command must be configured separately. Before
+advertising a signed build, verify its immutable release and every downloaded asset
+against `desktop.json`. Copy only its named DMG, ZIP, ZIP `.blockmap`, `desktop.json`,
+and `latest-mac.yml` into the configured HTTPS directory. Publish versioned installer
+and blockmap files first, verify their public checksums, then atomically replace
+`latest-mac.yml` last. Preserve older versioned files for installed clients and
+in-progress downloads. Serve the feed with revalidation or a short cache lifetime;
+versioned installers can use immutable caching. Support ordinary HTTPS downloads and
+HTTP range requests. Do not copy recovery archives, Apple diagnostics, credentials,
+or workflow working directories to the website.
+
+`latest-mac.yml` uses JSON syntax, which is valid YAML. It binds the exact final ZIP's
+SHA-512 checksum and size. The ZIP contains the stapled app and is the updater payload;
+the separately notarized DMG remains the manual installer. The release manifest also
+records SHA-256 and size for every published update artifact. The publish helper
+refuses a feed that points at different ZIP bytes, an unsigned feed, unexpected asset
+names, or changed release source. Existing immutable desktop releases without update
+metadata remain valid for runner bundling.
+
+A signed installed desktop uses its embedded HTTPS feed and Apple signing identity;
+Settings > Updates offers checks and download, with a separate restart action after
+download. Updating the desktop never updates the company's runner. The unsigned
+`desktop-v0.1.0` pilot has no updater: install a signed version manually once to enter
+the signed update channel. Website publishing and a clean-machine update from one
+signed version to another remain required live acceptance checks.
 
 ## Publish a runner
 
@@ -167,16 +244,18 @@ no speculative adapter framework or automatic fallback between incompatible form
 
 Members may install a newer desktop independently. `/download` offers the desktop
 selected for the deployed runner; it does not force members onto that release number.
-There is no automatic desktop updater or automatic host upgrade. Operators schedule
-runner updates to enable new features or apply fixes, following release notes and
+Signed desktops can update independently through their configured website feed; host
+upgrades remain an operator action. Operators schedule runner updates to enable new
+features or apply fixes, following release notes and
 `docs/operator-runbook.md`. Pause alarm actions, drain active work, deploy the pinned
 runner release, verify readiness and live acceptance, then resume alarms. Use `--prepare`
 only for intended host maintenance. Runner database downgrades remain unsupported.
 
 ## First-release acceptance
 
-The workflows must be merged into `main`, configured, and actually run before a release
-exists. For the unsigned mode, verify immutable publication and clean-machine
+Signed release/update changes must be merged into `main`, configured, and validated
+without publication before a new release is approved. For the unsigned mode, verify
+immutable publication and clean-machine
 installation with its explicit macOS approval. Signing and notarization acceptance
 apply when the signing flag is enabled. A local code check proves none of those live
 results or AWS activation. Exercise deployment on a disposable stack, then complete

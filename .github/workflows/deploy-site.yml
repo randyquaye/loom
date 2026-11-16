@@ -1,0 +1,84 @@
+name: Deploy website
+on:
+  push:
+    branches: [main]
+    paths:
+      - site/**
+      - .github/workflows/deploy-site.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: site-production
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install website dependencies
+        working-directory: site
+        run: |
+          npm install --global pnpm@11.7.0
+          pnpm install --frozen-lockfile
+      - name: Build website
+        working-directory: site
+        env:
+          ASTRO_TELEMETRY_DISABLED: '1'
+        run: ./node_modules/.bin/astro build
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: website
+          path: site/dist/
+          if-no-files-found: error
+          retention-days: 7
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      LOOM_SITE_DEPLOY_ROLE_ARN: ${{ vars.LOOM_SITE_DEPLOY_ROLE_ARN }}
+      LOOM_SITE_BUCKET: ${{ vars.LOOM_SITE_BUCKET }}
+      LOOM_SITE_DISTRIBUTION_ID: ${{ vars.LOOM_SITE_DISTRIBUTION_ID }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: website
+          path: ${{ runner.temp }}/website
+      - name: Validate deployment settings
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          [[ "$LOOM_SITE_DEPLOY_ROLE_ARN" =~ ^arn:aws:iam::184375957026:role/[A-Za-z0-9+=,.@_/-]+$ ]]
+          [[ "$LOOM_SITE_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]
+          [[ "$LOOM_SITE_DISTRIBUTION_ID" =~ ^E[A-Z0-9]+$ ]]
+          test -s "$RUNNER_TEMP/website/index.html"
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ env.LOOM_SITE_DEPLOY_ROLE_ARN }}
+          aws-region: eu-north-1
+          allowed-account-ids: '184375957026'
+          role-session-name: site-${{ github.run_id }}
+          unset-current-credentials: true
+          translate-env-variables: false
+      - name: Upload website
+        run: |
+          DESTINATION="s3://$LOOM_SITE_BUCKET/site/"
+          aws s3 sync "$RUNNER_TEMP/website/" "$DESTINATION" --delete --exclude '*.html' --cache-control 'public, max-age=300'
+          aws s3 sync "$RUNNER_TEMP/website/" "$DESTINATION" --delete --exclude '*' --include '*.html' --cache-control 'no-cache'
+      - name: Invalidate website cache
+        run: aws cloudfront create-invalidation --distribution-id "$LOOM_SITE_DISTRIBUTION_ID" --paths '/*'

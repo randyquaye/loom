@@ -27,6 +27,9 @@ import {
   setTitleSink
 } from './sessions/service'
 import { openExternalSafe } from './shell/open'
+import { openDesktopUpdater } from './updates'
+import type { DesktopUpdater } from './updates/service'
+import { UPDATE_STATUS_CHANNEL } from '../shared/desktop-updates'
 import { setWorkspaceStateSink } from './workspace/bootstrap'
 import {
   SESSION_EVENT_CHANNEL,
@@ -43,6 +46,8 @@ app.enableSandbox()
 let mainWindow: BrowserWindow | null = null
 let cloud: CloudRoute | null = null
 let account: CloudAccount | null = null
+let updates: DesktopUpdater | null = null
+let updateTimer: ReturnType<typeof setInterval> | null = null
 
 function toWindow(channel: string, payload: unknown): void {
   if (mainWindow !== null && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
@@ -182,7 +187,8 @@ if (!app.requestSingleInstanceLock()) {
           console.warn(`[loom] General instructions need recovery for ${project.name}:`, error)
         )
       }
-      registerIpc({ db, secrets, dataRoot: dataDir })
+      updates = await openDesktopUpdater((status) => toWindow(UPDATE_STATUS_CHANNEL, status))
+      registerIpc({ db, secrets, dataRoot: dataDir, updates })
       registerBackends(secrets)
       wireLiveUpdates()
       await openCloud(db, dataDir, secrets)
@@ -191,6 +197,14 @@ if (!app.requestSingleInstanceLock()) {
         if (missing.length > 0) console.warn('[loom] ipc channels without handlers:', missing)
       }
       createWindow()
+      if (updates.status().state !== 'unavailable') {
+        const check = () => {
+          void updates?.check().catch(() => {})
+        }
+        check()
+        updateTimer = setInterval(check, 6 * 60 * 60 * 1000)
+        updateTimer.unref()
+      }
       app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow()
       })
@@ -205,6 +219,8 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.on('will-quit', () => {
+    if (updateTimer !== null) clearInterval(updateTimer)
+    updates?.close()
     closeAllSessions()
     destroyAllTerminals()
     // Only the connection ends: what runs on the runner keeps running.

@@ -67,3 +67,11 @@
 .notification-title .settings-state {
   font-weight: 400;
 }
+
+.update-progress {
+  display: block;
+  width: 100%;
+  height: 6px;
+  margin-bottom: var(--s-3);
+  accent-color: var(--accent-2);
+}

@@ -3,6 +3,7 @@ import type { ZodType } from 'zod'
 import { ipcSchemas, type IpcContract, type SecretPresence } from '../../shared/ipc-contract'
 import type { SecretId } from '../../shared/models'
 import { maskSecret, type SecretStore } from '../secrets'
+import type { DesktopUpdater } from '../updates/service'
 
 /**
  * Handlers register here without knowing what will call them. The desktop exposes the
@@ -13,6 +14,7 @@ export interface IpcDeps {
   db: Database.Database
   secrets: SecretStore
   dataRoot: string
+  updates?: DesktopUpdater
 }
 
 /**

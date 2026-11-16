@@ -5,6 +5,7 @@ import { createReadStream } from 'node:fs'
 import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { desktopUpdateSettings } from './desktop-update-config.mjs'
 
 function run(command, args) {
   return execFileSync(command, args, {
@@ -60,10 +61,8 @@ async function source(kind, version) {
   )
   const commit = run('git', ['rev-parse', 'HEAD']).trim()
   requireValue(/^[a-f0-9]{40}$/.test(commit), 'Expected full source commit SHA')
-  requireValue(
-    !process.env.GITHUB_SHA || process.env.GITHUB_SHA === commit,
-    'Checked-out source differs from workflow SHA'
-  )
+  const expectedSource = process.env.RELEASE_SOURCE_SHA || process.env.GITHUB_SHA
+  requireValue(!expectedSource || expectedSource === commit, 'Checked-out source differs from workflow SHA')
   const text = await readFile('src/shared/runner-contract.ts', 'utf8')
   const match = text.match(/^export const RUNNER_PROTOCOL = (\d+)\s*$/m)
   requireValue(match !== null && Number.isSafeInteger(Number(match[1])), 'Cannot read RUNNER_PROTOCOL')
@@ -77,23 +76,54 @@ async function inspect(kind, version) {
   absent(`releases/tags/${tag}`)
   return { ...info, tag }
 }
-async function digest(file) {
+async function digest(file, algorithm = 'sha256', encoding = 'hex') {
   const info = await lstat(file)
   requireValue(
     info.isFile() && info.size > 0 && Number.isSafeInteger(info.size),
     `Expected a nonempty regular file: ${file}`
   )
-  const hash = createHash('sha256')
+  const hash = createHash(algorithm)
   for await (const chunk of createReadStream(file)) hash.update(chunk)
-  return { name: path.basename(file), sha256: hash.digest('hex'), size: info.size }
+  return { name: path.basename(file), [algorithm]: hash.digest(encoding), size: info.size }
 }
 function names(kind, version) {
   return kind === 'desktop'
     ? [`Loom-${version}-arm64.dmg`, `Loom-${version}-arm64.zip`]
     : [`loom-runner-${version}.tgz`, `loom-operator-${version}.tgz`]
 }
+function assetNames(manifest) {
+  const result = names(manifest.kind, manifest.version)
+  if (manifest.kind === 'desktop' && manifest.updates)
+    result.push(`Loom-${manifest.version}-arm64.zip.blockmap`, 'latest-mac.yml')
+  return result
+}
+async function checkFeed(manifest, directory) {
+  if (!manifest.updates) {
+    requireValue(
+      !(await readdir(directory)).includes('latest-mac.yml'),
+      'Desktop feed requires signed update metadata'
+    )
+    return
+  }
+  requireValue(manifest.signing === 'signed', 'Unsigned desktop cannot advertise updates')
+  desktopUpdateSettings(manifest.updates.url, manifest.updates.teamId)
+  const zip = names('desktop', manifest.version)[1]
+  const actual = await digest(path.join(directory, zip), 'sha512', 'base64')
+  const feed = JSON.parse(await readFile(path.join(directory, 'latest-mac.yml'), 'utf8'))
+  requireValue(
+    feed.version === manifest.version &&
+      feed.path === zip &&
+      feed.sha512 === actual.sha512 &&
+      Array.isArray(feed.files) &&
+      feed.files.length === 1 &&
+      feed.files[0].url === zip &&
+      feed.files[0].sha512 === actual.sha512 &&
+      feed.files[0].size === actual.size,
+    'Update feed does not match the final desktop ZIP'
+  )
+}
 async function checkAssets(manifest, directory) {
-  const expected = names(manifest.kind, manifest.version)
+  const expected = assetNames(manifest)
   requireValue(
     Array.isArray(manifest.assets) && manifest.assets.length === expected.length,
     'Unexpected release assets'
@@ -107,6 +137,7 @@ async function checkAssets(manifest, directory) {
       `Checksum or size mismatch: ${name}`
     )
   }
+  if (manifest.kind === 'desktop') await checkFeed(manifest, directory)
 }
 function checkManifest(manifest, kind, version) {
   requireValue(
@@ -118,26 +149,52 @@ function checkManifest(manifest, kind, version) {
       /^[a-f0-9]{40}$/.test(manifest.commit),
     'Invalid release manifest identity'
   )
-  if (kind === 'desktop') signingOf(manifest.signing)
+  if (kind === 'desktop') {
+    signingOf(manifest.signing)
+    if (manifest.updates) {
+      requireValue(manifest.signing === 'signed', 'Unsigned desktop cannot advertise updates')
+      desktopUpdateSettings(manifest.updates.url, manifest.updates.teamId)
+    }
+  }
 }
 function signingOf(value) {
   requireValue(value === 'signed' || value === 'unsigned', 'Signing must be signed or unsigned')
   return value
 }
 async function saveManifest(info, directory, extra = {}) {
-  const manifest = {
-    ...info,
-    ...extra,
-    assets: await Promise.all(
-      names(info.kind, info.version).map((name) => digest(path.join(directory, name)))
-    )
-  }
+  const manifest = { ...info, ...extra }
+  manifest.assets = await Promise.all(assetNames(manifest).map((name) => digest(path.join(directory, name))))
   await writeFile(path.join(directory, `${info.kind}.json`), `${JSON.stringify(manifest, null, 2)}\n`)
   return manifest
 }
 async function desktop(version, directory, signing) {
   signingOf(signing)
-  return saveManifest(await source('desktop', version), directory, { signing })
+  const info = await source('desktop', version)
+  const updates =
+    signing === 'signed' && process.env.LOOM_DESKTOP_UPDATE_URL
+      ? desktopUpdateSettings(process.env.LOOM_DESKTOP_UPDATE_URL, process.env.APPLE_TEAM_ID)
+      : undefined
+  if (updates) {
+    const zip = names('desktop', version)[1]
+    const actual = await digest(path.join(directory, zip), 'sha512', 'base64')
+    // JSON is valid YAML and keeps final-byte verification dependency-free in the publish job.
+    await writeFile(
+      path.join(directory, 'latest-mac.yml'),
+      `${JSON.stringify(
+        {
+          version,
+          files: [{ url: zip, sha512: actual.sha512, size: actual.size }],
+          path: zip,
+          sha512: actual.sha512,
+          releaseDate: new Date().toISOString()
+        },
+        null,
+        2
+      )}\n`
+    )
+  }
+  await checkFeed({ ...info, signing, updates }, directory)
+  return saveManifest(info, directory, { signing, ...(updates ? { updates } : {}) })
 }
 async function verifiedDesktop(tag, directory) {
   requireValue(/^desktop-v/.test(tag), 'Select an existing desktop-vVERSION release')
@@ -159,7 +216,7 @@ async function verifiedDesktop(tag, directory) {
     api(`commits/${tag}`).sha === manifest.commit,
     'Desktop manifest does not match its source tag'
   )
-  for (const name of names('desktop', version)) {
+  for (const name of assetNames(manifest)) {
     gh(['release', 'download', tag, '--pattern', name, '--dir', directory])
     gh(['release', 'verify-asset', tag, path.join(directory, name)])
   }
@@ -322,7 +379,7 @@ async function publish(kind, version, directory) {
     'upload',
     tag,
     path.join(directory, `${kind}.json`),
-    ...names(kind, version).map((name) => path.join(directory, name))
+    ...assetNames(manifest).map((name) => path.join(directory, name))
   ])
   requireValue(api(`commits/${tag}`).sha === info.commit, 'Published tag differs from checked source')
   gh(['release', 'edit', tag, '--draft=false', '--latest=false'])
@@ -349,7 +406,7 @@ async function publish(kind, version, directory) {
       await new Promise((resolve) => setTimeout(resolve, 10_000))
     }
   }
-  for (const name of [`${kind}.json`, ...names(kind, version)])
+  for (const name of [`${kind}.json`, ...assetNames(manifest)])
     gh(['release', 'verify-asset', tag, path.join(directory, name)])
   return { tag, commit: info.commit }
 }

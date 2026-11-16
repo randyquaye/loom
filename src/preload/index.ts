@@ -24,6 +24,7 @@ import {
   type WorkspacePowerPush
 } from '../shared/ipc-contract'
 import { NOTIFICATION_CHANNEL, type Notification } from '../shared/notifications'
+import { UPDATE_STATUS_CHANNEL, type DesktopUpdateStatus } from '../shared/desktop-updates'
 
 function invoke<K extends keyof IpcContract>(
   channel: K,
@@ -42,6 +43,13 @@ function subscribe<T>(channel: string, cb: (push: T) => void): () => void {
 
 const api: LoomApi = {
   ping: () => invoke('app:ping', undefined),
+  updates: {
+    status: () => invoke('updates:status', undefined),
+    check: () => invoke('updates:check', undefined),
+    download: () => invoke('updates:download', undefined),
+    install: () => invoke('updates:install', undefined)
+  },
+  onUpdateStatus: (cb) => subscribe<DesktopUpdateStatus>(UPDATE_STATUS_CHANNEL, cb),
   bots: {
     list: () => invoke('bots:list', undefined),
     create: (slug, config) => invoke('bots:create', { slug, config }),

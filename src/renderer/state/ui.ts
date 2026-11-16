@@ -6,6 +6,7 @@ import { useSessions } from './sessions'
 export type SettingsPage =
   | 'preferences'
   | 'shortcuts'
+  | 'updates'
   | 'integrations'
   | 'cloud'
   | 'org-overview'

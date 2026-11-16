@@ -9,6 +9,7 @@ import { IntegrationsPage } from './settings/IntegrationsPage'
 import { ProjectPage } from './settings/ProjectPage'
 import { PreferencesPage } from './settings/PreferencesPage'
 import { ShortcutsPage } from './settings/ShortcutsPage'
+import { UpdatesPage } from './settings/UpdatesPage'
 import { OrgOverviewPage } from './settings/OrgOverviewPage'
 import { OrgMembersPage } from './settings/OrgMembersPage'
 import { OrgAdminLogPage } from './settings/OrgAdminLogPage'
@@ -23,6 +24,7 @@ const PAGE_HEAD: Record<
 > = {
   preferences: { title: 'Preferences', description: 'Make Loom work the way you prefer.' },
   shortcuts: { title: 'Shortcuts', description: 'Keyboard shortcuts available across Loom.' },
+  updates: { title: 'Updates', description: 'Keep this Mac’s Loom app up to date.' },
   integrations: { title: 'Integrations', description: 'Connect GitHub and configure services used by Loom.' },
   cloud: { title: 'Cloud', description: 'The runner your cloud workspaces live on, and your sign-in to it.' },
   'org-overview': { title: 'Organization', description: 'Your organization, membership, and cloud host.' },
@@ -82,6 +84,7 @@ export function Settings() {
         {page === 'preferences' && <PreferencesPage />}
         {projectId !== null && <ProjectPage projectId={projectId} />}
         {page === 'shortcuts' && <ShortcutsPage />}
+        {page === 'updates' && <UpdatesPage />}
         {page === 'integrations' && <IntegrationsPage />}
         {page === 'cloud' && <CloudPage />}
         {orgPage && organization === null && (

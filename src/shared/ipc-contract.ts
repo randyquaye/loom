@@ -4,6 +4,7 @@ import { MAX_ATTACHMENTS, MAX_INSTANCE_INSTRUCTION_CHARS, MAX_PROJECT_INSTRUCTIO
 import { CLAUDE_MODES, CODEX_MODES, EFFORTS } from './models'
 import type { AgentModes, AuthStatus, BackendId, Effort, ModelDescriptor } from './models'
 import type { Notification } from './notifications'
+import type { DesktopUpdateStatus } from './desktop-updates'
 import type { OrgAdminEvent, OrgInvite, OrgMember, OrgOverview, OrgRole } from './org'
 import {
   botAccessSchema,
@@ -516,6 +517,11 @@ export interface IpcContract {
   /** Answers with the notification as the answer left it. */
   'notifications:answer': { in: { id: string; answer: string }; out: Notification }
 
+  'updates:status': { in: void; out: DesktopUpdateStatus }
+  'updates:check': { in: void; out: void }
+  'updates:download': { in: void; out: void }
+  'updates:install': { in: void; out: void }
+
   'cloud:status': { in: void; out: CloudStatus }
   'cloud:runner': { in: void; out: CloudRunner }
   'cloud:setRunner': { in: { url: string | null; expectedEmail: string }; out: CloudRunner }
@@ -783,6 +789,10 @@ export const ipcSchemas = {
   'notifications:list': z.undefined(),
   'notifications:read': z.undefined(),
   'notifications:answer': z.object({ id, answer: z.string().min(1).max(32) }),
+  'updates:status': z.undefined(),
+  'updates:check': z.undefined(),
+  'updates:download': z.undefined(),
+  'updates:install': z.undefined(),
   'cloud:status': z.undefined(),
   'cloud:runner': z.undefined(),
   'cloud:setRunner': z.object({
@@ -1096,6 +1106,13 @@ export interface LoomApi {
     read(): Promise<void>
     answer(id: string, answer: string): Promise<Notification>
   }
+  updates: {
+    status(): Promise<DesktopUpdateStatus>
+    check(): Promise<void>
+    download(): Promise<void>
+    install(): Promise<void>
+  }
+  onUpdateStatus(cb: (status: DesktopUpdateStatus) => void): () => void
   cloud: {
     health(): Promise<CloudHealth | null>
     status(): Promise<CloudStatus>

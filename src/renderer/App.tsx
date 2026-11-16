@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { CommandPalette } from './components/ui/CommandPalette'
 import { ModalHost } from './components/ui/ModalHost'
 import { NotificationCards } from './components/notifications/NotificationCards'
+import { UpdateNotice } from './components/updates/UpdateNotice'
 import { Splitter } from './components/ui/Splitter'
 import { ToastViewport } from './components/ui/Toast'
 import { Sidebar } from './components/sidebar/Sidebar'
@@ -87,6 +88,7 @@ export function App() {
       <ModalHost />
       <CommandPalette />
       <div className="corner-stack">
+        <UpdateNotice />
         <NotificationCards />
         <ToastViewport />
       </div>

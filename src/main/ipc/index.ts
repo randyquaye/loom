@@ -21,6 +21,7 @@ import { registerSessionsIpc } from './sessions'
 import { registerShellIpc } from './shell'
 import { registerTerminalIpc } from './terminal'
 import { registerWorkspacesIpc } from './workspaces'
+import { registerUpdatesIpc } from './updates'
 import { workspacePlacement, type WorkspacePlacement } from '../workspace/placement'
 import { createNotifications } from '../notifications/service'
 import type { Notification } from '../../shared/notifications'
@@ -41,6 +42,7 @@ export function registerIpc(
 ): void {
   handle('app:ping', () => 'pong')
   registerCloudIpc()
+  registerUpdatesIpc(deps.updates)
 
   handle('secrets:has', ({ provider }) => secretPresence(deps.secrets, provider))
   handle('secrets:set', ({ provider, value }) => deps.secrets.set(provider, value))

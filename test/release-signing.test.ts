@@ -93,7 +93,8 @@ process.exit(0)
     PATH: `${path.join(root, 'bin')}${path.delimiter}${process.env['PATH']}`,
     GITHUB_REPOSITORY: 'example/loom',
     GITHUB_REF: 'refs/heads/main',
-    GITHUB_SHA: 'a'.repeat(40)
+    GITHUB_SHA: 'a'.repeat(40),
+    RELEASE_SOURCE_SHA: 'a'.repeat(40)
   }
   for (const key of [
     'CSC_LINK',
@@ -117,7 +118,7 @@ process.exit(0)
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line))
-  return { root, run, manifest, calls }
+  return { root, run, manifest, calls, env }
 }
 
 it.each(['unsigned', 'signed'])(
@@ -180,3 +181,69 @@ it.each(['unsigned', 'signed'])(
     expect((await f.manifest('runner/runner.json')).desktop.signing).toBe(signing)
   }
 )
+
+it('binds the signed website feed to the final ZIP bytes and records every update artifact', async () => {
+  const f = await fixture()
+  f.env['LOOM_DESKTOP_UPDATE_URL'] = 'https://downloads.example.test/desktop/'
+  f.env['APPLE_TEAM_ID'] = 'ABCDE12345'
+  await writeFile(path.join(f.root, 'desktop/Loom-1.2.3-arm64.zip.blockmap'), 'generated blockmap')
+  expect(f.run('desktop', '1.2.3', 'desktop', 'signed').status).toBe(0)
+  const manifest = await f.manifest()
+  expect(manifest.updates).toEqual({
+    url: 'https://downloads.example.test/desktop/',
+    teamId: 'ABCDE12345'
+  })
+  const feed = JSON.parse(await readFile(path.join(f.root, 'desktop/latest-mac.yml'), 'utf8'))
+  expect(feed.version).toBe('1.2.3')
+  expect(feed.files).toEqual([
+    {
+      url: 'Loom-1.2.3-arm64.zip',
+      sha512: createHash('sha512').update('fixture zip').digest('base64'),
+      size: Buffer.byteLength('fixture zip')
+    }
+  ])
+  expect(manifest.assets.map((asset: { name: string }) => asset.name)).toEqual([
+    'Loom-1.2.3-arm64.dmg',
+    'Loom-1.2.3-arm64.zip',
+    'Loom-1.2.3-arm64.zip.blockmap',
+    'latest-mac.yml'
+  ])
+  expect(f.run('publish', 'desktop', '1.2.3', 'desktop').status).toBe(0)
+  const upload = (await f.calls()).find((args) => args[0] === 'release' && args[1] === 'upload')!
+  expect(upload).toContain(path.join('desktop', 'latest-mac.yml'))
+  expect(upload).toContain(path.join('desktop', 'Loom-1.2.3-arm64.zip.blockmap'))
+})
+
+it('refuses a stale signed feed even when replacement ZIP SHA256 metadata is supplied', async () => {
+  const f = await fixture()
+  f.env['LOOM_DESKTOP_UPDATE_URL'] = 'https://downloads.example.test/desktop/'
+  f.env['APPLE_TEAM_ID'] = 'ABCDE12345'
+  await writeFile(path.join(f.root, 'desktop/Loom-1.2.3-arm64.zip.blockmap'), 'generated blockmap')
+  expect(f.run('desktop', '1.2.3', 'desktop', 'signed').status).toBe(0)
+  const manifest = await f.manifest()
+  await writeFile(path.join(f.root, 'desktop/Loom-1.2.3-arm64.zip'), 'different archive')
+  const zip = manifest.assets.find((asset: { name: string }) => asset.name.endsWith('.zip'))
+  zip.sha256 = createHash('sha256').update('different archive').digest('hex')
+  zip.size = Buffer.byteLength('different archive')
+  await writeFile(path.join(f.root, 'desktop/desktop.json'), JSON.stringify(manifest))
+  expect(f.run('publish', 'desktop', '1.2.3', 'desktop').status).not.toBe(0)
+  expect((await f.calls()).some((args) => args.includes('POST'))).toBe(false)
+})
+
+it('never advertises a website feed for an unsigned desktop', async () => {
+  const f = await fixture()
+  f.env['LOOM_DESKTOP_UPDATE_URL'] = 'https://downloads.example.test/desktop/'
+  expect(f.run('desktop', '1.2.3', 'desktop', 'unsigned').status).toBe(0)
+  expect((await f.manifest()).updates).toBeUndefined()
+  await expect(readFile(path.join(f.root, 'desktop/latest-mac.yml'))).rejects.toThrow()
+  await writeFile(path.join(f.root, 'desktop/latest-mac.yml'), '{}')
+  expect(f.run('desktop', '1.2.3', 'desktop', 'unsigned').status).not.toBe(0)
+})
+
+it('binds recovered release metadata to the verified original SHA after main advances', async () => {
+  const f = await fixture()
+  f.env['GITHUB_SHA'] = 'b'.repeat(40)
+  const result = f.run('desktop', '1.2.3', 'desktop', 'unsigned')
+  expect(result.status, result.stderr).toBe(0)
+  expect((await f.manifest()).commit).toBe(f.env['RELEASE_SOURCE_SHA'])
+})

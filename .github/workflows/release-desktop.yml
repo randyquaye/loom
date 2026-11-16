@@ -10,23 +10,63 @@ on:
         description: Code sign and notarize (requires Apple Developer credentials)
         type: boolean
         default: false
+      publish:
+        description: Publish an immutable GitHub release after validation
+        type: boolean
+        default: false
+      notarization_run_id:
+        description: Resume the preserved notarization from this workflow run (same source and version)
+        type: string
+        default: ''
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: desktop-release-${{ inputs.version }}
   cancel-in-progress: false
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 90
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
     env:
       VERSION: ${{ inputs.version }}
+      RECOVERY_RUN_ID: ${{ inputs.notarization_run_id }}
     steps:
       - name: Require main
-        run: test "$GITHUB_REF" = refs/heads/main
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          if test -n "$RECOVERY_RUN_ID"; then
+            test "$SIGNING" = signed
+            [[ "$RECOVERY_RUN_ID" =~ ^[0-9]+$ ]]
+          fi
+        env:
+          SIGNING: ${{ inputs.sign && 'signed' || 'unsigned' }}
+      - name: Select verified source
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SOURCE_SHA=$GITHUB_SHA
+          if test -n "$RECOVERY_RUN_ID"; then
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RECOVERY_RUN_ID" > "$RUNNER_TEMP/recovery-run.json"
+            jq -e --arg repo "$GITHUB_REPOSITORY" '.repository.full_name == $repo and .head_repository.full_name == $repo and .head_branch == "main" and .path == ".github/workflows/release-desktop.yml" and .event == "workflow_dispatch"' "$RUNNER_TEMP/recovery-run.json"
+            RUN_SHA=$(jq -r .head_sha "$RUNNER_TEMP/recovery-run.json")
+            [[ "$RUN_SHA" =~ ^[a-f0-9]{40}$ ]]
+            gh run download "$RECOVERY_RUN_ID" --repo "$GITHUB_REPOSITORY" --name desktop-notarization-recovery --dir "$RUNNER_TEMP/notarization-recovery"
+            tar -xOf "$RUNNER_TEMP/notarization-recovery/recovery.tgz" release/notarization/checkpoint.json > "$RUNNER_TEMP/recovery-checkpoint.json"
+            jq -e --arg version "$VERSION" '.schemaVersion == 1 and .version == $version and (.commit | type == "string" and test("^[a-f0-9]{40}$"))' "$RUNNER_TEMP/recovery-checkpoint.json"
+            SOURCE_SHA=$(jq -r .commit "$RUNNER_TEMP/recovery-checkpoint.json")
+            RELATION=$(gh api "repos/$GITHUB_REPOSITORY/compare/$SOURCE_SHA...$RUN_SHA" --jq .status)
+            [[ "$RELATION" == identical || "$RELATION" == ahead ]]
+          fi
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "RELEASE_SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ steps.source.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -52,8 +92,12 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: pnpm exec electron-builder --mac --arm64 --publish never --config electron-builder.unsigned.yml --config.extraMetadata.version="$VERSION"
+      - name: Restore exact notarization input
+        if: ${{ inputs.sign && inputs.notarization_run_id != '' }}
+        run: tar -xzf "$RUNNER_TEMP/notarization-recovery/recovery.tgz"
       - name: Sign and notarize
         if: ${{ inputs.sign }}
+        timeout-minutes: 60
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -61,39 +105,65 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          LOOM_DESKTOP_UPDATE_URL: ${{ vars.LOOM_DESKTOP_UPDATE_URL }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'true'
         run: |
           : "${CSC_LINK:?Missing CSC_LINK}" "${CSC_KEY_PASSWORD:?Missing CSC_KEY_PASSWORD}" "${CSC_NAME:?Missing CSC_NAME}"
           : "${APPLE_ID:?Missing APPLE_ID}" "${APPLE_APP_SPECIFIC_PASSWORD:?Missing APPLE_APP_SPECIFIC_PASSWORD}" "${APPLE_TEAM_ID:?Missing APPLE_TEAM_ID}"
+          : "${LOOM_DESKTOP_UPDATE_URL:?Set the HTTPS website update directory}"
           [[ "$CSC_NAME" == 'Developer ID Application: '* ]]
-          pnpm exec electron-builder --mac --arm64 --publish never --config electron-builder.release.yml --config.extraMetadata.version="$VERSION"
-          DMG="release/desktop/Loom-$VERSION-arm64.dmg"
-          ZIP="release/desktop/Loom-$VERSION-arm64.zip"
-          ditto -x -k "$ZIP" "$RUNNER_TEMP/desktop-zip"
+          if test -n "$RECOVERY_RUN_ID"; then
+            STAGE=$(node scripts/notarize.mjs stage "$VERSION")
+            node scripts/notarize.mjs resume "$VERSION"
+            if test "$STAGE" = app; then
+              pnpm exec electron-builder --mac --arm64 --publish never --prepackaged release/desktop/mac-arm64/Loom.app --config electron-builder.signed.mjs --config.extraMetadata.version="$VERSION"
+              node scripts/notarize.mjs dmg "$VERSION"
+            fi
+          else
+            pnpm exec electron-builder --mac --arm64 --publish never --config electron-builder.signed.mjs --config.extraMetadata.version="$VERSION"
+            node scripts/notarize.mjs dmg "$VERSION"
+          fi
+          ditto -x -k "release/desktop/Loom-$VERSION-arm64.zip" "$RUNNER_TEMP/desktop-zip"
           APP="$RUNNER_TEMP/desktop-zip/Loom.app"
           codesign --verify --deep --strict "$APP"
           test "$(codesign -dvv "$APP" 2>&1 | sed -n 's/^TeamIdentifier=//p')" = "$APPLE_TEAM_ID"
           xcrun stapler validate "$APP"
           spctl --assess --type execute "$APP"
-          xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait --output-format json > "$RUNNER_TEMP/dmg-notarization.json"
-          jq -e '.status == "Accepted"' "$RUNNER_TEMP/dmg-notarization.json"
-          xcrun stapler staple "$DMG"
-          xcrun stapler validate "$DMG"
-          codesign --verify --strict "$DMG"
-      - name: Record desktop signing status
+      - name: Preserve notarization input and submission IDs
+        if: ${{ always() && inputs.sign }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-notarization-recovery
+          if-no-files-found: ignore
+          retention-days: 30
+          path: release/notarization/recovery.tgz
+      - name: Preserve Apple diagnostics
+        if: ${{ always() && inputs.sign }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-notarization-diagnostics
+          if-no-files-found: ignore
+          retention-days: 30
+          path: release/notarization/*.json
+      - name: Record desktop signing status and final checksums
         env:
           SIGNING: ${{ inputs.sign && 'signed' || 'unsigned' }}
+          LOOM_DESKTOP_UPDATE_URL: ${{ inputs.sign && vars.LOOM_DESKTOP_UPDATE_URL || '' }}
+          APPLE_TEAM_ID: ${{ inputs.sign && secrets.APPLE_TEAM_ID || '' }}
         run: node scripts/release.mjs desktop "$VERSION" release/desktop "$SIGNING"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: desktop-release
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
           path: |
             release/desktop/desktop.json
             release/desktop/*.dmg
             release/desktop/*.zip
+            release/desktop/*.blockmap
+            release/desktop/latest-mac.yml
   publish:
+    if: ${{ inputs.publish }}
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -103,10 +173,11 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
       GH_TOKEN: ${{ github.token }}
+      RELEASE_SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.build.outputs.source_sha }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:

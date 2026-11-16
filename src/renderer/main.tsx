@@ -6,6 +6,7 @@ import './theme/ui.css'
 import { App } from './App'
 import { installFocusTracking } from './components/ui/focus'
 import { subscribeCloud } from './state/cloud'
+import { subscribeDesktopUpdates } from './state/desktop-updates'
 import { subscribeNotifications } from './state/notifications'
 import { subscribeSessionEvents, useSessions } from './state/sessions'
 import { subscribeFileUpdates } from './state/file-updates'
@@ -16,6 +17,7 @@ installFocusTracking()
 subscribeSessionEvents(shouldPlayCompletionSound)
 subscribeFileUpdates()
 subscribeCloud()
+subscribeDesktopUpdates()
 subscribeNotifications()
 void useSessions
   .getState()

@@ -5,6 +5,7 @@ import { useOrganization } from '../../state/organization'
 import { useProjects } from '../../state/projects'
 import { DEFAULT_SETTINGS_PAGE, useUi, type SettingsPage } from '../../state/ui'
 import {
+  BellIcon,
   BotIcon,
   CloudIcon,
   ConsoleIcon,
@@ -31,7 +32,8 @@ const GENERAL: NavPage[] = [
   { page: 'env', label: 'Environment', glyph: <ConsoleIcon /> },
   { page: 'integrations', label: 'Integrations', glyph: <PuzzleIcon /> },
   { page: 'preferences', label: 'Preferences', glyph: <SlidersIcon /> },
-  { page: 'shortcuts', label: 'Shortcuts', glyph: <KeyboardIcon /> }
+  { page: 'shortcuts', label: 'Shortcuts', glyph: <KeyboardIcon /> },
+  { page: 'updates', label: 'Updates', glyph: <BellIcon /> }
 ]
 
 /** Everything about the agents themselves: who they are signed in as, how they start, what they are told. */
