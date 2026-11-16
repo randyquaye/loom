@@ -51,9 +51,6 @@ export function ViewerHost({ workspaceId }: { workspaceId: string }) {
           )}
           <span className="viewer-name">{checkpointName ?? openPath.slice(slash + 1)}</span>
         </span>
-        <span className="panel-pill">
-          {mode === 'diff' ? 'diff' : content?.kind === 'image' ? content.mimeType : content?.language}
-        </span>
         {mode === 'content' && problemCount > 0 && (
           <span className="panel-pill" data-tone={hasErrors ? 'danger' : 'warn'}>
             {problemCount}
@@ -89,7 +86,11 @@ export function ViewerHost({ workspaceId }: { workspaceId: string }) {
         ) : content?.kind === 'image' ? (
           <ImageView key={key} src={content.dataUrl} label={openPath} />
         ) : content?.language === 'markdown' ? (
-          <MarkdownView text={content.text} onOpen={(path, line) => void openAt(workspaceId, path, line)} />
+          <MarkdownView
+            text={content.text}
+            workspaceId={workspaceId}
+            onOpen={(path, line) => void openAt(workspaceId, path, line)}
+          />
         ) : content !== undefined ? (
           <MonacoView
             path={`${workspaceId}/${openPath}`}

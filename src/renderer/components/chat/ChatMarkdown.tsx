@@ -16,19 +16,22 @@ interface MarkdownNode {
   children?: MarkdownNode[]
 }
 
-/** Link prose after parsing, so all fence lengths, code spans and reference links stay intact. */
+/** Link prose and path-only code spans after parsing; fences and existing links stay intact. */
 function linkFilePaths() {
   const visit = (node: MarkdownNode): void => {
     if (['link', 'linkReference', 'image', 'imageReference', 'code', 'inlineCode'].includes(node.type)) return
     if (node.children === undefined) return
     node.children = node.children.flatMap((child) => {
-      if (child.type !== 'text' || child.value === undefined) {
+      if (!['text', 'inlineCode'].includes(child.type) || child.value === undefined) {
         visit(child)
         return [child]
       }
       const text = child.value
-      // The boundary also prevents the shared regex's `ts` alternative from consuming half of `.tsx`.
-      const re = new RegExp(`${PATH_RE.source}(?![\\w./-]|:\\d)`, 'g')
+      const re = new RegExp(PATH_RE.source, 'g')
+      if (child.type === 'inlineCode') {
+        if (/^https?:\/\/\S+$/i.test(text)) return [{ type: 'link', url: text, children: [child] }]
+        if (new RegExp(`^${PATH_RE.source}$`).exec(text) === null) return [child]
+      }
       const nodes: MarkdownNode[] = []
       let end = 0
       for (const match of text.matchAll(re)) {
@@ -38,7 +41,7 @@ function linkFilePaths() {
         nodes.push({
           type: 'link',
           url: `${OPEN}${encodeURIComponent(path)}${line === undefined ? '' : `#${line}`}`,
-          children: [{ type: 'text', value: match[0] }]
+          children: child.type === 'inlineCode' ? [child] : [{ type: 'text', value: match[0] }]
         })
         end = match.index + match[0].length
       }
@@ -63,7 +66,10 @@ function parseTarget(href: string): { path: string; line: number | undefined } |
   return { path, line }
 }
 
-function urlTransform(url: string): string {
+function urlTransform(url: string, key: string): string {
+  const match = key === 'href' ? new RegExp(`^${PATH_RE.source}$`).exec(url) : null
+  if (match !== null)
+    return `${OPEN}${encodeURIComponent(match[1] as string)}${match[2] === undefined ? '' : `#${match[2]}`}`
   return url.startsWith(OPEN) ? url : defaultUrlTransform(url)
 }
 
