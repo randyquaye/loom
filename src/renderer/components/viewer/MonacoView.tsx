@@ -24,12 +24,13 @@ const LANGUAGE_BY_EXT: Record<string, string> = {
   tsx: 'typescript',
   sh: 'shell',
   py: 'python',
-  // monaco ships no HCL tokenizer; diagnostics still surface via the panel below
-  tf: 'plaintext'
+  yaml: 'yaml',
+  yml: 'yaml',
+  tf: 'hcl'
 }
 
 export function languageFor(path: string): string {
-  const ext = path.split('.').pop() ?? ''
+  const ext = path.split('.').pop()?.toLowerCase() ?? ''
   return LANGUAGE_BY_EXT[ext] ?? 'plaintext'
 }
 

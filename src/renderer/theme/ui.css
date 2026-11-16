@@ -94,6 +94,26 @@
   right: 0;
 }
 
+.context-menu-anchor {
+  position: fixed;
+  z-index: 55;
+}
+
+.popover.context-menu {
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  background: var(--panel-solid);
+  backdrop-filter: none;
+  box-shadow: var(--shadow-2);
+}
+
+.context-menu .list-option {
+  padding: var(--s-2) var(--s-3);
+}
+
 /* One list-option geometry for palette items, model picker rows, dropdown options and popover
    items; each surface only adds its colour/state rules on top. */
 .list-option {

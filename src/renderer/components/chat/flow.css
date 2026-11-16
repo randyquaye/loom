@@ -361,29 +361,6 @@ body:not([data-modality='keyboard']) .tab-history:focus-visible,
   box-shadow: none;
 }
 
-/* ---------- session tab context menu ---------- */
-
-.session-tab-menu-anchor {
-  position: fixed;
-  z-index: 55;
-}
-
-/* Overlays scrolling content, so it sits on the solid panel rather than glass. */
-.popover.session-tab-menu {
-  top: 0;
-  left: 0;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border-strong);
-  background: var(--panel-solid);
-  backdrop-filter: none;
-  box-shadow: var(--shadow-2);
-}
-
-.session-tab-menu .list-option {
-  padding: var(--s-2) var(--s-3);
-}
-
 /* ---------- composer ---------- */
 
 /* Same solid surface as .chat-list so transcript and prompt box read as one flat panel. */

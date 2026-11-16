@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 
-export const PATH_RE = /(?<![\w./-])([\w.-]+(?:\/[\w.-]+)*\.(?:md|json|js|ts|tsx|sh|py|tf))(?::(\d+))?/g
+export const PATH_RE =
+  /(?<![\w./-])((?:\.\/)?(?:\.context\/(?:[\w.-]+\/)*[\w.-]*[\w-]|[\w.-]+(?:\/[\w.-]+)*\.(?:md|json|[cm]?[jt]sx?|ya?ml|sh|py|tfvars|tf|hcl|toml|txt|log|html?|css|csv|svg|png|jpe?g|gif|webp)))(?::(\d+))?(?![\w/-]|:\d|\.(?=[\w.-]))/g
 
 /** Turns repo-relative path mentions (with optional :line) into clickable chips. */
 export function renderWithFileLinks(
@@ -30,23 +31,4 @@ export function renderWithFileLinks(
   }
   if (last < text.length) out.push(text.slice(last))
   return out
-}
-
-/**
- * Rewrites bare path mentions into markdown links so ReactMarkdown renders them
- * as file chips. Code fences and inline code are left untouched.
- */
-export function markdownWithFileLinks(text: string): string {
-  const re = new RegExp(PATH_RE.source, 'g')
-  return text
-    .split(/(```[\s\S]*?```|`[^`\n]+`)/g)
-    .map((part, index) =>
-      index % 2 === 1
-        ? part
-        : part.replace(re, (whole, path: string, line?: string) => {
-            const target = line === undefined ? path : `${path}#${line}`
-            return `[${whole}](${target})`
-          })
-    )
-    .join('')
 }

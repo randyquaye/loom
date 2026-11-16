@@ -212,6 +212,7 @@ export const useFiles = create<FilesState>((set, get) => ({
   },
 
   async open(workspaceId, path) {
+    if (get().openPathByWorkspace[workspaceId] === path) activateViewer(workspaceId)
     const current = currentRead(workspaceId)
     const push = useToasts.getState().push
     let content: FilePreview

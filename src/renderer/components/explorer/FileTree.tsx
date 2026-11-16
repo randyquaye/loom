@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from 'react'
 import type { FileNode } from '../../../shared/ipc-contract'
 import { cacheKey, useFiles } from '../../state/files'
+import { useProjects } from '../../state/projects'
+import { ContextMenu } from '../ui/ContextMenu'
+import { useToasts } from '../ui/Toast'
 import { ChangesPanel } from './ChangesPanel'
 import '../panels/panels.css'
 
@@ -100,6 +103,7 @@ function TreeNode({ node, depth, workspaceId, expandedPaths, toggle, loadDirecto
     <button
       type="button"
       className={`tree-row${selected ? ' tree-on' : ''}`}
+      data-file-path={node.path}
       style={indentOf(depth)}
       title={node.path}
       aria-current={selected ? 'true' : undefined}
@@ -112,6 +116,13 @@ function TreeNode({ node, depth, workspaceId, expandedPaths, toggle, loadDirecto
 }
 
 function Explorer({ workspaceId }: { workspaceId: string }) {
+  const cloud = useProjects((s) =>
+    Object.values(s.workspacesByProject)
+      .flat()
+      .some((w) => w.id === workspaceId && w.cloud)
+  )
+  const push = useToasts((s) => s.push)
+  const [menu, setMenu] = useState<{ path: string; x: number; y: number } | null>(null)
   const tree = useFiles((s) => s.treeByWorkspace[workspaceId])
   const expand = useFiles((s) => s.expand)
   const refresh = useFiles((s) => s.refresh)
@@ -234,7 +245,16 @@ function Explorer({ workspaceId }: { workspaceId: string }) {
             Could not refresh files. Try again.
           </div>
         )}
-        <div className="tree">
+        <div
+          className="tree"
+          onContextMenu={(event) => {
+            if (cloud || !(event.target instanceof Element)) return
+            const path = event.target.closest<HTMLElement>('[data-file-path]')?.dataset.filePath
+            if (path === undefined) return
+            event.preventDefault()
+            setMenu({ path, x: event.clientX, y: event.clientY })
+          }}
+        >
           {tree?.map((node) => (
             <TreeNode
               key={node.path}
@@ -265,6 +285,23 @@ function Explorer({ workspaceId }: { workspaceId: string }) {
       >
         <ChangesPanel workspaceId={workspaceId} error={changesError} />
       </div>
+      {menu !== null && (
+        <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
+          <button
+            type="button"
+            role="menuitem"
+            className="list-option popover-item"
+            onClick={() => {
+              setMenu(null)
+              void window.loom.files.reveal(workspaceId, menu.path).catch((err: unknown) => {
+                push(`Could not reveal ${menu.path}: ${String(err)}`, 'err')
+              })
+            }}
+          >
+            Reveal in Finder
+          </button>
+        </ContextMenu>
+      )}
     </div>
   )
 }

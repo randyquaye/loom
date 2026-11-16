@@ -1,16 +1,14 @@
-import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import type { SessionRow } from '../../../shared/ipc-contract'
 import { MAX_SESSIONS_PER_WORKSPACE } from '../../../shared/limits'
 import type { Effort } from '../../../shared/models'
 import { useSessions } from '../../state/sessions'
 import { SessionActivityIndicator } from '../ui/SessionActivityIndicator'
 import { useUi } from '../../state/ui'
-import { Popover } from '../ui/Popover'
+import { ContextMenu } from '../ui/ContextMenu'
 import { useToasts } from '../ui/Toast'
 import { RecentChats } from './RecentChats'
 import { SessionInstructions } from './SessionInstructions'
-import { clampInWindow } from '../ui/anchor'
 import './flow.css'
 
 /**
@@ -186,7 +184,7 @@ export function SessionTabs({
         <RecentChats key={workspaceId} workspaceId={workspaceId} atCap={atCap} onSelect={onSelect} />
       )}
       {menu !== null && (
-        <TabMenu key={`${menu.session.id}:${menu.x}:${menu.y}`} x={menu.x} y={menu.y} onClose={closeMenu}>
+        <ContextMenu key={`${menu.session.id}:${menu.x}:${menu.y}`} x={menu.x} y={menu.y} onClose={closeMenu}>
           {(
             [
               ['View instructions', setInstructionsSession],
@@ -213,7 +211,7 @@ export function SessionTabs({
                 {label}
               </button>
             ))}
-        </TabMenu>
+        </ContextMenu>
       )}
       {instructionsSession !== null && (
         <SessionInstructions
@@ -223,41 +221,5 @@ export function SessionTabs({
         />
       )}
     </div>
-  )
-}
-
-/**
- * Popover pinned at a viewport point. It is measured before paint and nudged back inside the
- * window, so a menu opened near the right or bottom edge never renders off-screen.
- */
-function TabMenu({
-  x,
-  y,
-  onClose,
-  children
-}: {
-  x: number
-  y: number
-  onClose: () => void
-  children: ReactNode
-}) {
-  const anchorRef = useRef<HTMLDivElement>(null)
-
-  useLayoutEffect(() => {
-    const anchor = anchorRef.current
-    const menu = anchor?.querySelector('.popover')
-    if (anchor === null || menu === null || menu === undefined) return
-    const { width, height } = menu.getBoundingClientRect()
-    anchor.style.left = `${clampInWindow(x, width, window.innerWidth)}px`
-    anchor.style.top = `${clampInWindow(y, height, window.innerHeight)}px`
-  }, [x, y])
-
-  return createPortal(
-    <div ref={anchorRef} className="popover-wrap session-tab-menu-anchor" style={{ left: x, top: y }}>
-      <Popover open onClose={onClose} className="session-tab-menu">
-        {children}
-      </Popover>
-    </div>,
-    document.body
   )
 }

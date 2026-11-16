@@ -25,6 +25,8 @@ const LANGUAGE_BY_EXT: Readonly<Record<string, string>> = {
   '.tsx': 'typescript',
   '.sh': 'shell',
   '.py': 'python',
+  '.yaml': 'yaml',
+  '.yml': 'yaml',
   '.tf': 'hcl'
 }
 
