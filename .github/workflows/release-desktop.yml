@@ -112,6 +112,7 @@ jobs:
           : "${APPLE_ID:?Missing APPLE_ID}" "${APPLE_APP_SPECIFIC_PASSWORD:?Missing APPLE_APP_SPECIFIC_PASSWORD}" "${APPLE_TEAM_ID:?Missing APPLE_TEAM_ID}"
           : "${LOOM_DESKTOP_UPDATE_URL:?Set the HTTPS website update directory}"
           [[ "$CSC_NAME" == 'Developer ID Application: '* ]]
+          export CSC_NAME="${CSC_NAME#Developer ID Application: }"
           if test -n "$RECOVERY_RUN_ID"; then
             STAGE=$(node scripts/notarize.mjs stage "$VERSION")
             node scripts/notarize.mjs resume "$VERSION"
