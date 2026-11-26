@@ -87,7 +87,14 @@ async function openCloud(
       development: !app.isPackaged,
       openBrowser: (url) => void openExternalSafe(url),
       follow(url, auth) {
-        const route = createCloudRoute({ db, dataRoot, url, ...auth, toWindow })
+        const route = createCloudRoute({
+          db,
+          dataRoot,
+          url,
+          ...auth,
+          toWindow,
+          onOrganization: async (name) => account?.rememberOrganization(url, name)
+        })
         cloud = route
         setIpcRouter(route.route)
         return {

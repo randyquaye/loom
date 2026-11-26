@@ -47,6 +47,94 @@ afterEach(() => {
 })
 
 describe('organization join adoption', () => {
+  it('remembers only a verified account and reuses it after sign-out and restart', async () => {
+    const fx = await fixture()
+    browserSignIn.mockResolvedValue({
+      accessToken: 'verified',
+      refreshToken: 'verified-refresh',
+      expiresIn: 3600,
+      trust
+    })
+    await fx.account.signIn('  ADA@company.com  ')
+    expect(fx.account.runner().lastSignIn).toEqual({ email: workEmail })
+    await fx.account.signOut()
+    expect(fx.account.runner().lastSignIn?.email).toBe(workEmail)
+    fx.account.close()
+    const restarted = await openCloudAccount({
+      vault: {
+        getRaw: async (key) => fx.saved.get(key) ?? null,
+        setRaw: async (key, value) => {
+          fx.saved.set(key, value)
+        },
+        deleteRaw: async (key) => {
+          fx.saved.delete(key)
+        }
+      },
+      environment: {},
+      openBrowser: vi.fn(),
+      follow: fx.follows
+    })
+    await restarted.signIn()
+    expect(browserSignIn).toHaveBeenLastCalledWith(expect.objectContaining({ expectedEmail: workEmail }))
+    restarted.close()
+  })
+
+  it('keeps account history scoped to the verified host when another connection fails', async () => {
+    const fx = await fixture()
+    browserSignIn.mockResolvedValueOnce({
+      accessToken: 'verified',
+      refreshToken: 'refresh',
+      expiresIn: 3600,
+      trust
+    })
+    await fx.account.signIn(workEmail)
+    browserSignIn.mockRejectedValueOnce(new Error('Google did not approve this account'))
+    await expect(fx.account.setRunner(next, 'other@company.com')).rejects.toThrow()
+    expect(fx.account.runner()).toMatchObject({ url: old, lastSignIn: { email: workEmail } })
+    browserSignIn.mockResolvedValueOnce({
+      accessToken: 'next',
+      refreshToken: 'next-refresh',
+      expiresIn: 3600,
+      trust
+    })
+    await fx.account.setRunner(next, 'other@company.com')
+    expect(fx.account.runner().lastSignIn).toEqual({ email: 'other@company.com' })
+    await fx.account.setRunner(null)
+    expect(fx.account.runner().lastSignIn).toBeUndefined()
+    fx.account.close()
+  })
+
+  it('cannot publish account history or replace the current connection after cancellation', async () => {
+    const fx = await fixture()
+    let finish!: (value: SignIn.Tokens) => void
+    browserSignIn.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const pending = fx.account.setRunner(next, 'other@company.com')
+    fx.account.cancelSignIn()
+    finish({ accessToken: 'late', refreshToken: 'late-refresh', expiresIn: 3600, trust })
+    await expect(pending).rejects.toThrow()
+    expect(fx.account.runner().url).toBe(old)
+    expect(fx.account.runner().lastSignIn).toBeUndefined()
+    expect(fx.saved.get(`cloud::refresh-token::${old}`)).toBe('old-refresh')
+    expect(fx.follows.mock.results[0]!.value.close).not.toHaveBeenCalled()
+    fx.account.close()
+  })
+
+  it('ignores organisation names from a previous host and retains only current destination context', async () => {
+    const fx = await fixture()
+    await fx.account.rememberOrganization(old, 'Current team')
+    expect(fx.account.runner().lastSignIn).toEqual({ organizationName: 'Current team' })
+    await fx.account.rememberOrganization('wss://another.example.com', 'Other team')
+    expect(fx.account.runner().lastSignIn?.organizationName).toBe('Current team')
+    await expect(fx.account.signIn()).rejects.toThrow()
+    expect(browserSignIn).not.toHaveBeenCalled()
+    fx.account.close()
+  })
+
   it('uses the managed invitation path without changing company invitation defaults', async () => {
     const fx = await fixture()
     const managedCode = `loom-invite.v1.${Buffer.from(JSON.stringify({ host: 'https://pilot.loombox.xyz', secret, mode: 'managed' })).toString('base64url')}`

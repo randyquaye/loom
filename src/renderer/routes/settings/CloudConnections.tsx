@@ -37,7 +37,13 @@ function Copy({ text, label }: { text: string; label: string }) {
   )
 }
 
-export function CloudConnections({ providers }: { providers: readonly AgentLoginProvider[] }) {
+export function CloudConnections({
+  providers,
+  overview = false
+}: {
+  providers: readonly AgentLoginProvider[]
+  overview?: boolean
+}) {
   const state = useCloud((value) => value.status.state)
   const navigate = useUi((value) => value.navigate)
   const [runner, setRunner] = useState<CloudRunner | null>(null)
@@ -171,8 +177,8 @@ export function CloudConnections({ providers }: { providers: readonly AgentLogin
 
   return (
     <>
-      <section className="settings-section">
-        {host !== null && (
+      <section className={`settings-section${overview ? ' cloud-connections-overview' : ''}`}>
+        {host !== null && !overview && (
           <p className="settings-note">
             Your cloud workspaces on <strong>{host}</strong>
           </p>
@@ -230,16 +236,52 @@ export function CloudConnections({ providers }: { providers: readonly AgentLogin
 
                   return (
                     <div key={provider} className="settings-row connection-row">
-                      <span
-                        className="settings-dot"
-                        data-tone={connected ? 'ok' : configured ? 'warn' : 'idle'}
-                        aria-hidden="true"
-                      />
+                      {overview ? (
+                        <span className={`cloud-service-mark cloud-service-${provider}`} aria-hidden="true">
+                          {provider === 'github' ? (
+                            <svg className="icon" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M12 .8a11.4 11.4 0 0 0-3.6 22.2c.6.1.8-.2.8-.5v-2.2c-3.3.7-4-1.4-4-1.4-.5-1.4-1.3-1.7-1.3-1.7-1.1-.8.1-.8.1-.8 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.4-2.3 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.9 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5A11.4 11.4 0 0 0 12 .8Z" />
+                            </svg>
+                          ) : provider === 'claude' ? (
+                            '✳'
+                          ) : (
+                            '>_'
+                          )}
+                        </span>
+                      ) : (
+                        <span
+                          className="settings-dot"
+                          data-tone={connected ? 'ok' : configured ? 'warn' : 'idle'}
+                          aria-hidden="true"
+                        />
+                      )}
                       <div className="settings-provider">
                         <span className="settings-name">{NAMES[provider]}</span>
-                        <span className="settings-state">{status}</span>
+                        <span className="settings-state">
+                          {overview && connected
+                            ? provider === 'github'
+                              ? (logins.githubApp?.account ?? 'Account connected')
+                              : 'Available to cloud workspaces'
+                            : status}
+                        </span>
                       </div>
-                      {installationNeeded ? (
+                      {overview && connected ? (
+                        <>
+                          <span className="cloud-service-connected">Account connected</span>
+                          <button
+                            className="btn btn-ghost"
+                            onClick={() => {
+                              useUi.getState().setSettingsLocation('cloud')
+                              navigate({
+                                name: 'settings',
+                                page: provider === 'github' ? 'integrations' : 'agents'
+                              })
+                            }}
+                          >
+                            Manage
+                          </button>
+                        </>
+                      ) : installationNeeded ? (
                         <>
                           <button
                             className="btn"
@@ -287,7 +329,7 @@ export function CloudConnections({ providers }: { providers: readonly AgentLogin
                                 : 'Connect'}
                         </button>
                       )}
-                      {(connected || installationNeeded) && (
+                      {!overview && (connected || installationNeeded) && (
                         <button
                           className="btn btn-ghost"
                           disabled={busy !== null}

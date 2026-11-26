@@ -13,6 +13,8 @@ export function registerCloudIpc(): void {
   )
   handle('cloud:signIn', ({ expectedEmail }) => cloudAccount().signIn(expectedEmail))
   handle('cloud:signOut', () => cloudAccount().signOut())
+  handle('cloud:cancelSignIn', () => cloudAccount().cancelSignIn())
+  handle('cloud:reconnect', () => cloudAccount().reconnect())
   handle('cloud:previewInvite', ({ code }) => previewInvite(code))
   handle('cloud:join', ({ code, expectedEmail }) => cloudAccount().join(code, expectedEmail))
   handle('org:get', () => null)

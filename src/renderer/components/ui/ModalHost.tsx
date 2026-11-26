@@ -10,6 +10,7 @@ export function ModalHost() {
       <NewWorkspaceModal
         projectId={modals.addWorkspaceFor === '' ? null : modals.addWorkspaceFor}
         projectMenu={modals.projectMenu}
+        initialLocation={modals.workspaceLocation ?? 'mac'}
       />
     )
   return null

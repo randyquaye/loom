@@ -154,6 +154,8 @@ export interface CloudRunner {
   fixed: boolean
   /** A developer's token from the environment stands in for signing in. */
   devToken: boolean
+  /** Destination history, scoped to this host; it is not proof of a current sign-in. */
+  lastSignIn?: { email?: string; organizationName?: string }
 }
 
 /** Which of a person's agent logins the runner keeps for their cloud workspaces. */
@@ -533,6 +535,8 @@ export interface IpcContract {
   /** Answers once the person has finished in the browser, which can take minutes. */
   'cloud:signIn': { in: { expectedEmail: string }; out: void }
   'cloud:signOut': { in: void; out: void }
+  'cloud:cancelSignIn': { in: void; out: void }
+  'cloud:reconnect': { in: void; out: void }
   'cloud:previewInvite': { in: { code: string }; out: { host: string } }
   'cloud:join': { in: { code: string; expectedEmail: string }; out: CloudRunner }
 
@@ -807,6 +811,8 @@ export const ipcSchemas = {
   }),
   'cloud:signIn': z.object({ expectedEmail: z.string().trim().max(254).default('') }),
   'cloud:signOut': z.undefined(),
+  'cloud:cancelSignIn': z.undefined(),
+  'cloud:reconnect': z.undefined(),
   'cloud:previewInvite': z.object({ code: z.string().min(1).max(4096) }),
   'cloud:join': z.object({
     code: z.string().min(1).max(4096),
@@ -1128,6 +1134,8 @@ export interface LoomApi {
     /** Opens the sign-in page in the browser; calling again abandons the earlier attempt. */
     signIn(expectedEmail?: string): Promise<void>
     signOut(): Promise<void>
+    cancelSignIn(): Promise<void>
+    reconnect(): Promise<void>
     previewInvite(code: string): Promise<{ host: string }>
     join(code: string, expectedEmail?: string): Promise<CloudRunner>
   }

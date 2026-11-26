@@ -90,7 +90,6 @@ export function SettingsNav() {
         <>
           <div className="section-label">Organization</div>
           <div className="project-block">
-            <NavRow page="org-overview" label="Overview" glyph={<CloudIcon />} />
             {botsAvailable && <NavRow page="org-bots" label="Bots" glyph={<BotIcon />} />}
             {owner && subscriptionsAvailable && (
               <NavRow page="org-subscriptions" label="Subscriptions" glyph={<ModelIcon />} />

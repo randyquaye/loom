@@ -7,11 +7,13 @@ export function LocationSwitcher({
   value,
   onChange,
   cloudDisabled = false,
+  cloudDisabledReason = 'The cloud runner is not connected',
   label = 'Connection location'
 }: {
   value: ConnectionLocation
   onChange: (location: ConnectionLocation) => void
   cloudDisabled?: boolean
+  cloudDisabledReason?: string
   label?: string
 }) {
   function onKey(event: KeyboardEvent<HTMLDivElement>) {
@@ -37,9 +39,9 @@ export function LocationSwitcher({
           role="radio"
           aria-checked={value === location}
           data-location={location}
-          tabIndex={value === location ? 0 : -1}
+          tabIndex={value === location || (cloudDisabled && location === 'mac') ? 0 : -1}
           disabled={location === 'cloud' && cloudDisabled}
-          title={location === 'cloud' && cloudDisabled ? 'The cloud runner is not connected' : undefined}
+          title={location === 'cloud' && cloudDisabled ? cloudDisabledReason : undefined}
           onClick={() => onChange(location)}
         >
           {location === 'mac' ? 'This Mac' : 'Cloud'}
