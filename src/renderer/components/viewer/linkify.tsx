@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { CopyableLink } from '../ui/CopyableLink'
 
 export const PATH_RE =
   /(?<![\w./-])((?:\.\/)?(?:\.context\/(?:[\w.-]+\/)*[\w.-]*[\w-]|[\w.-]+(?:\/[\w.-]+)*\.(?:md|json|[cm]?[jt]sx?|ya?ml|sh|py|tfvars|tf|hcl|toml|txt|log|html?|css|csv|svg|png|jpe?g|gif|webp)))(?::(\d+))?(?![\w/-]|:\d|\.(?=[\w.-]))/g
@@ -18,14 +19,16 @@ export function renderWithFileLinks(
     const path = match[1] as string
     const line = match[2] === undefined ? undefined : Number(match[2])
     out.push(
-      <button
+      <CopyableLink
         key={`f${key++}`}
+        value={match[0]}
+        copyLabel="Copy path"
         className="filelink"
         title={`Open ${path}${line === undefined ? '' : `:${line}`}`}
-        onClick={() => onOpen(path, line)}
+        onOpen={() => onOpen(path, line)}
       >
         {match[0]}
-      </button>
+      </CopyableLink>
     )
     last = match.index + match[0].length
   }

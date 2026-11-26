@@ -8,7 +8,9 @@ export function registerCloudIpc(): void {
   handle('cloud:health', () => null)
   handle('cloud:status', () => cloudStatus())
   handle('cloud:runner', () => cloudAccount().runner())
-  handle('cloud:setRunner', ({ url, expectedEmail }) => cloudAccount().setRunner(url, expectedEmail))
+  handle('cloud:setRunner', ({ url, expectedEmail, mode }) =>
+    cloudAccount().setRunner(url, expectedEmail, mode)
+  )
   handle('cloud:signIn', ({ expectedEmail }) => cloudAccount().signIn(expectedEmail))
   handle('cloud:signOut', () => cloudAccount().signOut())
   handle('cloud:previewInvite', ({ code }) => previewInvite(code))

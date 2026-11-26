@@ -51,7 +51,7 @@ interface UiState {
   settingsReturnRoute: Exclude<Route, { name: 'settings' }>
   settingsLocation: 'mac' | 'cloud'
   setSettingsLocation(location: 'mac' | 'cloud'): void
-  workspacePane: 'chat' | 'viewer'
+  workspacePane: 'chat' | 'viewer' | 'terminal'
   modals: ModalFlags
   paletteOpen: boolean
   /** One-shot prompt seeded by quick chips, consumed by whichever composer is mounted. */

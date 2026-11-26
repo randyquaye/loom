@@ -122,7 +122,6 @@ export function MessageList({
             request={block.request}
             sessionId={sessionId}
             readOnly={readOnly}
-            answers={block.answers}
             followUp={times.done.has(block.turnId) && !block.request.blocking}
             disabled={readOnly || block.resolved || (times.done.has(block.turnId) && block.request.blocking)}
           />

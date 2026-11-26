@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CloudRunner } from '../../../shared/ipc-contract'
+import type { CloudSignInMode } from '../../../shared/managed-cloud'
 import { cloudStatusLabel, cloudTone } from '../../components/sidebar/CloudStatusDot'
 import { Field } from '../../components/ui/Field'
 import { Modal } from '../../components/ui/Modal'
@@ -15,6 +16,7 @@ export function CloudPage() {
   const [runner, setRunner] = useState<CloudRunner | null>(null)
   const [address, setAddress] = useState('')
   const [workEmail, setWorkEmail] = useState('')
+  const [mode, setMode] = useState<CloudSignInMode>('company')
   const [inBrowser, setInBrowser] = useState(false)
   const [inviteCode, setInviteCode] = useState('')
   const [invite, setInvite] = useState<{ host: string; code: string } | null>(null)
@@ -29,6 +31,7 @@ export function CloudPage() {
         if (!live) return
         setRunner(current)
         setAddress(current.url ?? '')
+        setMode(current.mode ?? 'company')
       })
       .catch((err: unknown) => push(`Could not load the cloud settings: ${String(err)}`, 'err'))
     return () => {
@@ -39,10 +42,11 @@ export function CloudPage() {
   function save() {
     setInBrowser(address.trim() !== '')
     window.loom.cloud
-      .setRunner(address.trim() === '' ? null : address, workEmail)
+      .setRunner(address.trim() === '' ? null : address, workEmail, mode)
       .then((kept) => {
         setRunner(kept)
         setAddress(kept.url ?? '')
+        setMode(kept.mode ?? 'company')
         push(kept.url === null ? 'Cloud turned off' : 'Connected to verified runner')
         if (kept.url !== null) navigate({ name: 'settings', page: 'org-overview' })
       })
@@ -53,9 +57,19 @@ export function CloudPage() {
   function signIn() {
     const attempt = ++attempts.current
     setInBrowser(true)
-    window.loom.cloud
-      .signIn(workEmail)
-      .then(() => navigate({ name: 'settings', page: 'org-overview' }))
+    const signingIn =
+      mode !== (runner?.mode ?? 'company')
+        ? window.loom.cloud.setRunner(address, workEmail, mode)
+        : window.loom.cloud.signIn(workEmail)
+    signingIn
+      .then((kept) => {
+        if (kept) {
+          setRunner(kept)
+          setAddress(kept.url ?? '')
+          setMode(kept.mode ?? 'company')
+        }
+        navigate({ name: 'settings', page: 'org-overview' })
+      })
       .catch((err: unknown) => {
         if (attempt === attempts.current) push(`Could not sign in: ${String(err)}`, 'err')
       })
@@ -74,9 +88,28 @@ export function CloudPage() {
   return (
     <>
       <section className="settings-section">
+        <Field label="Cloud hosting">
+          <select
+            className="input"
+            value={mode}
+            disabled={inBrowser || runner?.fixed}
+            onChange={(event) => {
+              const selected = event.target.value as CloudSignInMode
+              setMode(selected)
+              if (selected === 'managed' && address.trim() === '') setAddress('wss://pilot.loombox.xyz')
+            }}
+          >
+            <option value="company">Company runner</option>
+            <option value="managed">Loom personal cloud</option>
+          </select>
+        </Field>
         <Field
-          label="Your work email"
-          hint="Enter your primary Google Workspace email yourself. Loom checks it against Google’s signed reply to verify your organization."
+          label="Your Google email"
+          hint={
+            mode === 'managed'
+              ? 'Use the Gmail or Google Workspace account that owns this organization or received its invitation.'
+              : 'Enter your primary Google Workspace email. Loom checks it against Google’s signed reply.'
+          }
         >
           <input
             className="input"
@@ -156,7 +189,9 @@ export function CloudPage() {
           hint={
             runner?.fixed
               ? 'Set by LOOM_RUNNER_URL for this run.'
-              : 'For operators: wss://loom.example.com. Saving a new address opens Google sign-in and verifies the host. Leave blank to turn cloud off.'
+              : mode === 'managed'
+                ? 'Use the Loom runner assigned to you, such as wss://pilot.loombox.xyz. Saving opens Google sign-in. Leave blank to turn cloud off.'
+                : 'For operators: wss://loom.example.com. Saving a new address opens Google sign-in and verifies the host. Leave blank to turn cloud off.'
           }
         >
           <input
@@ -180,7 +215,7 @@ export function CloudPage() {
         <p className="settings-note">
           {runner?.devToken
             ? 'This run uses a developer token from LOOM_RUNNER_TOKEN, so there is nothing to sign in to.'
-            : 'You sign in with your company Google account, in your browser. Loom keeps the sign-in in the macOS Keychain, one per runner; it is sent only to the runner that gave it. Your agents’ own logins stay on the runner.'}
+            : 'You sign in with Google in your browser. Loom keeps the sign-in in the macOS Keychain, one per runner; it is sent only to the runner that gave it. Your agents’ own logins stay on the runner.'}
         </p>
         {status.state === 'update' && runner?.url && (
           <p className="settings-note" role="status">
@@ -220,6 +255,7 @@ export function CloudPage() {
                   .then((kept) => {
                     setRunner(kept)
                     setAddress(kept.url ?? '')
+                    setMode(kept.mode ?? 'company')
                     setInviteCode('')
                     navigate({ name: 'settings', page: 'org-overview' })
                   })

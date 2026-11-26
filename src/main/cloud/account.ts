@@ -6,12 +6,14 @@ import { httpBase, signInThroughBrowser, type Tokens } from './sign-in'
 import { HostProofError } from './host-proof'
 import { createRunnerTransport, readRunnerTrust } from './transport'
 import type { RunnerTrust } from '../../shared/org'
+import { isManagedRunnerOrigin, type CloudSignInMode } from '../../shared/managed-cloud'
 
 const RUNNER_URL_KEY = 'cloud::runner-url'
 /** One entry per runner: a refresh token is never read for an address other than its own. */
 const REFRESH_TOKEN_PREFIX = 'cloud::refresh-token::'
 /** Pre-proof releases stored arbitrary runner addresses; those sessions must sign in again. */
 const VERIFIED_HOST_PREFIX = 'cloud::verified-host::'
+const SIGN_IN_MODE_PREFIX = 'cloud::sign-in-mode::'
 
 /** The part of the Keychain-backed secret store the account needs. */
 export interface Vault {
@@ -41,7 +43,7 @@ export interface CloudAccountOptions {
 export interface CloudAccount {
   runner(): CloudRunner
   /** Follows another runner, or none with null. Answers with the address as it was kept. */
-  setRunner(url: string | null, expectedEmail?: string): Promise<CloudRunner>
+  setRunner(url: string | null, expectedEmail?: string, mode?: CloudSignInMode): Promise<CloudRunner>
   /** Resolves once the person has finished in the browser. Asking again starts over. */
   signIn(expectedEmail?: string): Promise<void>
   signOut(): Promise<void>
@@ -49,7 +51,7 @@ export interface CloudAccount {
   close(): void
 }
 
-function inviteFrom(code: string): { host: string; secret: string } {
+function inviteFrom(code: string): { host: string; secret: string; mode?: CloudSignInMode } {
   const prefix = 'loom-invite.v1.'
   try {
     if (!code.startsWith(prefix) || code.length > 4096) throw new Error()
@@ -64,6 +66,9 @@ function inviteFrom(code: string): { host: string; secret: string } {
     )
       throw new Error()
     const host = new URL(value['host'])
+    const mode = value['mode']
+    if (mode !== undefined && mode !== 'company' && mode !== 'managed') throw new Error()
+    if (mode === 'managed' && !isManagedRunnerOrigin(host.origin)) throw new Error()
     if (
       host.protocol !== 'https:' ||
       runnerAddress(value['host']) !== `wss://${host.host}` ||
@@ -74,7 +79,7 @@ function inviteFrom(code: string): { host: string; secret: string } {
       host.hash
     )
       throw new Error()
-    return { host: `https://${host.host}`, secret: value['secret'] }
+    return { host: `https://${host.host}`, secret: value['secret'], ...(mode === undefined ? {} : { mode }) }
   } catch {
     throw new Error('This is not a valid organization invite code')
   }
@@ -131,6 +136,8 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
     throw new Error('A developer token is allowed only for a loopback runner in a development build')
   }
   let url = fixed ?? (await vault.getRaw(RUNNER_URL_KEY))
+  let mode: CloudSignInMode =
+    url !== null && (await vault.getRaw(`${SIGN_IN_MODE_PREFIX}${url}`)) === 'managed' ? 'managed' : 'company'
   let session: CloudSession | null = null
   let following: Following | null = null
   /** The sign-in waiting on the browser, if there is one. */
@@ -161,6 +168,7 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
       ...(options.development === undefined ? {} : { development: options.development })
     })
     const current = createCloudSession({
+      ...(mode === 'managed' ? { mode } : {}),
       runnerUrl: url,
       store: {
         get: () => vault.getRaw(key),
@@ -192,7 +200,12 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
   }
 
   function runner(): CloudRunner {
-    return { url, fixed: fixed !== null, devToken: devToken !== null }
+    return {
+      url,
+      fixed: fixed !== null,
+      devToken: devToken !== null,
+      ...(mode === 'managed' ? { mode } : {})
+    }
   }
 
   function blockCurrentHost(address: string): Promise<void> {
@@ -212,24 +225,42 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
     const email = input.trim().toLowerCase()
     if (options.development === true && isLoopbackHost(new URL(address).hostname)) return email
     if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
-      throw new Error('Enter your primary work email before signing in')
+      throw new Error('Enter your primary Google email before signing in')
     return email
   }
 
-  function trustMarker(address: string, trust: RunnerTrust | null | undefined): string | null {
+  function trustMarker(
+    address: string,
+    trust: RunnerTrust | null | undefined,
+    requestedMode: CloudSignInMode
+  ): string | null {
     const verified = readRunnerTrust(JSON.stringify(trust) ?? null)
-    if (verified !== null) return JSON.stringify(verified)
+    if (
+      verified !== null &&
+      (requestedMode === 'managed'
+        ? verified.version === 4 && verified.host === new URL(address).hostname
+        : verified.version === 3)
+    )
+      return JSON.stringify(verified)
     if (options.development === true && isLoopbackHost(new URL(address).hostname)) return null
-    throw new HostProofError('The runner did not provide a verified Workspace domain')
+    throw new HostProofError('The runner did not provide matching verified host identity')
   }
 
-  async function adopt(address: string, expectedEmail: string, inviteSecret?: string): Promise<CloudRunner> {
+  async function adopt(
+    address: string,
+    expectedEmail: string,
+    inviteSecret?: string,
+    requestedMode: CloudSignInMode = 'company'
+  ): Promise<CloudRunner> {
+    if (requestedMode === 'managed' && !isManagedRunnerOrigin(httpBase(address)))
+      throw new HostProofError('Managed sign-in requires a Loom-operated runner')
     const email = workEmail(address, expectedEmail)
     attempt?.abort(new Error('Signing in was started again'))
     const mine = new AbortController()
     attempt = mine
     try {
       const tokens = await signInThroughBrowser({
+        ...(requestedMode === 'managed' ? { mode: requestedMode } : {}),
         base: httpBase(address),
         expectedEmail: email,
         openBrowser: options.openBrowser,
@@ -237,13 +268,15 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
         ...(inviteSecret === undefined ? {} : { inviteSecret }),
         ...(options.development === undefined ? {} : { development: options.development })
       })
-      const marker = trustMarker(address, tokens.trust)
+      const marker = trustMarker(address, tokens.trust, requestedMode)
       return await change(async () => {
         mine.signal.throwIfAborted()
         const key = `${REFRESH_TOKEN_PREFIX}${address}`
         const proofKey = `${VERIFIED_HOST_PREFIX}${address}`
         const previousToken = await vault.getRaw(key)
         const previousProof = await vault.getRaw(proofKey)
+        const modeKey = `${SIGN_IN_MODE_PREFIX}${address}`
+        const previousMode = await vault.getRaw(modeKey)
         mine.signal.throwIfAborted()
         const previousUrl = url
         try {
@@ -251,6 +284,8 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
           mine.signal.throwIfAborted()
           if (marker === null) await vault.deleteRaw(proofKey)
           else await vault.setRaw(proofKey, marker)
+          if (requestedMode === 'managed') await vault.setRaw(modeKey, requestedMode)
+          else await vault.deleteRaw(modeKey)
           mine.signal.throwIfAborted()
           await vault.setRaw(RUNNER_URL_KEY, address)
           mine.signal.throwIfAborted()
@@ -259,6 +294,8 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
           else await vault.setRaw(key, previousToken)
           if (previousProof === null) await vault.deleteRaw(proofKey)
           else await vault.setRaw(proofKey, previousProof)
+          if (previousMode === null) await vault.deleteRaw(modeKey)
+          else await vault.setRaw(modeKey, previousMode)
           if (previousUrl === null) await vault.deleteRaw(RUNNER_URL_KEY)
           else await vault.setRaw(RUNNER_URL_KEY, previousUrl)
           throw error
@@ -267,6 +304,7 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
         following = null
         session = null
         url = address
+        mode = requestedMode
         start(tokens)
         return runner()
       })
@@ -283,15 +321,16 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
   return {
     runner,
 
-    async setRunner(next, expectedEmail = '') {
+    async setRunner(next, expectedEmail = '', nextMode = 'company') {
       if (fixed !== null) throw new Error('The runner address is set by LOOM_RUNNER_URL')
       const address = next === null ? null : runnerAddress(next)
-      if (address !== null) return adopt(address, expectedEmail)
+      if (address !== null) return adopt(address, expectedEmail, undefined, nextMode)
       attempt?.abort(new Error('Cloud turned off'))
       return change(async () => {
         await vault.deleteRaw(RUNNER_URL_KEY)
         stop('The runner address changed')
         url = null
+        mode = 'company'
         return runner()
       })
     },
@@ -311,7 +350,7 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
       try {
         const trust = await current.signIn(email, mine.signal)
         mine.signal.throwIfAborted()
-        const marker = trustMarker(address, trust)
+        const marker = trustMarker(address, trust, mode)
         await change(async () => {
           mine.signal.throwIfAborted()
           if (marker === null) await vault.deleteRaw(`${VERIFIED_HOST_PREFIX}${address}`)
@@ -341,7 +380,7 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
     async join(code, expectedEmail = '') {
       if (fixed !== null) throw new Error('The runner address is set by LOOM_RUNNER_URL')
       const invite = inviteFrom(code)
-      return adopt(runnerAddress(invite.host), expectedEmail, invite.secret)
+      return adopt(runnerAddress(invite.host), expectedEmail, invite.secret, invite.mode)
     },
 
     close: () => stop('Loom is closing')

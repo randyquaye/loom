@@ -218,7 +218,8 @@ const api: LoomApi = {
     health: () => invoke('cloud:health', undefined),
     status: () => invoke('cloud:status', undefined),
     runner: () => invoke('cloud:runner', undefined),
-    setRunner: (url, expectedEmail = '') => invoke('cloud:setRunner', { url, expectedEmail }),
+    setRunner: (url, expectedEmail = '', mode) =>
+      invoke('cloud:setRunner', { url, expectedEmail, ...(mode === undefined ? {} : { mode }) }),
     signIn: (expectedEmail = '') => invoke('cloud:signIn', { expectedEmail }),
     signOut: () => invoke('cloud:signOut', undefined),
     previewInvite: (code) => invoke('cloud:previewInvite', { code }),

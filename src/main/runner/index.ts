@@ -1,12 +1,11 @@
 import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { googleClient } from '../auth/google'
-import { createHostProof } from '../auth/host-proof'
+import { readSignInConfig } from './sign-in-config'
 import { destroyAllTerminals } from '../pty'
 import { closeAllSessions } from '../sessions/service'
 import { workspacePlacement } from '../workspace/placement'
-import { startRunner, type RunnerConfig, type SignInConfig } from './runner'
+import { startRunner, type RunnerConfig } from './runner'
 
 /** Outside the 4100-9990 range the ten-port workspace blocks are allocated from. */
 const DEFAULT_PORT = 3877
@@ -28,60 +27,6 @@ async function runnerToken(env: NodeJS.ProcessEnv, dataDir: string): Promise<str
   const token = randomBytes(32).toString('base64url')
   await writeFile(file, `${token}\n`, { mode: 0o600 })
   return token
-}
-
-function listOf(value: string): string[] {
-  return value
-    .split(/[\s,]+/)
-    .map((entry) => entry.trim().toLowerCase())
-    .filter((entry) => entry !== '')
-}
-
-/**
- * Sign-in is on when a Google client is configured, and then all of it must be. The client
- * secret and first owner's email are host configuration; membership lives in SQLite.
- */
-async function readSignIn(env: NodeJS.ProcessEnv): Promise<SignInConfig | undefined> {
-  const clientId = env['LOOM_GOOGLE_CLIENT_ID']
-  if (clientId === undefined || clientId === '') {
-    if (env['LOOM_GOOGLE_CLIENT_SECRET'] || env['LOOM_SIGN_IN_DOMAINS'] || env['LOOM_OWNER_EMAIL'])
-      throw new Error('LOOM_GOOGLE_CLIENT_ID is required when sign-in settings are present')
-    return undefined
-  }
-  const publicUrl = required(env, 'LOOM_PUBLIC_URL', 'the https address people reach this runner at')
-  const parsed = new URL(publicUrl)
-  if (
-    parsed.protocol !== 'https:' ||
-    parsed.pathname !== '/' ||
-    parsed.username ||
-    parsed.password ||
-    parsed.search ||
-    parsed.hash
-  )
-    throw new Error('LOOM_PUBLIC_URL must be an https origin')
-  const signingKey = await readFile(
-    required(env, 'LOOM_RUNNER_SIGNING_KEY_FILE', 'the durable Ed25519 private key'),
-    'utf8'
-  )
-  createHostProof(signingKey, parsed.origin, 'startup-validation')
-  const domains = listOf(
-    required(env, 'LOOM_SIGN_IN_DOMAINS', 'the Google Workspace domains that may sign in')
-  )
-  const ownerEmail = required(env, 'LOOM_OWNER_EMAIL', 'the first organization owner').trim().toLowerCase()
-  if (domains.length === 0 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail))
-    throw new Error('Valid sign-in domains and a first-owner email are required')
-  return {
-    google: googleClient({
-      clientId,
-      clientSecret: required(env, 'LOOM_GOOGLE_CLIENT_SECRET', 'the secret of the Google OAuth client')
-    }),
-    googleClientId: clientId,
-    domains,
-    ownerEmail,
-    signingKey,
-    transportProofFile: required(env, 'LOOM_TRANSPORT_PROOF_FILE', 'the root-published TLS key binding'),
-    publicUrl: parsed.origin
-  }
 }
 
 /** Where the proxy for agent logins listens, when the host says it has one. */
@@ -153,7 +98,7 @@ async function readConfig(env: NodeJS.ProcessEnv): Promise<RunnerConfig> {
   )
   if (secretKey.length !== 32) throw new Error('LOOM_SECRET_KEY must decode to exactly 32 bytes')
   await mkdir(dataDir, { recursive: true })
-  const signIn = await readSignIn(env)
+  const signIn = await readSignInConfig(env)
   const maxRunningWorkspaces = Number(
     signIn === undefined
       ? (env['LOOM_MAX_RUNNING_WORKSPACES'] ?? 1000)

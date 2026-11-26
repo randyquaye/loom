@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
+import type { CloudSignInMode } from '../../shared/managed-cloud'
 import type {
   Organization,
   OrgAdminEvent,
@@ -23,7 +24,10 @@ export class OrgError extends Error {}
 export type OrgService = ReturnType<typeof createOrgService>
 
 /** Authorization and its audit record share each SQLite transaction. */
-export function createOrgService(db: Database.Database, config: { ownerEmail: string; publicUrl: string }) {
+export function createOrgService(
+  db: Database.Database,
+  config: { ownerEmail: string; publicUrl: string; mode?: CloudSignInMode }
+) {
   function organization(): Organization | null {
     return (
       (db.prepare('SELECT name, created_by AS createdBy, created_at AS createdAt FROM organization').get() as
@@ -195,7 +199,7 @@ export function createOrgService(db: Database.Database, config: { ownerEmail: st
         const host = new URL(config.publicUrl).origin
         return {
           invite,
-          code: `loom-invite.v1.${Buffer.from(JSON.stringify({ host, secret })).toString('base64url')}`
+          code: `loom-invite.v1.${Buffer.from(JSON.stringify({ host, secret, ...(config.mode === 'managed' ? { mode: config.mode } : {}) })).toString('base64url')}`
         }
       })()
     },

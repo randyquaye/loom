@@ -12,6 +12,10 @@ const CODEX_SECURITY: Record<CodexMode, { sandbox: string; approvalPolicy: strin
   bypass: { sandbox: 'danger-full-access', approvalPolicy: 'never' }
 }
 
+/** Codex's built-in prompt reserves request_user_input for optional questions; Loom renders every question natively. */
+const CODEX_QUESTION_INSTRUCTION =
+  'When you need to ask the user anything, including blocking questions, call the `request_user_input` tool when it is available instead of writing the question in a message.'
+
 /** Opens a persistent connection without starting a turn; the owner must close it. */
 export async function openCodexThread(
   opts: SessionOpts,
@@ -70,7 +74,9 @@ export async function openCodexThread(
     const params = {
       cwd: opts.worktreePath,
       model: opts.model,
-      developerInstructions: opts.systemPromptAppend,
+      developerInstructions: [opts.systemPromptAppend, CODEX_QUESTION_INSTRUCTION]
+        .filter(Boolean)
+        .join('\n\n'),
       config: { model_reasoning_effort: opts.effort },
       ...(opts.modes === undefined ? {} : CODEX_SECURITY[opts.modes.codex])
     }

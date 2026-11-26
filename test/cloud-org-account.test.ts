@@ -47,6 +47,58 @@ afterEach(() => {
 })
 
 describe('organization join adoption', () => {
+  it('uses the managed invitation path without changing company invitation defaults', async () => {
+    const fx = await fixture()
+    const managedCode = `loom-invite.v1.${Buffer.from(JSON.stringify({ host: 'https://pilot.loombox.xyz', secret, mode: 'managed' })).toString('base64url')}`
+    browserSignIn.mockResolvedValueOnce({
+      accessToken: 'managed',
+      refreshToken: 'managed-refresh',
+      expiresIn: 3600,
+      trust: {
+        version: 4,
+        host: 'pilot.loombox.xyz',
+        googleClientId: '123-managed.apps.googleusercontent.com'
+      }
+    })
+    await fx.account.join(managedCode, 'owner@gmail.com')
+    expect(browserSignIn).toHaveBeenLastCalledWith(
+      expect.objectContaining({ mode: 'managed', inviteSecret: secret })
+    )
+    expect(fx.account.runner().mode).toBe('managed')
+    fx.account.close()
+  })
+
+  it('retains explicit managed mode after sign-in and uses it for subsequent browser sign-ins', async () => {
+    const fx = await fixture()
+    const managedUrl = 'wss://pilot.loombox.xyz'
+    const managedTrust = {
+      version: 4 as const,
+      host: 'pilot.loombox.xyz',
+      googleClientId: '123-managed.apps.googleusercontent.com'
+    }
+    browserSignIn.mockResolvedValue({
+      accessToken: 'managed-access',
+      refreshToken: 'managed-refresh',
+      expiresIn: 3600,
+      trust: managedTrust
+    })
+    await fx.account.setRunner(managedUrl, 'owner@gmail.com', 'managed')
+    expect(fx.account.runner()).toMatchObject({ url: managedUrl, mode: 'managed' })
+    expect(fx.saved.get(`cloud::sign-in-mode::${managedUrl}`)).toBe('managed')
+    expect(browserSignIn).toHaveBeenLastCalledWith(expect.objectContaining({ mode: 'managed' }))
+    await fx.account.signIn('owner@gmail.com')
+    expect(browserSignIn).toHaveBeenLastCalledWith(expect.objectContaining({ mode: 'managed' }))
+    fx.account.close()
+  })
+
+  it('refuses managed mode for an arbitrary host before sending an invitation or opening Google', async () => {
+    const fx = await fixture()
+    await expect(fx.account.setRunner(next, 'owner@gmail.com', 'managed')).rejects.toThrow()
+    expect(browserSignIn).not.toHaveBeenCalled()
+    expect(fx.account.runner().url).toBe(old)
+    fx.account.close()
+  })
+
   it.each(['signIn', 'typed'])(
     'preserves the current session on a %s transport-proof failure',
     async (path) => {

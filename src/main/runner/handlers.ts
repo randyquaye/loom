@@ -50,6 +50,7 @@ import { compileBotInstructions } from '../bots/execution'
 import type { BotConfig } from '../../shared/bots'
 import { markSessionRead } from '../sessions/unread'
 import { answerQuestion, stopSessionWork, steerQueued } from '../sessions/service'
+import { registerMobileDiscovery } from './mobile'
 
 export interface RunnerHandlerOptions {
   placement: WorkspacePlacement
@@ -197,6 +198,8 @@ function assertWorkspaceRelative(attachments: readonly string[]): void {
 export function registerRunnerHandlers(deps: IpcDeps, options: RunnerHandlerOptions): void {
   const { db } = deps
 
+  registerMobileDiscovery(db, options.access)
+
   handle('app:ping', () => 'pong')
   const authorizeControl = (caller: Caller | undefined, workspaceId: string) => {
     const identity = signedIn(caller)
@@ -231,6 +234,7 @@ export function registerRunnerHandlers(deps: IpcDeps, options: RunnerHandlerOpti
     return {
       ...overview,
       settings: {
+        ...(options.signIn?.mode === 'managed' ? { mode: options.signIn.mode } : {}),
         domains: options.signIn?.domains ?? [],
         googleClientId: options.signIn?.googleClientId ?? ''
       },

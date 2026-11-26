@@ -18,6 +18,7 @@ interface FilesState {
   openPathByWorkspace: Record<string, string | null>
   viewerModeByWorkspace: Record<string, ViewerMode>
   revealLineByWorkspace: Record<string, number | null>
+  revealDirectoryByWorkspace: Record<string, { path: string; ancestors: string[] }>
   contentByPath: Record<string, FilePreview>
   diffByPath: Record<string, string>
   diagnosticsByPath: Record<string, Diagnostic[]>
@@ -94,6 +95,7 @@ export const useFiles = create<FilesState>((set, get) => ({
   openPathByWorkspace: {},
   viewerModeByWorkspace: {},
   revealLineByWorkspace: {},
+  revealDirectoryByWorkspace: {},
   contentByPath: {},
   diffByPath: {},
   diagnosticsByPath: {},
@@ -113,6 +115,7 @@ export const useFiles = create<FilesState>((set, get) => ({
         openPathByWorkspace: drop(state.openPathByWorkspace),
         viewerModeByWorkspace: drop(state.viewerModeByWorkspace),
         revealLineByWorkspace: drop(state.revealLineByWorkspace),
+        revealDirectoryByWorkspace: drop(state.revealDirectoryByWorkspace),
         changesByWorkspace: drop(state.changesByWorkspace),
         childrenByPath: withoutWorkspace(state.childrenByPath, workspaceId),
         contentByPath: withoutWorkspace(state.contentByPath, workspaceId),
@@ -251,6 +254,39 @@ export const useFiles = create<FilesState>((set, get) => ({
 
   async openAt(workspaceId, path, line) {
     const current = currentRead(workspaceId)
+    path = path.replace(/^\.\/|\/+$/g, '')
+    const parts = path.split('/')
+    const parent = parts.slice(0, -1).join('/')
+    try {
+      // The existing listings distinguish folders from files without attempting a file preview.
+      if (parent === '') {
+        if (get().treeByWorkspace[workspaceId] === undefined)
+          await (pendingDirectories.get(cacheKey(workspaceId, '')) ?? readDirectory(workspaceId, ''))
+      } else await get().expand(workspaceId, parent)
+      if (!current()) return
+      const siblings =
+        parent === ''
+          ? get().treeByWorkspace[workspaceId]
+          : get().childrenByPath[cacheKey(workspaceId, parent)]
+      if (siblings?.some((node) => node.path === path && node.kind === 'dir')) {
+        const ancestors = parts.map((_, index) => parts.slice(0, index + 1).join('/'))
+        if (get().treeByWorkspace[workspaceId] === undefined)
+          await (pendingDirectories.get(cacheKey(workspaceId, '')) ?? readDirectory(workspaceId, ''))
+        if (!current()) return
+        await Promise.all(ancestors.map((directory) => get().expand(workspaceId, directory)))
+        if (!current()) return
+        set({
+          revealDirectoryByWorkspace: {
+            ...get().revealDirectoryByWorkspace,
+            [workspaceId]: { path, ancestors }
+          }
+        })
+        return
+      }
+    } catch (err) {
+      if (current()) useToasts.getState().push(`Could not open ${path}: ${String(err)}`, 'err')
+      return
+    }
     if (!(await get().open(workspaceId, path))) return
     if (!current()) return
     if (line !== undefined) {

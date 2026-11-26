@@ -1,6 +1,12 @@
 import { createHash, createPublicKey, verify, type JsonWebKeyInput, type KeyObject } from 'node:crypto'
 import type { HostProof, RunnerTrust } from '../../shared/org'
 import { isLoopbackHost } from '../auth/callback'
+import {
+  isGoogleClientId,
+  isManagedGoogleEmail,
+  isManagedRunnerOrigin,
+  type CloudSignInMode
+} from '../../shared/managed-cloud'
 
 const GOOGLE_KEYS = 'https://www.googleapis.com/oauth2/v3/certs'
 const DNS_RESOLVER = 'https://cloudflare-dns.com/dns-query'
@@ -15,6 +21,7 @@ export interface ProofOptions {
 }
 
 interface HostSignIn {
+  mode?: CloudSignInMode
   base: string
   nonce: string
   expectedEmail?: string
@@ -73,9 +80,11 @@ async function checkHostProof(input: HostSignIn, options: ProofOptions): Promise
   const host = address.hostname.toLowerCase()
   if (options.development === true && isLoopbackHost(host)) return null
   if (address.protocol !== 'https:') return refused('a production host must use HTTPS')
+  if (input.mode === 'managed' && !isManagedRunnerOrigin(input.base))
+    return refused('this is not a Loom-managed runner address')
   const expectedEmail = input.expectedEmail?.trim().toLowerCase()
   if (expectedEmail === undefined || expectedEmail === '')
-    return refused('enter your work email before signing in')
+    return refused('enter your Google email before signing in')
   const { idToken, proof } = input
   if (idToken === undefined || proof === undefined || idToken.length > 32768) {
     return refused('the runner did not return its sign-in proof; update it and sign in again')
@@ -141,16 +150,23 @@ async function checkHostProof(input: HostSignIn, options: ProofOptions): Promise
   )
     return refused('Google identity is missing, expired, or belongs to another sign-in')
   const domain = typeof claims['hd'] === 'string' ? claims['hd'].toLowerCase() : ''
-  if (!DOMAIN.test(domain)) return refused('a verified Google Workspace account is required')
+  const managed = input.mode === 'managed'
+  if (managed) {
+    if (!isGoogleClientId(claims['aud']) || !isManagedGoogleEmail(expectedEmail, domain || null))
+      return refused('a verified Gmail or Google Workspace account is required')
+  } else if (!DOMAIN.test(domain)) return refused('a verified Google Workspace account is required')
   if (proof.host !== host || typeof proof.public_key !== 'string' || typeof proof.signature !== 'string') {
     return refused('the runner proof names another host')
   }
-  const publicKey = await verifyDomainHostKey(domain, host, proof.public_key, options)
+  const publicKey = await verifyDomainHostKey(managed ? host : domain, host, proof.public_key, {
+    ...options,
+    ...(managed ? { googleClientId: claims['aud'] as string } : {})
+  })
   const payload = Buffer.from(JSON.stringify(['loom.host-proof.v1', host, input.nonce]))
   if (!verify(null, payload, publicKey, Buffer.from(proof.signature, 'base64'))) {
     return refused('the runner could not prove it holds the listed signing key')
   }
-  return { version: 3, domain }
+  return managed ? { version: 4, host, googleClientId: claims['aud'] as string } : { version: 3, domain }
 }
 
 /** Both fresh sign-in and reconnects use the same independent domain authorization. */
@@ -158,7 +174,7 @@ export async function verifyDomainHostKey(
   domain: string,
   host: string,
   encodedKey: string,
-  options: Pick<ProofOptions, 'fetch'> = {}
+  options: Pick<ProofOptions, 'fetch'> & { googleClientId?: string } = {}
 ): Promise<KeyObject> {
   if (!DOMAIN.test(domain) || encodedKey.length > 512)
     return refused('invalid Workspace domain or runner key')
@@ -186,9 +202,15 @@ export async function verifyDomainHostKey(
       )
         return false
       const record = txtValue(answer['data'])?.trim()
-      const match = record?.match(/^loom-host=([^;\s]+);\s*key=([A-Za-z0-9+/]{43}=)$/)
+      const match = record?.match(
+        /^loom-host=([^;\s]+);\s*key=([A-Za-z0-9+/]{43}=)(?:;\s*google-client=([A-Za-z0-9-]+\.apps\.googleusercontent\.com))?$/
+      )
       return (
-        match !== null && match !== undefined && match[1]?.toLowerCase() === host && match[2] === fingerprint
+        match !== null &&
+        match !== undefined &&
+        match[1]?.toLowerCase() === host &&
+        match[2] === fingerprint &&
+        match[3] === options.googleClientId
       )
     })
   if (!listed) return refused(`_loom.${domain} does not list this host and signing key`)

@@ -1,0 +1,45 @@
+{
+  "description": "Synthetic fixture; no real account, host, TLS key or reusable credential.",
+  "now": 1800000000000,
+  "host": "loom.example.com",
+  "base": "https://loom.example.com",
+  "domain": "example.com",
+  "expectedEmail": "developer@example.com",
+  "nonce": "native-mobile-test-nonce-0123456789abcdef0123",
+  "jwks": {
+    "keys": [
+      {
+        "kty": "RSA",
+        "n": "m3o3ZGypklckkHGwBPXEQhFtXDcAvttKlYAeY2s4OFTte-popoYqjVeXKYYhekXZ5NiSykutQ0HYvfWWcp09WukhwB0oiXTBZbZxXob1ypjTkbVyHNFSi_K3h1equyn1lI-zp41Hdypst3blgeL_h9VJ9N2HDpxv6hW7NGYxc63rMB5HHzxwLQlAkLum5OFViY1FvIgV28oKUiGL_-10FvHrk5lwISNjHNkzHYQ5TDmU7aLPo1NDksrpGsEsZr0dE-mp-xJPXhsP3pELl6ID0Z5Yr5AMSzw1f9er4kJZqZtjWxnsb4KTA_9zS1uniJQbAzIFmhqwwnz7i2LFORQMsw",
+        "e": "AQAB",
+        "kid": "loom-fixture-rsa",
+        "alg": "RS256",
+        "use": "sig"
+      }
+    ]
+  },
+  "idToken": "eyJhbGciOiJSUzI1NiIsImtpZCI6Imxvb20tZml4dHVyZS1yc2EifQ.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhdWQiOiJzeW50aGV0aWMtbG9vbS1jbGllbnQiLCJzdWIiOiJzeW50aGV0aWMtZGV2ZWxvcGVyIiwiZW1haWwiOiJkZXZlbG9wZXJAZXhhbXBsZS5jb20iLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwiaGQiOiJleGFtcGxlLmNvbSIsIm5vbmNlIjoibmF0aXZlLW1vYmlsZS10ZXN0LW5vbmNlLTAxMjM0NTY3ODlhYmNkZWYwMTIzIiwiaWF0IjoxNzk5OTk5OTkwLCJleHAiOjE4MDAwMDAzMDB9.PjFi7Wa2AswULsWBoigbwF7KYa0IEkmdjrNl-ogCf-8qnYe7XqCasHcdzB4U0Bl7eRDxEGPQ9TZDKvB0nsu8O8vR0zPChiHsygGIGqQyJ-Ejqr80BSj5kXwbDGUFDJjS6l7ZwFq-1b2kbZvk20zZ5KJY6guiQTdbxKFiOFMPpNh6PsbpSb-36SVcDq_1q2NztfNqeAxkfBgQ3OpCETGCr_c5iSUpIReXMLlvIf_T8OhAq4xu8C3L-iTvnXt7_GBGOG4Kw3UzvmvgNosEPxplWmFqPwh78u6QraQ7IUYygNNc8piSWKozfsG8sO10fCRyq_9USpPV3Llcxv-cdKlQcg",
+  "hostProof": {
+    "host": "loom.example.com",
+    "public_key": "MCowBQYDK2VwAyEAoTavXQtTCX44zfKgRObniuxsTqKQsdgz9uu35gJ1S/Y=",
+    "signature": "lMTO5ePmf6gScrGrJYtLg0sWKPsljNR0oikG1eznF4nCHQyR268bO20BVwdTmuJy/K5OJIsR+UvJ77dHSWwaBA=="
+  },
+  "transportProof": {
+    "host": "loom.example.com",
+    "public_key": "MCowBQYDK2VwAyEAoTavXQtTCX44zfKgRObniuxsTqKQsdgz9uu35gJ1S/Y=",
+    "tls_fingerprint": "//////////////////////////////////////////8=",
+    "issued_at": 1799999999000,
+    "expires_at": 1800000060000,
+    "signature": "J76SEURDwKzLsbZCxSTjNN4/YQMbVSGzCicLL4UyXCTNDpC4l72Defv7oQL/c9Fm/O9o6P8CymXs7DT9DYnPCw=="
+  },
+  "dns": {
+    "Status": 0,
+    "Answer": [
+      {
+        "name": "_loom.example.com.",
+        "type": 16,
+        "data": "\"loom-host=loom.example.com; key=u9IUMxX4AAQrzQ0H+7gwninjV8NpdHdgCAAxHr71U/M=\""
+      }
+    ]
+  }
+}

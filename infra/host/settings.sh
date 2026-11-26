@@ -18,6 +18,7 @@ ask() {
     echo 'A nonempty, single-line value under 4096 characters is required' >&2; exit 1;
   }
   case "$name" in
+    sign-in-mode) [[ "$value" = company || "$value" = managed ]] || exit 1;;
     google-client-id) [[ "$value" = *.apps.googleusercontent.com ]] || exit 1;;
     owner-email) [[ "$value" =~ ^[^[:space:]@]+@[^[:space:]@]+$ ]] || exit 1;;
     sign-in-domains)
@@ -30,7 +31,10 @@ ask() {
 }
 ask google-client-id 'Google OAuth client ID' String
 ask google-client-secret 'Google OAuth client secret' SecureString
-ask sign-in-domains 'Allowed Workspace domains, comma separated' String
+ask sign-in-mode 'Sign-in mode: company or managed' String
+if [ "$(cat "$STAGING/sign-in-mode")" = company ]; then
+  ask sign-in-domains 'Allowed Workspace domains, comma separated' String
+fi
 ask owner-email 'First owner email, used only before the org exists' String
 ask github-client-id 'GitHub App client ID' String
 ask github-client-secret 'GitHub App client secret' SecureString

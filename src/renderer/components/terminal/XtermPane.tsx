@@ -8,6 +8,7 @@ import { Splitter } from '../ui/Splitter'
 import { useToasts } from '../ui/Toast'
 import { TERM_DEFAULT, TERM_MIN, termMax, usePanels } from '../../state/panels'
 import { useProjects } from '../../state/projects'
+import { useUi } from '../../state/ui'
 import { clampInWindow, WINDOW_EDGE } from '../ui/anchor'
 import '../panels/panels.css'
 
@@ -22,20 +23,27 @@ const FIRST_TAB: Tab = { key: 1, label: 'shell 1' }
 
 const LABEL_MAX = 24
 
+interface XtermPaneProps {
+  workspaceId: string
+  centerTabs: HTMLDivElement | null
+  centerBody: HTMLDivElement | null
+}
+
 /**
  * Tabbed terminal pane for one workspace, with a row splitter above it that sets its height and
  * a toggle that collapses it to the tab bar. Every tab owns a live PTY and xterm instance for its
  * whole lifetime; inactive and collapsed tabs stay mounted but hidden. Switching `workspaceId`
  * tears down every tab and starts over with a single shell.
+ * Individual tabs can move into the middle panel without remounting their shell hosts.
  *
  * A cloud workspace's terminals live on the runner and outlive this pane: opening it shows
  * the ones already running, leaving it only stops watching, and closing a tab is what ends one.
  */
-export function XtermPane({ workspaceId }: { workspaceId: string }) {
-  return <TerminalTabs key={workspaceId} workspaceId={workspaceId} />
+export function XtermPane(props: XtermPaneProps) {
+  return <TerminalTabs key={props.workspaceId} {...props} />
 }
 
-function TerminalTabs({ workspaceId }: { workspaceId: string }) {
+function TerminalTabs({ workspaceId, centerTabs, centerBody }: XtermPaneProps) {
   const baseId = useId()
   const push = useToasts((s) => s.push)
   // Labels keep counting up so `shell 2` stays `shell 2` after `shell 1` closes.
@@ -48,6 +56,13 @@ function TerminalTabs({ workspaceId }: { workspaceId: string }) {
   // A cloud pane has no tabs until it knows which terminals are already running.
   const [tabs, setTabs] = useState<Tab[]>(cloud ? [] : [FIRST_TAB])
   const [activeKey, setActiveKey] = useState(1)
+  const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
+  const [centerKey, setCenterKey] = useState(1)
+  const [dockBody, setDockBody] = useState<HTMLDivElement | null>(null)
+  const centerShown = useUi((s) => s.workspacePane === 'terminal')
+  const dockTabs = tabs.filter((tab) => !expanded.has(tab.key))
+  const dockKey = dockTabs.find((tab) => tab.key === activeKey)?.key ?? dockTabs[0]?.key
+  const actionKey = centerShown ? centerKey : (dockKey ?? activeKey)
   const terms = useRef(new Map<number, Terminal>())
   const ptyIds = useRef(new Map<number, string>())
   const [withSelection, setWithSelection] = useState<ReadonlySet<number>>(new Set())
@@ -61,6 +76,28 @@ function TerminalTabs({ workspaceId }: { workspaceId: string }) {
   const collapsed = usePanels((s) => s.termCollapsed)
   const setCollapsed = usePanels((s) => s.setTermCollapsed)
   const commitPanels = usePanels((s) => s.commit)
+  const dockCollapsed = collapsed || dockTabs.length === 0
+
+  function showCenter(key: number) {
+    setExpanded((prev) => new Set(prev).add(key))
+    setCenterKey(key)
+    useUi.setState({ workspacePane: 'terminal' })
+  }
+
+  function removeFromCenter(key: number) {
+    const remaining = new Set(expanded)
+    remaining.delete(key)
+    setExpanded(remaining)
+    if (centerKey === key) setCenterKey(remaining.values().next().value ?? 1)
+    if (remaining.size === 0 && centerShown) useUi.setState({ workspacePane: 'chat' })
+  }
+
+  useEffect(
+    () => () => {
+      if (useUi.getState().workspacePane === 'terminal') useUi.setState({ workspacePane: 'chat' })
+    },
+    []
+  )
 
   // The right pane's height bounds the terminal's; the store re-clamps it whenever this changes.
   useEffect(() => {
@@ -113,14 +150,17 @@ function TerminalTabs({ workspaceId }: { workspaceId: string }) {
     })
   }, [])
 
-  function addTab() {
+  function addTab(center = false) {
     const key = nextKey.current++
     setTabs((prev) => [...prev, { key, label: `shell ${key}` }])
     setActiveKey(key)
+    if (center) showCenter(key)
+    else setCollapsed(false)
   }
 
   function closeTab(key: number) {
     if (tabs.length <= 1) return
+    if (expanded.has(key)) removeFromCenter(key)
     // The runner keeps a cloud terminal until it is told to end it; closing its tab is that.
     const ptyId = ptyIds.current.get(key)
     if (cloud && ptyId !== undefined)
@@ -154,7 +194,7 @@ function TerminalTabs({ workspaceId }: { workspaceId: string }) {
   }, [baseId, renaming])
 
   async function attachSelection() {
-    const selection = terms.current.get(activeKey)?.getSelection() ?? ''
+    const selection = terms.current.get(actionKey)?.getSelection() ?? ''
     if (selection.length === 0) return
     try {
       const path = await window.loom.terminal.attach(workspaceId, selection)
@@ -168,7 +208,60 @@ function TerminalTabs({ workspaceId }: { workspaceId: string }) {
 
   return (
     <>
-      {!collapsed && (
+      {centerTabs &&
+        createPortal(
+          tabs
+            .filter((tab) => expanded.has(tab.key))
+            .map((tab) => (
+              <div
+                key={tab.key}
+                className={`tab session-tab${centerShown && centerKey === tab.key ? ' tab-on' : ''}`}
+                role="presentation"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  id={`${baseId}-tab-${tab.key}`}
+                  className="tab-main"
+                  aria-selected={centerShown && centerKey === tab.key}
+                  aria-controls={`${baseId}-host-${tab.key}`}
+                  title="Double-click to rename"
+                  onClick={() => showCenter(tab.key)}
+                  onDoubleClick={() => setRenaming(tab.key)}
+                >
+                  <span aria-hidden="true">❯_</span>
+                  <span className="tab-label">{labels.get(tab.key) ?? tab.label}</span>
+                </button>
+                {tabs.length > 1 && (
+                  <button
+                    type="button"
+                    className="tab-close"
+                    aria-label={`Close ${labels.get(tab.key) ?? tab.label}`}
+                    title="Close terminal"
+                    onClick={() => closeTab(tab.key)}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            )),
+          centerTabs
+        )}
+      {centerTabs &&
+        expanded.size > 0 &&
+        createPortal(
+          <button
+            type="button"
+            className="tab tab-add"
+            title="New terminal"
+            aria-label="New terminal"
+            onClick={() => addTab(true)}
+          >
+            +
+          </button>,
+          centerTabs
+        )}
+      {!dockCollapsed && (
         <Splitter
           label="Resize terminal"
           axis="y"
@@ -184,13 +277,13 @@ function TerminalTabs({ workspaceId }: { workspaceId: string }) {
       <div
         ref={panelRef}
         className="term-panel"
-        data-collapsed={collapsed}
-        style={collapsed ? undefined : { height: termH }}
+        data-collapsed={dockCollapsed}
+        style={dockCollapsed ? undefined : { height: termH }}
       >
         <div className="term-tabs">
           <div className="term-tablist" role="tablist" aria-label="Terminals">
-            {tabs.map((tab) => {
-              const on = tab.key === activeKey
+            {dockTabs.map((tab) => {
+              const on = tab.key === dockKey
               const label = labels.get(tab.key) ?? tab.label
               return (
                 <div key={tab.key} className="term-tab" data-on={on} role="presentation">
@@ -227,16 +320,27 @@ function TerminalTabs({ workspaceId }: { workspaceId: string }) {
             className="term-tab-add"
             title="New terminal"
             aria-label="New terminal"
-            onClick={addTab}
+            onClick={() => addTab()}
           >
             +
           </button>
           <button
             type="button"
+            className="term-tab-add"
+            title="Move to middle panel"
+            aria-label="Move to middle panel"
+            disabled={dockKey === undefined}
+            onClick={() => dockKey !== undefined && showCenter(dockKey)}
+          >
+            ↖
+          </button>
+          <button
+            type="button"
             className="term-tab-collapse"
-            title={collapsed ? 'Expand terminal' : 'Collapse terminal'}
-            aria-label={collapsed ? 'Expand terminal' : 'Collapse terminal'}
-            aria-expanded={!collapsed}
+            title={dockCollapsed ? 'Expand terminal' : 'Collapse terminal'}
+            aria-label={dockCollapsed ? 'Expand terminal' : 'Collapse terminal'}
+            aria-expanded={!dockCollapsed}
+            disabled={dockTabs.length === 0}
             onClick={() => setCollapsed(!collapsed)}
           >
             <svg
@@ -253,30 +357,50 @@ function TerminalTabs({ workspaceId }: { workspaceId: string }) {
             </svg>
           </button>
         </div>
-        <div className="term-body" hidden={collapsed}>
-          <div className="term-actions">
-            <button
-              type="button"
-              className="icon-btn"
-              disabled={!withSelection.has(activeKey)}
-              title="Attach selection"
-              aria-label="Attach selection"
-              onClick={() => void attachSelection()}
-            >
-              <svg
-                className="icon"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.5}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="m9 13 6-6a3 3 0 0 1 4.2 4.2l-8 8a5 5 0 0 1-7.1-7.1l8-8a2 2 0 0 1 2.8 2.8L7 14.8" />
-              </svg>
-            </button>
-          </div>
+        <div ref={setDockBody} className="term-body" hidden={dockCollapsed}>
+          {dockBody &&
+            createPortal(
+              <div className="term-actions">
+                {centerShown && (
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title="Return to sidebar"
+                    aria-label="Return to sidebar"
+                    onClick={() => {
+                      removeFromCenter(centerKey)
+                      setActiveKey(centerKey)
+                      setCollapsed(false)
+                      usePanels.getState().setRightHidden(false)
+                    }}
+                  >
+                    ↘
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="icon-btn"
+                  disabled={!withSelection.has(actionKey)}
+                  title="Attach selection"
+                  aria-label="Attach selection"
+                  onClick={() => void attachSelection()}
+                >
+                  <svg
+                    className="icon"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={1.5}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="m9 13 6-6a3 3 0 0 1 4.2 4.2l-8 8a5 5 0 0 1-7.1-7.1l8-8a2 2 0 0 1 2.8 2.8L7 14.8" />
+                  </svg>
+                </button>
+              </div>,
+              centerShown && centerBody ? centerBody : dockBody
+            )}
           {tabs.map((tab) => (
             <ShellHost
               key={tab.key}
@@ -286,8 +410,9 @@ function TerminalTabs({ workspaceId }: { workspaceId: string }) {
               workspaceId={workspaceId}
               attach={tab.attach}
               detached={cloud}
-              active={tab.key === activeKey}
-              shown={!collapsed}
+              active={tab.key === (expanded.has(tab.key) ? centerKey : dockKey)}
+              shown={expanded.has(tab.key) ? centerShown : !dockCollapsed}
+              target={expanded.has(tab.key) ? centerBody : dockBody}
               onTerminal={register}
               onPty={trackPty}
               onSelection={selectionChanged}
@@ -400,12 +525,22 @@ interface ShellHostProps {
   onTerminal: (key: number, term: Terminal | null) => void
   onPty: (key: number, id: string | null) => void
   onSelection: (key: number, has: boolean) => void
+  target: HTMLDivElement | null
 }
 
 /** One PTY + xterm instance, alive from mount to unmount regardless of visibility. */
 function ShellHost(props: ShellHostProps) {
   const { tabKey, workspaceId, attach, detached, active, shown, onTerminal, onPty, onSelection } = props
   const hostRef = useRef<HTMLDivElement>(null)
+  // Moving this stable portal container preserves both the xterm and its running process.
+  const [container] = useState(() => Object.assign(document.createElement('div'), { className: 'term-body' }))
+  useLayoutEffect(() => {
+    props.target?.appendChild(container)
+    return () => container.remove()
+  }, [container, props.target])
+  useLayoutEffect(() => {
+    container.hidden = !active
+  }, [container, active])
   const fitRef = useRef<(() => void) | null>(null)
   const [ptyId, setPtyId] = useState<string | null>(null)
   const push = useToasts((s) => s.push)
@@ -501,21 +636,24 @@ function ShellHost(props: ShellHostProps) {
 
   // Report the visible terminal to main (run actions write there).
   useEffect(() => {
-    if (!active || ptyId === null) return
+    if (!active || !shown || ptyId === null) return
     window.loom.terminal
       .setActive(ptyId)
       .catch((err: unknown) => push(`Could not activate terminal: ${String(err)}`, 'err'))
-  }, [active, ptyId, push])
+  }, [active, shown, ptyId, push])
 
   // Refit once laid out again, on tab switch and on expand, so it never comes back at the size
   // it had (or the minimum it skipped to) while hidden.
   useEffect(() => {
     if (!active || !shown) return
-    const frame = requestAnimationFrame(() => fitRef.current?.())
+    const frame = requestAnimationFrame(() => {
+      fitRef.current?.()
+      hostRef.current?.querySelector('textarea')?.focus()
+    })
     return () => cancelAnimationFrame(frame)
-  }, [active, shown])
+  }, [active, shown, props.target])
 
-  return (
+  return createPortal(
     <div
       ref={hostRef}
       id={props.hostId}
@@ -523,6 +661,10 @@ function ShellHost(props: ShellHostProps) {
       role="tabpanel"
       aria-labelledby={props.labelledBy}
       hidden={!active}
-    />
+      onFocusCapture={() => {
+        if (ptyId) void window.loom.terminal.setActive(ptyId).catch(() => {})
+      }}
+    />,
+    container
   )
 }

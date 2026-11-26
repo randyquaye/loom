@@ -144,7 +144,7 @@ describe('Codex app-server startup', () => {
         expect(messages[2]?.params).toEqual({
           cwd: opts.worktreePath,
           model: opts.model,
-          developerInstructions: opts.systemPromptAppend,
+          developerInstructions: expect.stringContaining(opts.systemPromptAppend),
           config: { model_reasoning_effort: opts.effort },
           ...(resumeId === undefined ? {} : { threadId: resumeId, excludeTurns: true })
         })

@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { CodeFence } from './CodeFence'
 import { PATH_RE } from '../viewer/linkify'
 import { ChatImage } from './ChatImage'
+import { CopyableLink } from '../ui/CopyableLink'
 
 type FileOpen = (path: string, line?: number) => void
 
@@ -105,14 +106,14 @@ function components(
       if (href === undefined || href === '') return <span>{children}</span>
       if (/^https?:\/\//i.test(href)) {
         return (
-          <button
-            type="button"
+          <CopyableLink
+            value={href}
             className="chat-weblink"
             title={`Open in your browser: ${href}`}
-            onClick={() => void window.loom.shell.openExternal(href)}
+            onOpen={() => void window.loom.shell.openExternal(href)}
           >
             {children}
-          </button>
+          </CopyableLink>
         )
       }
       if (/^[a-z][a-z0-9+.-]*:/i.test(href) && !href.startsWith(OPEN)) {
@@ -127,14 +128,15 @@ function components(
         return <span className="chat-md-link">{children}</span>
       }
       return (
-        <button
-          type="button"
+        <CopyableLink
+          value={`${target.path}${target.line === undefined ? '' : `:${target.line}`}`}
+          copyLabel="Copy path"
           className="filelink chat-filelink"
           title={`Open ${target.path}${target.line === undefined ? '' : `:${target.line}`}`}
-          onClick={() => onFileOpen(target.path, target.line)}
+          onOpen={() => onFileOpen(target.path, target.line)}
         >
           {children}
-        </button>
+        </CopyableLink>
       )
     },
     table: ({ children }) => (

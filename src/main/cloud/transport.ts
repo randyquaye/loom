@@ -6,6 +6,7 @@ import type { RunnerTrust, TransportProof } from '../../shared/org'
 import { isLoopbackHost } from '../auth/callback'
 import { HostProofError, verifyDomainHostKey } from './host-proof'
 import { parseTransportProof } from '../auth/transport-proof'
+import { isGoogleClientId, isManagedRunnerHost, isManagedRunnerOrigin } from '../../shared/managed-cloud'
 
 const MAX_RESPONSE_BYTES = 64 * 1024
 const TIMEOUT_MS = 15000
@@ -43,9 +44,16 @@ interface TransportOptions extends VerificationOptions {
 export function readRunnerTrust(value: string | null): RunnerTrust | null {
   try {
     const trust = JSON.parse(value ?? 'null') as RunnerTrust | null
-    return trust?.version === 3 && typeof trust.domain === 'string' && DOMAIN.test(trust.domain)
-      ? { version: 3, domain: trust.domain }
-      : null
+    if (trust?.version === 3 && typeof trust.domain === 'string' && DOMAIN.test(trust.domain))
+      return { version: 3, domain: trust.domain }
+    if (
+      trust?.version === 4 &&
+      typeof trust.host === 'string' &&
+      isManagedRunnerHost(trust.host) &&
+      isGoogleClientId(trust.googleClientId)
+    )
+      return { version: 4, host: trust.host, googleClientId: trust.googleClientId }
+    return null
   } catch {
     return null
   }
@@ -61,8 +69,18 @@ export async function verifyTransportProof(
   try {
     const host = new URL(base).hostname.toLowerCase()
     const proof = parseTransportProof(value, host, (options.now ?? Date.now)())
-    if (proof === null || trust.version !== 3 || !DOMAIN.test(trust.domain)) throw new Error()
-    await verifyDomainHostKey(trust.domain, host, proof.public_key, options)
+    if (proof === null) throw new Error()
+    if (trust.version === 4) {
+      if (!isManagedRunnerOrigin(base) || trust.host !== host || !isGoogleClientId(trust.googleClientId))
+        throw new Error()
+      await verifyDomainHostKey(host, host, proof.public_key, {
+        ...options,
+        googleClientId: trust.googleClientId
+      })
+    } else {
+      if (trust.version !== 3 || !DOMAIN.test(trust.domain)) throw new Error()
+      await verifyDomainHostKey(trust.domain, host, proof.public_key, options)
+    }
     return proof
   } catch (error) {
     if (error instanceof TransportProofError) throw error
@@ -170,7 +188,12 @@ export function createRunnerTransport(options: TransportOptions): RunnerTranspor
   return {
     websocketAgent: agent,
     async post(path, fields, signal) {
-      const target = new URL(path, address)
+      const trust = await options.trust()
+      const endpoint =
+        trust?.version === 4 && /^\/auth\/(token|revoke)$/.test(path)
+          ? path.replace('/auth/', '/auth/managed/')
+          : path
+      const target = new URL(endpoint, address)
       if (!path.startsWith('/') || target.origin !== address.origin)
         throw new TransportProofError('A credential request cannot leave its runner')
       const pinned = await agent()

@@ -2,11 +2,17 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import { Hono, type Context } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
+import {
+  cloudAuthPath,
+  isManagedGoogleEmail,
+  isManagedRunnerOrigin,
+  type CloudSignInMode
+} from '../../shared/managed-cloud'
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
 import { userForGoogle } from '../db/repos/users'
 import { OrgError, type OrgService } from '../org/service'
 import type { HostProof, TransportProof } from '../../shared/org'
-import { isDesktopCallback } from './callback'
+import { isSignInCallback } from './callback'
 import type { GoogleClient } from './google'
 import { challengeOf, newVerifier } from './pkce'
 import {
@@ -24,6 +30,7 @@ import {
 // page; Loom's browser step only passes through on its way back to the desktop.
 
 export interface SignInRouteDeps {
+  mode?: CloudSignInMode
   db: Database.Database
   google: GoogleClient
   /** Active membership, checked by durable user id. */
@@ -66,8 +73,11 @@ interface PendingSignIn {
 type OAuthError = 'invalid_request' | 'invalid_grant' | 'unsupported_grant_type'
 
 export function signInRoutes(deps: SignInRouteDeps): Hono {
+  if (deps.mode === 'managed' && !isManagedRunnerOrigin(deps.publicUrl))
+    throw new Error('Managed sign-in requires a Loom-operated HTTPS runner')
   const app = new Hono()
-  app.use('/auth/proof', bodyLimit({ maxSize: 4096 }))
+  const auth = (route: string) => cloudAuthPath(deps.mode, route)
+  app.use(auth('proof'), bodyLimit({ maxSize: 4096 }))
   const googleCallback = `${deps.publicUrl.replace(/\/$/, '')}/auth/google/callback`
   const cookieOptions = {
     httpOnly: true,
@@ -118,13 +128,13 @@ export function signInRoutes(deps: SignInRouteDeps): Hono {
   }
 
   // The desktop opens this in the system browser.
-  app.get('/auth/start', (c) => {
+  app.get(auth('start'), (c) => {
     const redirectUri = c.req.query('redirect_uri') ?? ''
     const codeChallenge = c.req.query('code_challenge') ?? ''
     const desktopState = c.req.query('state') ?? ''
     const nonce = c.req.query('nonce') ?? ''
-    if (!isDesktopCallback(redirectUri))
-      return refuse(c, 'the sign-in can only return to the Loom app on this computer')
+    if (!isSignInCallback(redirectUri))
+      return refuse(c, 'the sign-in can only return to a registered Loom app')
     if (
       !S256_CHALLENGE.test(codeChallenge) ||
       !/^[A-Za-z0-9_-]{32,128}$/.test(nonce) ||
@@ -179,8 +189,9 @@ export function signInRoutes(deps: SignInRouteDeps): Hono {
     const allowed =
       person !== null &&
       person.emailVerified &&
-      person.hostedDomain !== null &&
-      deps.domains.includes(person.hostedDomain)
+      (deps.mode === 'managed'
+        ? isManagedGoogleEmail(person.email, person.hostedDomain)
+        : person.hostedDomain !== null && deps.domains.includes(person.hostedDomain))
     if (!allowed) return toDesktop(c, pending, { error: 'access_denied' })
     let loomCode: string
     try {
@@ -240,7 +251,7 @@ export function signInRoutes(deps: SignInRouteDeps): Hono {
   })
 
   // The browser code alone reveals identity evidence, never a reusable Loom credential.
-  app.post('/auth/proof', async (c) => {
+  app.post(auth('proof'), async (c) => {
     c.header('Cache-Control', 'no-store')
     const field = await formOf(c)
     const code = field?.('code')
@@ -264,7 +275,7 @@ export function signInRoutes(deps: SignInRouteDeps): Hono {
   })
 
   // The desktop swaps its one-time code, and later its refresh token, for tokens.
-  app.post('/auth/token', async (c) => {
+  app.post(auth('token'), async (c) => {
     c.header('Cache-Control', 'no-store')
     const field = await formOf(c)
     if (field === null)
@@ -301,7 +312,7 @@ export function signInRoutes(deps: SignInRouteDeps): Hono {
   })
 
   // The secret travels directly from desktop to runner, never through the browser.
-  app.post('/auth/invite', async (c) => {
+  app.post(auth('invite'), async (c) => {
     c.header('Cache-Control', 'no-store')
     const field = await formOf(c)
     const secret = field?.('invite_secret')
@@ -318,7 +329,7 @@ export function signInRoutes(deps: SignInRouteDeps): Hono {
   })
 
   // Signing out. Unknown tokens get the same answer, so this never says whether a token exists.
-  app.post('/auth/revoke', async (c) => {
+  app.post(auth('revoke'), async (c) => {
     c.header('Cache-Control', 'no-store')
     const field = await formOf(c)
     const token = field === null ? undefined : field('token')

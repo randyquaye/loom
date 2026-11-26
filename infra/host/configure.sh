@@ -42,7 +42,18 @@ read_setting() {
 }
 GOOGLE_CLIENT_ID=$(read_setting google-client-id)
 GOOGLE_CLIENT_SECRET=$(read_setting google-client-secret)
-SIGN_IN_DOMAINS=$(read_setting sign-in-domains)
+if SIGN_IN_MODE=$(parameter sign-in-mode yes); then
+  :
+else
+  result=$?
+  [ "$result" = 3 ] || exit 1
+  SIGN_IN_MODE=company
+fi
+case "$SIGN_IN_MODE" in
+  company) SIGN_IN_DOMAINS=$(read_setting sign-in-domains);;
+  managed) SIGN_IN_DOMAINS=;;
+  *) echo 'Invalid sign-in-mode; expected company or managed' >&2; exit 1;;
+esac
 OWNER_EMAIL=$(read_setting owner-email)
 GITHUB_CLIENT_ID=$(read_setting github-client-id)
 GITHUB_CLIENT_SECRET=$(read_setting github-client-secret)
@@ -79,7 +90,7 @@ const value = fs.readFileSync(process.argv[2], 'utf8').trim()
 const key = Buffer.from(value, 'base64')
 if (key.length !== 32 || key.toString('base64') !== value) throw new Error('Invalid vault recovery key')
 JS
-node "$LOOM_RELEASE/infra/host/host-record.mjs" "$LOOM_HOSTNAME" "$CONFIG_DIR/runner-signing.pem" "$SIGN_IN_DOMAINS"
+node "$LOOM_RELEASE/infra/host/host-record.mjs" "$LOOM_HOSTNAME" "$CONFIG_DIR/runner-signing.pem" "$SIGN_IN_DOMAINS" "$SIGN_IN_MODE" "$GOOGLE_CLIENT_ID"
 # Operator credential authorizes drain/status only; it never enters an SSM command or output.
 if [ ! -f "$CONFIG_DIR/operator.token" ]; then
   (umask 077 && openssl rand -hex 32 >"$CONFIG_DIR/operator.token")
@@ -125,6 +136,7 @@ LOOM_PUBLIC_URL=https://$LOOM_HOSTNAME
 LOOM_GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID
 LOOM_GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET
 LOOM_SIGN_IN_DOMAINS=$SIGN_IN_DOMAINS
+LOOM_SIGN_IN_MODE=$SIGN_IN_MODE
 LOOM_OWNER_EMAIL=$OWNER_EMAIL
 LOOM_GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID
 LOOM_GITHUB_CLIENT_SECRET=$GITHUB_CLIENT_SECRET

@@ -5,6 +5,40 @@ that account. No central Loom service is required. This guide describes the new 
 implementation; a fresh company-account deployment and production promotion rehearsal
 remain acceptance work. Do not count an unrun check as passed.
 
+## Personal cloud on a Loom managed host
+
+Managed sign-in supports primary Gmail and Google Workspace accounts on Loom-operated
+`pilot.loombox.xyz` or `o-IDENTIFIER.loombox.xyz` hosts. It uses the same organisation,
+membership and workspace services. Choose `managed` when `settings.sh` asks for the
+sign-in mode, use a Google OAuth client configured for external users, and set the
+intended first owner's primary Google email. Workspace domains are not required in
+this mode. Existing configurations without a mode retain company sign-in.
+
+The Google callback remains `https://HOST/auth/google/callback`. Managed desktop login
+uses separate `/auth/managed/` endpoints, so existing clients cannot silently enter a
+different authentication mode. In desktop Settings, Cloud, select **Loom personal cloud**,
+enter your primary Google email and assigned runner address, then save and sign in.
+The first owner creates the organisation; other accounts require invitations.
+
+Publish the host's individual TXT record at `_loom.HOST` using the exact value printed
+by deployment:
+
+```text
+loom-host=HOST; key=BASE64_SHA256_OF_PUBLIC_SPKI_DER; google-client=GOOGLE_CLIENT_ID
+```
+
+This Loom-controlled record authorises both the runner key and the Google client that
+the desktop independently verifies. The actual TLS-key proof remains mandatory on
+credential-bearing connections. A hostname suffix alone grants no trust. Managed keys
+are scoped to their individual records, rather than an aggregate record shared by all
+organisations. Company mode keeps its existing Workspace-domain records unchanged.
+
+Personal Google accounts using third-party email addresses without a matching Google
+Workspace hosted domain are not supported. Existing mobile clients must be updated
+before managed sign-in; their old authentication endpoints are unavailable on a managed
+runner. Updating or resetting an existing deployment is a separate reviewed operation;
+selecting this mode does not delete any data or provision a new server.
+
 ## Bring these first
 
 - An AWS account with administrator access, a Region, and a default VPC or a public subnet.

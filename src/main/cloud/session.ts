@@ -8,6 +8,7 @@ import {
 } from './sign-in'
 import type { RunnerTrust } from '../../shared/org'
 import type { RunnerTransport } from './transport'
+import type { CloudSignInMode } from '../../shared/managed-cloud'
 
 /** Where the refresh token rests between runs: the macOS Keychain. The window never sees it. */
 export interface RefreshTokenStore {
@@ -17,6 +18,7 @@ export interface RefreshTokenStore {
 }
 
 export interface CloudSessionOptions {
+  mode?: CloudSignInMode
   /** ws:// or wss:// address of the runner. */
   runnerUrl: string
   store: RefreshTokenStore
@@ -118,6 +120,7 @@ export function createCloudSession(options: CloudSessionOptions): CloudSession {
       const mine = ++generation
       renewing = null
       const tokens = await signInThroughBrowser({
+        ...(options.mode === 'managed' ? { mode: options.mode } : {}),
         base,
         expectedEmail,
         openBrowser: options.openBrowser,

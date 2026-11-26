@@ -72,7 +72,9 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
   const push = useToasts((s) => s.push)
   const commitPanels = usePanels((s) => s.commit)
   const pane = useUi((s) => s.workspacePane)
-  const setPane = (workspacePane: 'chat' | 'viewer') => useUi.setState({ workspacePane })
+  const setPane = (workspacePane: 'chat' | 'viewer' | 'terminal') => useUi.setState({ workspacePane })
+  const [terminalTabs, setTerminalTabs] = useState<HTMLDivElement | null>(null)
+  const [terminalBody, setTerminalBody] = useState<HTMLDivElement | null>(null)
   const [scripts, setScripts] = useState<{
     workspaceId: string
     actions: RepoScriptsInfo['actions']
@@ -284,6 +286,12 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
           </div>
         )}
         <div className="tabs-row">
+          <div
+            ref={setTerminalTabs}
+            className="tabs session-tabs term-center-tabs"
+            role="tablist"
+            aria-label="Expanded terminals"
+          />
           {openPath !== null && (
             // The wrapper carries the tab chrome so the close button is a sibling, as on session tabs.
             <div className={`tab tab-pin${pane === 'viewer' ? ' tab-on' : ''}`} role="presentation">
@@ -318,7 +326,12 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
             botWorkspace={botWorkspace}
           />
         </div>
-        {pane === 'viewer' && openPath !== null ? (
+        <div
+          ref={setTerminalBody}
+          className="term-panel term-body term-center"
+          hidden={pane !== 'terminal'}
+        />
+        {pane === 'terminal' ? null : pane === 'viewer' && openPath !== null ? (
           <ViewerHost workspaceId={workspaceId} />
         ) : (
           <>
@@ -358,7 +371,9 @@ export function Workspace({ workspaceId }: { workspaceId: string }) {
         {filesReady && (
           <>
             <FileTree workspaceId={workspaceId} />
-            {ready && !readOnly && <XtermPane workspaceId={workspaceId} />}
+            {ready && !readOnly && (
+              <XtermPane workspaceId={workspaceId} centerTabs={terminalTabs} centerBody={terminalBody} />
+            )}
           </>
         )}
       </section>

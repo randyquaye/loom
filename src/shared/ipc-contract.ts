@@ -6,6 +6,7 @@ import type { AgentModes, AuthStatus, BackendId, Effort, ModelDescriptor } from 
 import type { Notification } from './notifications'
 import type { DesktopUpdateStatus } from './desktop-updates'
 import type { OrgAdminEvent, OrgInvite, OrgMember, OrgOverview, OrgRole } from './org'
+import type { CloudSignInMode } from './managed-cloud'
 import {
   botAccessSchema,
   botConfigSchema,
@@ -146,6 +147,7 @@ export interface SessionInstructionsInfo {
 
 /** The runner this desktop follows, as Settings shows it. */
 export interface CloudRunner {
+  mode?: CloudSignInMode
   /** ws:// or wss:// address; null when Loom follows no runner. */
   url: string | null
   /** The address comes from LOOM_RUNNER_URL, so Settings cannot change it. */
@@ -524,7 +526,10 @@ export interface IpcContract {
 
   'cloud:status': { in: void; out: CloudStatus }
   'cloud:runner': { in: void; out: CloudRunner }
-  'cloud:setRunner': { in: { url: string | null; expectedEmail: string }; out: CloudRunner }
+  'cloud:setRunner': {
+    in: { url: string | null; expectedEmail: string; mode?: CloudSignInMode | undefined }
+    out: CloudRunner
+  }
   /** Answers once the person has finished in the browser, which can take minutes. */
   'cloud:signIn': { in: { expectedEmail: string }; out: void }
   'cloud:signOut': { in: void; out: void }
@@ -796,6 +801,7 @@ export const ipcSchemas = {
   'cloud:status': z.undefined(),
   'cloud:runner': z.undefined(),
   'cloud:setRunner': z.object({
+    mode: z.enum(['company', 'managed']).optional(),
     url: z.string().max(2048).nullable(),
     expectedEmail: z.string().trim().max(254).default('')
   }),
@@ -1118,7 +1124,7 @@ export interface LoomApi {
     status(): Promise<CloudStatus>
     runner(): Promise<CloudRunner>
     /** Null stops following a runner. Answers with the address as it was kept. */
-    setRunner(url: string | null, expectedEmail?: string): Promise<CloudRunner>
+    setRunner(url: string | null, expectedEmail?: string, mode?: CloudSignInMode): Promise<CloudRunner>
     /** Opens the sign-in page in the browser; calling again abandons the earlier attempt. */
     signIn(expectedEmail?: string): Promise<void>
     signOut(): Promise<void>

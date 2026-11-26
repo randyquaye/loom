@@ -3,6 +3,7 @@ import { usageFields, type UsageEvent } from '../../../shared/usage'
 import type { FilePatch } from '../../../shared/events'
 import { renderWithFileLinks } from '../viewer/linkify'
 import { ChatMarkdown } from './ChatMarkdown'
+import { CopyableLink } from '../ui/CopyableLink'
 import {
   firstLine,
   formatDuration,
@@ -204,27 +205,27 @@ export function ToolRow({
       </span>
       <span className="chat-row-label">{summary.label}</span>
       {summary.kind === 'web' && summary.target !== undefined && href === summary.target && (
-        <button
-          type="button"
+        <CopyableLink
+          value={href}
           className="chat-weblink"
           title={`Open in your browser: ${href}`}
-          onClick={() => void window.loom.shell.openExternal(href)}
+          onOpen={() => void window.loom.shell.openExternal(href)}
         >
           {summary.target}
-        </button>
+        </CopyableLink>
       )}
       {summary.kind === 'web' && summary.target !== undefined && href !== summary.target && (
         <span className="chat-row-target">{summary.target}</span>
       )}
       {href !== undefined && href !== summary.target && (
-        <button
-          type="button"
+        <CopyableLink
+          value={href}
           className="chat-weblink"
           title={`Open in your browser: ${href}`}
-          onClick={() => void window.loom.shell.openExternal(href)}
+          onOpen={() => void window.loom.shell.openExternal(href)}
         >
           {href}
-        </button>
+        </CopyableLink>
       )}
       {summary.kind !== 'web' && summary.target !== undefined && (
         <>
@@ -244,7 +245,7 @@ export function ToolRow({
 
   return (
     <div className="chat-tool" data-state={state}>
-      {expandable ? (
+      {expandable && href === undefined ? (
         <button
           type="button"
           className="chat-row chat-row-toggle"
@@ -260,6 +261,17 @@ export function ToolRow({
           title={[summary.label, summary.target, summary.chip].filter(Boolean).join(' ')}
         >
           {content}
+          {expandable && (
+            <button
+              type="button"
+              className="icon-btn chat-row-toggle"
+              aria-label={open ? 'Hide tool output' : 'Show tool output'}
+              aria-expanded={open}
+              onClick={() => setOpen(!open)}
+            >
+              <ChevronIcon open={open} />
+            </button>
+          )}
         </div>
       )}
       {block.ok === false && <ErrorRow message={block.output ?? ''} />}

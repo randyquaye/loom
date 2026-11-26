@@ -17,6 +17,7 @@ import { m015 } from './015_notifications'
 import { m016 } from './016_agent_modes'
 import { m017 } from './017_organization'
 import { m018 } from './018_bots'
+import { m019 } from './019_mobile_sign_ins'
 import { m020 } from './020_subscriptions'
 
 export interface Migration {
@@ -43,6 +44,7 @@ const migrations: Migration[] = [
   m016,
   m017,
   m018,
+  m019,
   m020
 ]
 

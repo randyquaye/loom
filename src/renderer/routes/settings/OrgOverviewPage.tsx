@@ -82,8 +82,14 @@ export function OrgOverviewPage() {
           <div className="settings-label">Google sign-in</div>
           <div className="settings-list">
             <div className="settings-row">
-              <span className="settings-name">Allowed domains</span>
-              <span className="settings-mask">{overview.settings.domains.join(', ')}</span>
+              <span className="settings-name">
+                {overview.settings.mode === 'managed' ? 'Google accounts' : 'Allowed domains'}
+              </span>
+              <span className="settings-mask">
+                {overview.settings.mode === 'managed'
+                  ? 'Gmail and Google Workspace'
+                  : overview.settings.domains.join(', ')}
+              </span>
             </div>
             <div className="settings-row">
               <span className="settings-name">Client ID</span>

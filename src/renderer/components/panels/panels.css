@@ -709,6 +709,22 @@ body.is-resizing.is-resizing-y {
 }
 
 /* Collapsed to the tab bar: the tree takes everything else. */
+.term-panel.term-center {
+  flex: 1;
+  min-height: 0;
+  border-top: none;
+}
+
+.term-center[hidden],
+.term-center-tabs:empty {
+  display: none;
+}
+
+.tabs-row .term-center-tabs {
+  flex: 0 1 auto;
+  max-width: 50%;
+}
+
 .term-panel[data-collapsed='true'] {
   flex: none;
   min-height: 0;

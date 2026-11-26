@@ -45,7 +45,7 @@ export interface OrgOverview {
   role: OrgRole
   kind: OrgKind
   /** Sign-in configuration and host usage are visible only to owners. */
-  settings?: { domains: string[]; googleClientId: string }
+  settings?: { domains: string[]; googleClientId: string; mode?: 'company' | 'managed' }
   health?: { disk: { total: number; available: number; warning: boolean } }
   usage?: Array<{ userId: string; email: string; running: number }>
 }
@@ -57,11 +57,9 @@ export interface HostProof {
   signature: string
 }
 
-/** The independently verified Google Workspace domain, retained for future connections. */
-export interface RunnerTrust {
-  version: 3
-  domain: string
-}
+/** Company trust is retained verbatim; managed trust binds one host and Google client. */
+export type RunnerTrust =
+  { version: 3; domain: string } | { version: 4; host: string; googleClientId: string }
 
 /** The org key authorizes this TLS leaf key for a short, signed interval. */
 export interface TransportProof extends HostProof {

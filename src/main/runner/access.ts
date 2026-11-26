@@ -48,6 +48,7 @@ const RUNNER_SUBJECTS: Record<string, readonly [SubjectKind, string]> = {
  */
 const OPEN_CALLS: ReadonlySet<string> = new Set([
   'app:ping',
+  'projects:list',
   'bots:list',
   'bots:invoke',
   'bots:invocations',

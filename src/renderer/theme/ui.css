@@ -163,6 +163,49 @@
   height: 16px;
 }
 
+.copyable-link {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.copyable-link > button:first-child {
+  user-select: text;
+}
+
+.link-copy {
+  flex: none;
+  margin-left: 2px;
+  vertical-align: middle;
+}
+
+.chat-row .copyable-link {
+  display: inline-flex;
+  align-items: center;
+}
+
+.chat-row .copyable-link > button:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-copy[data-state='Copied'] {
+  color: var(--ok);
+}
+
+.link-copy[data-state='Could not copy'] {
+  color: var(--danger);
+}
+
+.link-copy-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .btn-danger {
   border-color: var(--danger-a45);
   background: var(--danger-a08);

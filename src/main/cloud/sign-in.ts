@@ -7,6 +7,7 @@ import { verifyHostProof } from './host-proof'
 import { createRunnerTransport, readRunnerJson, type RunnerTransport } from './transport'
 import { HostProofError } from './host-proof'
 import { isLoopbackHost } from '../auth/callback'
+import { cloudAuthPath, type CloudSignInMode } from '../../shared/managed-cloud'
 
 export interface Tokens {
   accessToken: string
@@ -88,6 +89,7 @@ export async function revokeRefreshToken(
 }
 
 interface CodeExchange {
+  mode?: CloudSignInMode
   base: string
   code: string
   redirectUri: string
@@ -103,7 +105,7 @@ export async function exchangeSignInCode(input: CodeExchange): Promise<Tokens> {
   input.signal?.throwIfAborted()
   let trust: RunnerTrust | null = null
   if (!(input.development === true && isLoopbackHost(new URL(input.base).hostname))) {
-    const reply = await fetch(`${input.base}/auth/proof`, {
+    const reply = await fetch(`${input.base}${cloudAuthPath(input.mode, 'proof')}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ code: input.code, redirect_uri: input.redirectUri }),
@@ -116,6 +118,7 @@ export async function exchangeSignInCode(input: CodeExchange): Promise<Tokens> {
       throw new HostProofError('The runner returned an invalid sign-in proof')
     const body = value as { id_token?: unknown; host_proof?: unknown }
     trust = await verifyHostProof({
+      ...(input.mode === undefined ? {} : { mode: input.mode }),
       base: input.base,
       nonce: input.nonce,
       expectedEmail: input.expectedEmail,
@@ -211,6 +214,7 @@ export function listenForBrowser(input: {
  * a visit to the port is ignored unless it carries the state made here.
  */
 export function signInThroughBrowser(input: {
+  mode?: CloudSignInMode
   base: string
   expectedEmail: string
   openBrowser(url: string): void
@@ -251,6 +255,7 @@ export function signInThroughBrowser(input: {
       }
       exchanging = true
       exchangeSignInCode({
+        ...(input.mode === undefined ? {} : { mode: input.mode }),
         base: input.base,
         code,
         redirectUri,
@@ -294,7 +299,7 @@ export function signInThroughBrowser(input: {
       })
       try {
         if (input.inviteSecret !== undefined) {
-          const response = await fetch(`${input.base}/auth/invite`, {
+          const response = await fetch(`${input.base}${cloudAuthPath(input.mode, 'invite')}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: new URLSearchParams({
@@ -309,7 +314,8 @@ export function signInThroughBrowser(input: {
           })
           if (!response.ok) throw new SignInRefusedError('This invite is expired, revoked, or already used')
         }
-        if (!finished) input.openBrowser(`${input.base}/auth/start?${query.toString()}`)
+        if (!finished)
+          input.openBrowser(`${input.base}${cloudAuthPath(input.mode, 'start')}?${query.toString()}`)
       } catch (error) {
         finish(() => reject(error))
       }

@@ -22,6 +22,7 @@ import {
   setSessionSink,
   setActivitySink,
   closeAllSessions,
+  closeInterruptedTurns,
   setLoomDataRoot,
   setQueueSink,
   setTitleSink
@@ -179,6 +180,7 @@ if (!app.requestSingleInstanceLock()) {
       const dataDir = process.env.LOOM_DATA_DIR ?? app.getPath('userData')
       setTrustedOrigin(app.isPackaged ? 'file://' : (process.env.ELECTRON_RENDERER_URL ?? 'file://'))
       const db = openDb(path.join(dataDir, 'loom.db'))
+      closeInterruptedTurns(db)
       const secrets = createSecretStore(path.join(dataDir, 'secrets.enc'), safeStorageCipher(safeStorage))
       setEnvSecretStore(secrets)
       setLoomDataRoot(dataDir)

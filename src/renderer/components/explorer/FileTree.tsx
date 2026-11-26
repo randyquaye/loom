@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from 'react'
 import type { FileNode } from '../../../shared/ipc-contract'
 import { cacheKey, useFiles } from '../../state/files'
+import { usePanels } from '../../state/panels'
 import { useProjects } from '../../state/projects'
 import { ContextMenu } from '../ui/ContextMenu'
 import { useToasts } from '../ui/Toast'
@@ -48,6 +49,7 @@ function TreeNode({ node, depth, workspaceId, expandedPaths, toggle, loadDirecto
         <button
           type="button"
           className="tree-row tree-dir"
+          data-directory-path={node.path}
           style={indentOf(depth)}
           title={node.path}
           aria-expanded={expanded}
@@ -128,6 +130,9 @@ function Explorer({ workspaceId }: { workspaceId: string }) {
   const refresh = useFiles((s) => s.refresh)
   const loadChanges = useFiles((s) => s.loadChanges)
   const changes = useFiles((s) => s.changesByWorkspace[workspaceId])
+  const reveal = useFiles((s) => s.revealDirectoryByWorkspace[workspaceId])
+  const treeRef = useRef<HTMLDivElement>(null)
+  const revealed = useRef<typeof reveal>(undefined)
   const [tab, setTab] = useState<'files' | 'changes'>('files')
   const [expandedPaths, setExpandedPaths] = useState<ReadonlySet<string>>(() => new Set())
   const [refreshingTree, setRefreshingTree] = useState(false)
@@ -137,6 +142,30 @@ function Explorer({ workspaceId }: { workspaceId: string }) {
   const pendingDirectories = useRef(new Map<string, Promise<void>>())
   const changesPending = useRef(false)
   const id = useId()
+
+  useEffect(() => {
+    if (reveal === undefined) return
+    setTab('files')
+    setExpandedPaths((paths) => new Set([...paths, ...reveal.ancestors]))
+    usePanels.getState().setRightHidden(false)
+  }, [reveal])
+
+  useEffect(() => {
+    if (
+      reveal === undefined ||
+      revealed.current === reveal ||
+      tab !== 'files' ||
+      !expandedPaths.has(reveal.path)
+    )
+      return
+    const row = Array.from(
+      treeRef.current?.querySelectorAll<HTMLButtonElement>('[data-directory-path]') ?? []
+    ).find((element) => element.dataset.directoryPath === reveal.path)
+    if (row === undefined) return
+    revealed.current = reveal
+    row.scrollIntoView({ block: 'nearest' })
+    row.focus({ preventScroll: true })
+  }, [reveal, tab, expandedPaths])
 
   // Share in-flight reads as well as the store's completed cache, even if a
   // directory is collapsed and reopened before its first read finishes.
@@ -247,6 +276,7 @@ function Explorer({ workspaceId }: { workspaceId: string }) {
         )}
         <div
           className="tree"
+          ref={treeRef}
           onContextMenu={(event) => {
             if (cloud || !(event.target instanceof Element)) return
             const path = event.target.closest<HTMLElement>('[data-file-path]')?.dataset.filePath

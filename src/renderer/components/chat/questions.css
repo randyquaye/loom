@@ -1,12 +1,11 @@
+/* Spans the transcript column so the card lines up with the composer. */
 .chat-question {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  align-self: flex-start;
-  gap: var(--s-3);
-  width: fit-content;
-  max-width: min(100%, 560px);
-  padding: var(--s-3);
+  align-self: stretch;
+  gap: var(--s-4);
+  width: 100%;
+  padding: var(--s-4);
   margin: var(--s-3) 0;
   border: 1px solid var(--border);
   border-radius: var(--r-2);
@@ -17,15 +16,10 @@
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
-  width: 100%;
   min-width: 0;
   border: 0;
   padding: 0;
   margin: 0;
-}
-
-.chat-question:has(.input) {
-  min-width: min(320px, 100%);
 }
 
 .chat-question legend {
@@ -37,23 +31,49 @@
 }
 
 .chat-question p {
+  margin: 0 0 var(--s-1);
   white-space: pre-wrap;
-  margin: 0;
-  font-size: var(--fs-sm);
   line-height: 1.45;
 }
 
 .chat-question-options {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--s-2);
+  flex-direction: column;
+  gap: var(--s-1);
 }
 
+/* One uniform row per option: mark, then label and description. */
 .chat-question-choice {
   position: relative;
   display: flex;
-  max-width: 100%;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
   cursor: pointer;
+  transition:
+    border-color var(--dur-1) var(--ease),
+    background var(--dur-1) var(--ease);
+}
+
+.chat-question-choice:hover:has(input:enabled) {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+
+.chat-question-choice:has(input:checked) {
+  border-color: var(--accent-3);
+  background: var(--accent-2-a18);
+}
+
+.chat-question-choice:has(input:focus-visible) {
+  box-shadow: var(--focus-ring);
+}
+
+.chat-question-choice:has(input:disabled) {
+  cursor: default;
+  opacity: 0.55;
 }
 
 /* Native controls retain radio arrow keys, checkbox Space, and screen-reader states. */
@@ -66,51 +86,48 @@
   clip-path: inset(50%);
 }
 
+/* Round for single-select, square for multi-select; filled inset when chosen. */
+.chat-question-mark {
+  flex: none;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  padding: 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background-clip: content-box;
+}
+
+.chat-question-choice input[type='checkbox'] + .chat-question-mark {
+  border-radius: var(--r-1);
+}
+
+.chat-question-choice input:checked + .chat-question-mark {
+  border-color: var(--accent-1);
+  background-color: var(--accent-1);
+}
+
 .chat-question-choice-body {
+  display: flex;
   flex-direction: column;
-  align-items: flex-start;
   gap: 2px;
-  max-width: 340px;
-  padding: 6px 10px;
-  font-size: var(--fs-xs);
-  line-height: 1.35;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.4;
   overflow-wrap: anywhere;
-  pointer-events: none;
 }
 
 .chat-question-choice-body small {
   color: var(--text-muted);
-  font: inherit;
-}
-
-.chat-question-choice:hover input:not(:disabled) + .chat-question-choice-body {
-  border-color: var(--border-strong);
-  background: var(--surface-2);
-}
-
-.chat-question-choice input:checked + .chat-question-choice-body {
-  border-color: var(--accent-3);
-  background: var(--accent-2-a18);
-  box-shadow: var(--edge-highlight);
-}
-
-.chat-question-choice input:focus-visible + .chat-question-choice-body {
-  box-shadow: var(--focus-ring);
-}
-
-.chat-question-choice[data-disabled='true'] {
-  cursor: default;
-  opacity: 0.55;
-}
-
-.chat-question > .btn {
-  padding: 6px 10px;
   font-size: var(--fs-xs);
 }
 
 .chat-question .input {
-  min-width: min(260px, 100%);
   width: 100%;
-  padding: 6px 10px;
   font-size: var(--fs-sm);
+}
+
+.chat-question > .btn {
+  align-self: flex-end;
 }
