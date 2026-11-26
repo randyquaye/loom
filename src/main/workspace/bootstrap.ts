@@ -26,7 +26,7 @@ import {
 } from '../db/repos/workspaces'
 import { addClone, cloneDefaultBranch, removeClone } from '../git/clone'
 import { ensureContextIgnored } from '../git/exclude'
-import { resolveBaseRef } from '../git/baseref'
+import { refreshBaseRef, resolveBaseRef } from '../git/baseref'
 import { envOverlay } from '../env/vars'
 import { git } from '../git/run'
 import { allocateSlug, slugify } from '../git/slug'
@@ -346,9 +346,8 @@ async function checkOutWorktree(input: InitializeInput, log: (line: string) => P
   const { repoPath, workspace } = input
   const slug = workspace.branch.slice(WORKTREE_BRANCH_PREFIX.length)
   await ensureInitialCommit(repoPath, log)
-  // A base ref picked from a GitHub PR head usually exists only on origin, so it is
-  // resolved (fetching if needed) before git is asked to start a worktree from it.
-  let baseRef = input.baseRef
+  // Refresh the selected branch, or origin's default branch when none was selected.
+  let baseRef = await refreshBaseRef(repoPath, input.baseRef)
   if (baseRef !== null) {
     await log(`resolve base ref ${baseRef}`)
     baseRef = await resolveBaseRef(repoPath, baseRef)

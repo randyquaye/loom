@@ -14,7 +14,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'issues', label: 'Issues' }
 ]
 
-/** One picker row: a branch (null is "current HEAD"), a pull request or a Linear issue, sharing keyboard and aria. */
+/** One picker row: a branch (null is the default), a pull request or a Linear issue, sharing keyboard and aria. */
 type Row =
   | { kind: 'branch'; ref: string | null }
   | { kind: 'pr'; pr: PullRequestSummary }
@@ -153,7 +153,7 @@ export function BaseRefPicker({
   }, [open])
 
   const q = query.trim().toLowerCase()
-  // null is "no base branch": the worktree starts from the repo's current HEAD.
+  // null uses the latest remote default branch, or local HEAD without an origin.
   const branchRows: (string | null)[] =
     tab !== 'branches' || branches === null
       ? []
@@ -231,7 +231,7 @@ export function BaseRefPicker({
         <span className="nw-branch-glyph" aria-hidden="true">
           ⎇
         </span>
-        <span className="nw-chip-label">{value ?? 'HEAD'}</span>
+        <span className="nw-chip-label">{value ?? 'Default branch'}</span>
         <span className="dropdown-caret" aria-hidden="true" />
       </button>
       {open && (
@@ -354,7 +354,7 @@ export function BaseRefPicker({
                       <span className="nw-branch-glyph" aria-hidden="true">
                         ⎇
                       </span>
-                      <span className="nw-branch-name grow">{row.ref ?? 'Current HEAD'}</span>
+                      <span className="nw-branch-name grow">{row.ref ?? 'Default branch'}</span>
                     </>
                   )}
                   {row.kind === 'pr' && (

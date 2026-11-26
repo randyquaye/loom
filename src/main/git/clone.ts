@@ -1,7 +1,7 @@
 import { lstat, mkdir, realpath, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { WORKSPACES_DIR } from '../../shared/brand'
-import { assertSafeBaseRef, BaseRefUnavailableError, resolveBaseRef } from './baseref'
+import { assertSafeBaseRef, BaseRefUnavailableError, refreshBaseRef, resolveBaseRef } from './baseref'
 import { git, gitWithEnv } from './run'
 
 export interface CloneInput {
@@ -9,7 +9,7 @@ export interface CloneInput {
   source: string
   target: string
   branch: string
-  /** Branch, tag or commit to start from; null starts from the source's HEAD. */
+  /** Branch, tag or commit to start from; null uses origin's default branch, or local HEAD. */
   baseRef: string | null
   /** The address the clone pushes to and fetches from, when that is not `source`. */
   originUrl: string | null
@@ -99,8 +99,11 @@ export async function addClone({
   if (local) await copyIdentity(source, target)
   const remote = originUrl !== null && originUrl !== source
   if (remote) await git(target, ['remote', 'set-url', 'origin', originUrl])
-  const start =
-    baseRef === null ? [] : [await resolveStartPoint(target, baseRef, remote || !local, remoteEnv)]
+  const canFetch = remote || !local
+  const refreshed = canFetch
+    ? await refreshBaseRef(target, baseRef, (repo, args) => gitWithEnv(repo, args, remoteEnv))
+    : baseRef
+  const start = refreshed === null ? [] : [await resolveStartPoint(target, refreshed, canFetch, remoteEnv)]
   // --no-track: the workspace branch is new work, pushed under its own name.
   await git(target, ['checkout', '-q', '--no-track', '-b', branch, ...start, '--'])
 }
