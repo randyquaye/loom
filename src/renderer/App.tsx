@@ -7,6 +7,7 @@ import { Splitter } from './components/ui/Splitter'
 import { ToastViewport } from './components/ui/Toast'
 import { Sidebar } from './components/sidebar/Sidebar'
 import { Home } from './routes/Home'
+import { Conversations } from './routes/Conversations'
 import { Notifications } from './routes/Notifications'
 import { Settings } from './routes/Settings'
 import { Workspace } from './routes/Workspace'
@@ -81,6 +82,7 @@ export function App() {
           onCommit={commit}
         />
         {route.name === 'home' && <Home />}
+        {route.name === 'conversations' && <Conversations />}
         {route.name === 'notifications' && <Notifications />}
         {route.name === 'settings' && <Settings />}
         {route.name === 'workspace' && <Workspace workspaceId={route.workspaceId} />}
