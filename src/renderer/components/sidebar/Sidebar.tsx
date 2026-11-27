@@ -212,8 +212,8 @@ export function Sidebar() {
           <button
             type="button"
             className="side-foot-btn"
-            data-active={route.name === 'home'}
-            aria-current={route.name === 'home' ? 'page' : undefined}
+            data-active={route.name === 'home' || route.name === 'conversations'}
+            aria-current={route.name === 'home' || route.name === 'conversations' ? 'page' : undefined}
             onClick={() => navigate({ name: 'home' })}
           >
             <span className="side-foot-glyph">

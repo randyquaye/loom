@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { MAX_ATTACHMENTS } from '../../shared/limits'
+import type { BackendId, Effort } from '../../shared/models'
 import { useProjects } from './projects'
 import { useSessions } from './sessions'
 
@@ -25,6 +26,7 @@ export const DEFAULT_SETTINGS_PAGE: SettingsPage = 'preferences'
 
 export type Route =
   | { name: 'home' }
+  | { name: 'conversations' }
   | { name: 'workspace'; workspaceId: string }
   | { name: 'notifications' }
   | { name: 'settings'; page?: SettingsPage }
@@ -47,8 +49,28 @@ export interface QuestionDraft {
 
 const CLOSED: ModalFlags = { addWorkspaceFor: null, projectMenu: false }
 
+/** Home's unsent task retains its repository and execution choices across route changes. */
+export interface HomeWorkspaceDraft {
+  projectId: string | null
+  baseRef: string | null
+  wantsCloud: boolean
+  prompt: string
+  picked: { backend: BackendId; model: string; effort: Effort } | null
+}
+
+const EMPTY_HOME_DRAFT: HomeWorkspaceDraft = {
+  projectId: null,
+  baseRef: null,
+  wantsCloud: false,
+  prompt: '',
+  picked: null
+}
+
 interface UiState {
   route: Route
+  homeWorkspaceDraft: HomeWorkspaceDraft
+  updateHomeWorkspaceDraft(patch: Partial<HomeWorkspaceDraft>): void
+  resetHomeWorkspaceDraft(): void
   /** Captured on entry to Settings; switching Settings pages keeps the original destination. */
   settingsReturnRoute: Exclude<Route, { name: 'settings' }>
   settingsLocation: 'mac' | 'cloud'
@@ -100,6 +122,10 @@ let voiceEnabledBeforeMode: boolean | null = null
 
 export const useUi = create<UiState>((set, get) => ({
   route: { name: 'home' },
+  homeWorkspaceDraft: EMPTY_HOME_DRAFT,
+  updateHomeWorkspaceDraft: (patch) =>
+    set((state) => ({ homeWorkspaceDraft: { ...state.homeWorkspaceDraft, ...patch } })),
+  resetHomeWorkspaceDraft: () => set({ homeWorkspaceDraft: EMPTY_HOME_DRAFT }),
   settingsReturnRoute: { name: 'home' },
   settingsLocation: 'mac',
   setSettingsLocation: (settingsLocation) => set({ settingsLocation }),

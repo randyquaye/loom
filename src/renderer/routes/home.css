@@ -1,5 +1,92 @@
 /* Spacing grid shared with panels.css / settings.css: panel 16, section 12, control 8, row 6. */
 
+.home-start {
+  overflow-y: auto;
+  padding: clamp(48px, 12vh, 128px) var(--s-5) var(--s-6);
+}
+
+.home-start-inner {
+  width: 100%;
+  max-width: 760px;
+  margin-inline: auto;
+}
+
+.home-title {
+  margin: 0 0 var(--s-6);
+  font-size: var(--fs-2xl);
+  font-weight: 500;
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+  text-align: center;
+}
+
+.home-key-hint {
+  margin-top: var(--s-2);
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  text-align: right;
+}
+
+.home-recent {
+  margin-top: var(--s-6);
+}
+
+.home-recent-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-bottom: var(--s-2);
+}
+
+.home-recent-head h2 {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+.home-recent-head .btn {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.home-recent-empty {
+  margin: 0;
+  padding-block: var(--s-5);
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
+}
+
+.conversations-title,
+.conversations-pagination {
+  width: 100%;
+  max-width: calc(920px + 2 * var(--s-4));
+  margin-inline: auto;
+  padding: var(--s-4);
+}
+
+.conversations-title {
+  padding-top: var(--s-6);
+}
+
+.conversations-title h1 {
+  margin: var(--s-4) 0 0;
+  font-size: var(--fs-xl);
+  font-weight: 500;
+}
+
+.conversations-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
 /* Match the chat's 920px reading width, plus the existing panel padding. */
 .home-head,
 .home-results {
@@ -95,7 +182,7 @@
 .home-card {
   display: flex;
   flex: none;
-  align-items: baseline;
+  align-items: center;
   gap: var(--s-3);
   width: 100%;
   padding: var(--s-3);
@@ -105,6 +192,11 @@
   background: none;
   font-size: var(--fs-md);
   text-align: left;
+}
+
+.home-card > .icon {
+  flex: none;
+  color: var(--text-faint);
 }
 
 .home-card:hover {

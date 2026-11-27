@@ -87,6 +87,72 @@
   align-items: center;
 }
 
+/* Home hosts the same controls on one solid surface, with no modal chrome. */
+.nw-inline {
+  container-type: inline-size;
+  border: 1px solid var(--border-strong);
+  background: var(--panel-solid);
+  box-shadow: var(--edge-highlight);
+}
+
+.nw-inline-head,
+.nw-inline-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+}
+
+.nw-inline-head .nw-project {
+  max-width: 45%;
+}
+
+.nw-inline .nw-project .dropdown {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.nw-inline .nw-project .dropdown-trigger {
+  max-width: 100%;
+  font-size: var(--fs-sm);
+}
+
+.nw-inline .nw-prompt {
+  min-height: 156px;
+  max-height: 40vh;
+  padding-bottom: var(--s-4);
+  overflow-y: auto;
+}
+
+.nw-inline-foot {
+  flex-wrap: wrap;
+}
+
+.nw-inline-foot .nw-hint {
+  flex-basis: 100%;
+  order: 1;
+}
+
+.nw-inline .nw-integrations {
+  width: min(440px, calc(100cqw - 32px));
+}
+
+.nw-inline .model-picker {
+  right: 0;
+  left: auto;
+}
+
+@container (max-width: 520px) {
+  .nw-inline-foot .model-picker-wrap {
+    max-width: 180px;
+  }
+
+  .nw-inline-head,
+  .nw-inline-foot {
+    padding-inline: var(--s-3);
+  }
+}
+
 .nw-enter {
   margin-left: var(--s-1);
   opacity: 0.8;
