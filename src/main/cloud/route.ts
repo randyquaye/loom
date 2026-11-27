@@ -324,9 +324,7 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
   async function notifications(): Promise<Notification[]> {
     const local = (await call('notifications:list', undefined)) as Notification[]
     if (state !== 'connected') return local
-    const remote = await runner<Notification[]>('notifications:list', undefined).catch(
-      (): Notification[] => []
-    )
+    const remote = await runner<Notification[]>('notifications:list', undefined)
     return [...local, ...remote].sort((a, b) => b.createdAt - a.createdAt)
   }
 

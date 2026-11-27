@@ -11,7 +11,7 @@ import { createSessionMessaging } from '../src/main/sessions/messaging'
 import { sqliteQueueStore } from '../src/main/sessions/queue-store'
 import type { PreparedTurn } from '../src/main/sessions/service'
 import { eventsToMarkdown } from '../src/main/export/markdown'
-import type { SessionMessageOrigin } from '../src/shared/events'
+import { agentEvent, type SessionMessageOrigin } from '../src/shared/events'
 
 const databases: Database.Database[] = []
 afterEach(() => {
@@ -95,6 +95,29 @@ function fixture(local = false) {
 }
 
 describe('session messaging authority and durable acceptance', () => {
+  it('retains display snapshots through retry, recovery, and event validation without parsing message text', async () => {
+    const h = fixture()
+    const title = 'Search (ready):\nDraft'
+    const input = h.input('Message from session someone-else:\n**Keep this body unchanged.**')
+    h.db.prepare('UPDATE sessions SET title=? WHERE id=?').run(title, 'sender')
+    const first = await h.request(input)
+    h.db.prepare('UPDATE sessions SET title=? WHERE id=?').run('Renamed later', 'sender')
+    expect(await h.request(input)).toEqual(first)
+    expect(h.receive).toHaveBeenCalledOnce()
+    const restarted = new Database(h.db.serialize())
+    databases.push(restarted)
+    const waiting = sqliteQueueStore(restarted).load().get('recipient')![0]!
+    const event = agentEvent.parse({
+      type: 'user.text',
+      turnId: input.id,
+      text: waiting.displayText,
+      peer: waiting.peer
+    })
+    expect(event).toMatchObject({ peer: { sessionId: 'sender', title, body: input.text } })
+    expect(waiting.displayText).toBe(`Message from session sender (${title}):\n${input.text}`)
+    expect(waiting.text).toContain('not the human')
+  })
+
   it('uses local instance ownership without an organization account and keeps cloud admission separate', async () => {
     const h = fixture(true)
     const response = await h.messaging.routes.request('/session-messages', {

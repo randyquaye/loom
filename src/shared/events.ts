@@ -40,7 +40,10 @@ export const sessionMessageOrigin = z.object({
   messageId: z.string(),
   sessionId: z.string(),
   workspaceId: z.string(),
-  rootId: z.string()
+  rootId: z.string(),
+  /** Display snapshots; optional for messages recorded before the peer UI. */
+  title: z.string().optional(),
+  body: z.string().optional()
 })
 export type SessionMessageOrigin = z.infer<typeof sessionMessageOrigin>
 

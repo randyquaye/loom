@@ -5,6 +5,7 @@ import { deriveBlocks, type Block } from '../../../shared/blocks'
 import { usageByTurn } from '../../../shared/usage'
 import { ChatEmptyState } from './ChatEmptyState'
 import { QuestionCard } from './QuestionCard'
+import { PeerMessage } from './PeerMessage'
 import {
   AssistantText,
   ErrorRow,
@@ -210,13 +211,21 @@ export function MessageList({
       }}
     >
       <div className="chat-column">
-        {segments.map((segment) =>
-          segment.kind === 'user' ? (
-            <UserBubble key={segment.key} text={segment.block.text} onFileOpen={onFileOpen} />
-          ) : (
-            renderTurn(segment)
+        {segments.map((segment, index) => {
+          if (segment.kind === 'turn') return renderTurn(segment)
+          if (segment.block.peer === undefined)
+            return <UserBubble key={segment.key} text={segment.block.text} onFileOpen={onFileOpen} />
+          // Providers use their own turn IDs, distinct from accepted input IDs.
+          const next = segments[index + 1]
+          return (
+            <PeerMessage
+              key={segment.key}
+              peer={segment.block.peer}
+              text={segment.block.text}
+              at={next?.kind === 'turn' ? times.byTurn.get(next.turnId ?? '')?.startedAt : undefined}
+            />
           )
-        )}
+        })}
         {thinking && <ThinkingRow since={times.lastBoundaryAt} />}
       </div>
     </div>
