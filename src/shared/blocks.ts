@@ -1,4 +1,4 @@
-import type { AgentEvent, QuestionAnswer, QuestionRequest } from './events'
+import type { AgentEvent, QuestionAnswer, QuestionRequest, SessionMessageOrigin } from './events'
 
 /** turnId is the producing event's turn (additive; absent on turn-less errors), used to group a turn. */
 export type Block =
@@ -10,7 +10,7 @@ export type Block =
       resolved: boolean
       answers?: QuestionAnswer['answers']
     }
-  | { kind: 'user'; id: string; text: string; turnId?: string }
+  | { kind: 'user'; id: string; text: string; turnId?: string; peer?: SessionMessageOrigin }
   | { kind: 'text'; id: string; text: string; turnId?: string }
   | { kind: 'reasoning'; id: string; text: string; turnId?: string }
   | {
@@ -99,7 +99,8 @@ export function deriveBlocks(events: AgentEvent[]): Block[] {
           kind: 'user',
           id: `user-${event.turnId}-${blocks.length}`,
           text: event.text,
-          turnId: event.turnId
+          turnId: event.turnId,
+          ...(event.type === 'user.text' && event.peer !== undefined ? { peer: event.peer } : {})
         })
         if (event.type === 'user.steer') textByTurn.delete(event.turnId)
         break

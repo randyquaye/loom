@@ -13,7 +13,67 @@ import {
 import path from 'node:path'
 
 const help =
-  'loom worktree create --branch NAME [--base REF]\nloom worktree register --path DIRECTORY\nloom worktree list\nReturns JSON. Creation keeps the original checkout unchanged and never pushes or fetches.'
+  'loom worktree create --branch NAME [--base REF]\nloom worktree register --path DIRECTORY\nloom worktree list\n' +
+  'loom message list\nloom message send --to SESSION_ID --text TEXT [--id UUID]\nloom message reply --message MESSAGE_ID --text TEXT [--id UUID]\n' +
+  'Returns JSON. Creation keeps the original checkout unchanged and never pushes or fetches.'
+
+async function message(command, options) {
+  const url = process.env.LOOM_MESSAGE_URL
+  const token = process.env.LOOM_MESSAGE_TOKEN
+  if (!url || !token) throw new Error('Session messaging is unavailable in this session')
+  const flags = new Map()
+  for (let i = 0; i < options.length; i += 2) {
+    if (
+      !['--to', '--message', '--text', '--id'].includes(options[i]) ||
+      options[i + 1] === undefined ||
+      flags.has(options[i])
+    )
+      throw new Error(help)
+    flags.set(options[i], options[i + 1])
+  }
+  const list = command === 'list'
+  if (
+    list
+      ? flags.size !== 0
+      : !['send', 'reply'].includes(command) ||
+        !flags.has('--text') ||
+        (command === 'send'
+          ? !flags.has('--to') || flags.has('--message')
+          : !flags.has('--message') || flags.has('--to'))
+  )
+    throw new Error(help)
+  const id = flags.get('--id') ?? randomUUID()
+  const body = list
+    ? undefined
+    : JSON.stringify({
+        id,
+        text: flags.get('--text'),
+        ...(command === 'send' ? { to: flags.get('--to') } : { replyTo: flags.get('--message') })
+      })
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let response
+    let result
+    try {
+      response = await fetch(url, {
+        method: list ? 'GET' : 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        ...(body === undefined ? {} : { body }),
+        redirect: 'error',
+        signal: AbortSignal.timeout(30_000)
+      })
+      result = await response.json()
+    } catch {
+      if (attempt === 0) continue
+      throw new Error(
+        list
+          ? 'Messaging connection failed'
+          : `Messaging connection failed; acceptance is unknown. Retry with --id ${id}`
+      )
+    }
+    if (!response.ok) throw new Error(result.error ?? 'Message was refused')
+    return result
+  }
+}
 const hardening = [
   '-c',
   'core.hooksPath=/dev/null',
@@ -52,6 +112,7 @@ function directory(root, relative) {
 function main(args) {
   if (args.includes('--help') || args.length === 0) return help
   const [subject, command, ...options] = args
+  if (subject === 'message') return message(command, options)
   if (subject !== 'worktree' || !['create', 'register', 'list'].includes(command)) throw new Error(help)
   const root = realpathSync(process.env.LOOM_WORKSPACE_PATH || '')
   const workspaceId = process.env.LOOM_WORKSPACE_ID
@@ -106,7 +167,7 @@ function main(args) {
 }
 
 try {
-  const result = main(process.argv.slice(2))
+  const result = await main(process.argv.slice(2))
   process.stdout.write(typeof result === 'string' ? `${result}\n` : `${JSON.stringify(result)}\n`)
 } catch (error) {
   process.stderr.write(`${error.stderr?.toString().trim() || error.message}\n`)

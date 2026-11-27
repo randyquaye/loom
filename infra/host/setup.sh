@@ -107,6 +107,10 @@ cat >"$DRAFT" <<CADDY
 }
 
 $LOOM_HOSTNAME {
+	@messages path /session-messages
+	handle @messages {
+		reverse_proxy 127.0.0.1:$RUNNER_PORT
+	}
 	@containers remote_ip $BRIDGE_SUBNET
 	handle @containers {
 		rewrite * /github{uri}
