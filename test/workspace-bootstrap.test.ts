@@ -6,16 +6,16 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import type Database from 'better-sqlite3'
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CONTEXT_DIR, WORKSPACES_DIR } from '../src/shared/brand'
 import type { ProjectRow, WorkspaceRow } from '../src/shared/ipc-contract'
 import { MAX_WORKSPACES_PER_PROJECT } from '../src/shared/limits'
 import { openDb } from '../src/main/db'
-import { insertProject } from '../src/main/db/repos/projects'
+import { insertProject, setProjectRemoteUrl } from '../src/main/db/repos/projects'
 import { getWorkspace, listWorkspaces } from '../src/main/db/repos/workspaces'
 import { setEnvSecretStore } from '../src/main/env/vars'
 import { ensureContextIgnored } from '../src/main/git/exclude'
-import { GIT_HARDENING_ARGS } from '../src/main/git/run'
+import * as Git from '../src/main/git/run'
 import { listWorktrees } from '../src/main/git/worktree'
 import { aesGcmCipher, createSecretStore } from '../src/main/secrets'
 import {
@@ -55,7 +55,7 @@ interface Fixture {
 }
 
 async function sh(args: string[], cwd: string): Promise<string> {
-  const { stdout } = await execFileAsync('git', [...GIT_HARDENING_ARGS, ...args], {
+  const { stdout } = await execFileAsync('git', [...Git.GIT_HARDENING_ARGS, ...args], {
     cwd,
     shell: false
   })
@@ -137,6 +137,7 @@ async function add(fx: Fixture, name: string, projectId = fx.projectId): Promise
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   while (databases.length > 0) databases.pop()?.close()
 })
 
@@ -145,6 +146,84 @@ afterAll(async () => {
 })
 
 describe('createWorkspace', () => {
+  it.each(['worktree', 'clone'] as const)(
+    'starts %s workspaces from fresh remote branches',
+    async (checkout) => {
+      const fx = await setup()
+      const initial = await sh(['rev-parse', 'HEAD'], fx.repo)
+      const existing = await add(fx, 'existing')
+      await sh(['branch', 'feature/fix'], fx.repo)
+      await sh(['tag', 'v1.0'], fx.repo)
+      const remote = path.join(path.dirname(fx.repo), 'origin')
+      await sh(['-c', 'protocol.file.allow=always', 'clone', '-q', fx.repo, remote], fx.repo)
+      await sh(['remote', 'add', 'origin', remote], fx.repo)
+      setProjectRemoteUrl(fx.db, fx.projectId, remote)
+      const advance = (repo: string) =>
+        sh(
+          [
+            '-c',
+            'user.name=Loom Test',
+            '-c',
+            'user.email=loom@test.invalid',
+            'commit',
+            '--allow-empty',
+            '-q',
+            '-m',
+            'advance'
+          ],
+          repo
+        )
+      await advance(remote)
+      const main = await sh(['rev-parse', 'HEAD'], remote)
+      await sh(['checkout', '-q', 'feature/fix'], remote)
+      await advance(remote)
+      const feature = await sh(['rev-parse', 'HEAD'], remote)
+      await sh(['checkout', '-q', 'main'], remote)
+      await sh(['checkout', '-q', '-b', 'local-only'], fx.repo)
+      await advance(fx.repo)
+      const local = await sh(['rev-parse', 'HEAD'], fx.repo)
+      await writeFile(path.join(fx.repo, 'README.md'), 'uncommitted work\n')
+
+      // Only these disposable fixtures permit file transport; production keeps its hardening.
+      const machineGit = Git.git
+      const machineGitWithEnv = Git.gitWithEnv
+      vi.spyOn(Git, 'git').mockImplementation((repo, args) =>
+        machineGit(repo, ['-c', 'protocol.file.allow=always', ...args])
+      )
+      vi.spyOn(Git, 'gitWithEnv').mockImplementation((repo, args, env) =>
+        machineGitWithEnv(repo, ['-c', 'protocol.file.allow=always', ...args], env)
+      )
+
+      const cases = [
+        [null, main],
+        ['feature/fix', feature],
+        ['local-only', local],
+        ['v1.0', initial],
+        [initial, initial]
+      ] as const
+      for (const [index, [baseRef, expected]] of cases.entries()) {
+        const created = await createWorkspace({ ...fx, name: `fresh-${index}`, checkout, baseRef })
+        const workspace = await waitForSettled(fx, created.id)
+        expect(workspace.state).toBe('ready')
+        expect(await sh(['rev-parse', 'HEAD'], workspace.worktreePath)).toBe(expected)
+        await removeWorkspace({ db: fx.db, repoPath: fx.repo, workspace, dataRoot: fx.dataRoot })
+      }
+      expect(await sh(['rev-parse', 'main'], fx.repo)).toBe(initial)
+      expect(await sh(['rev-parse', 'feature/fix'], fx.repo)).toBe(initial)
+      expect(await sh(['rev-parse', 'HEAD'], fx.repo)).toBe(local)
+      expect(await readFile(path.join(fx.repo, 'README.md'), 'utf8')).toBe('uncommitted work\n')
+      expect(await sh(['rev-parse', 'HEAD'], existing.worktreePath)).toBe(initial)
+
+      const unavailable = path.join(path.dirname(fx.repo), 'unavailable')
+      await sh(['remote', 'set-url', 'origin', unavailable], fx.repo)
+      setProjectRemoteUrl(fx.db, fx.projectId, unavailable)
+      const failed = await createWorkspace({ ...fx, name: 'offline', checkout, baseRef: 'feature/fix' })
+      const workspace = await waitForSettled(fx, failed.id)
+      expect(workspace.state).toBe('error')
+      expect(await readFile(workspace.setupLogPath as string, 'utf8')).toContain('BASE_REF_UNAVAILABLE')
+    }
+  )
+
   it('adds the worktree, seeds .context/README.md and stores the row', async () => {
     const fx = await setup()
 
@@ -353,7 +432,17 @@ describe('removeWorkspace', () => {
          (id, project_id, name, branch, worktree_path, created_at, archived, state, port)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(row.id, row.projectId, row.name, row.branch, row.worktreePath, row.createdAt, 0, row.state, row.port)
+      .run(
+        row.id,
+        row.projectId,
+        row.name,
+        row.branch,
+        row.worktreePath,
+        row.createdAt,
+        0,
+        row.state,
+        row.port
+      )
 
     await removeWorkspace({ db: fx.db, repoPath: fx.repo, workspace: row })
 

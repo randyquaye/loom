@@ -413,7 +413,8 @@ it('prepares skill and context snapshots before any repository runtime can swap 
     '-m',
     'fixture'
   ])
-  h.db.prepare('UPDATE projects SET repo_path=? WHERE id=?').run(repo, 'p1')
+  // Snapshot ordering uses a local repository; remote refresh is covered by workspace tests.
+  h.db.prepare('UPDATE projects SET repo_path=?, remote_url=NULL WHERE id=?').run(repo, 'p1')
   const runtimes = await import('../src/main/runtime')
   let started = false
   const runtime = vi.spyOn(runtimes, 'runtimeFor').mockImplementation((workspace) => ({

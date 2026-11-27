@@ -222,6 +222,8 @@ const api: LoomApi = {
       invoke('cloud:setRunner', { url, expectedEmail, ...(mode === undefined ? {} : { mode }) }),
     signIn: (expectedEmail = '') => invoke('cloud:signIn', { expectedEmail }),
     signOut: () => invoke('cloud:signOut', undefined),
+    cancelSignIn: () => invoke('cloud:cancelSignIn', undefined),
+    reconnect: () => invoke('cloud:reconnect', undefined),
     previewInvite: (code) => invoke('cloud:previewInvite', { code }),
     join: (code, expectedEmail = '') => invoke('cloud:join', { code, expectedEmail })
   },

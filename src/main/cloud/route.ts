@@ -39,6 +39,7 @@ import { connectRunner, RunnerUnreachableError, type ClientState, type RunnerAut
 import { listenForBrowser, type BrowserReturn } from './sign-in'
 import { setCloudStatus } from './status'
 import { createPortForwards } from './port-forwards'
+import type { OrgOverview } from '../../shared/org'
 
 export interface CloudRouteOptions extends RunnerAuth {
   db: Database.Database
@@ -48,6 +49,8 @@ export interface CloudRouteOptions extends RunnerAuth {
   protocol?: number
   /** Delivers a live update to the window. */
   toWindow(channel: string, payload: unknown): void
+  /** Safe destination context from a current authenticated response, never account identity. */
+  onOrganization?(name: string): Promise<void>
 }
 
 export interface CloudRoute {
@@ -115,7 +118,12 @@ export function createCloudRoute(options: CloudRouteOptions): CloudRoute {
   }
 
   async function runner<T>(channel: string, input: unknown): Promise<T> {
+    const asked = connection
     const result = await client.call(channel, input)
+    if (channel === 'org:get' && state === 'connected' && asked === connection) {
+      const name = (result as OrgOverview | null)?.organization?.name
+      if (typeof name === 'string') await options.onOrganization?.(name).catch(() => {})
+    }
     if (channel === 'terminal:create' || channel === 'workspaces:runAction') {
       rememberTerminal(result as string)
     } else if (channel === 'terminal:list') {

@@ -31,12 +31,14 @@ interface Choice {
  */
 export function NewWorkspaceModal({
   projectId: initialProjectId,
-  projectMenu = false
+  projectMenu = false,
+  initialLocation = 'mac'
 }: {
   /** null opens with no project chosen; Create waits until one is picked. */
   projectId: string | null
   /** Start with the project menu open (the "New project" entry points). */
   projectMenu?: boolean
+  initialLocation?: 'mac' | 'cloud'
 }) {
   const closeModals = useUi((s) => s.closeModals)
   const navigate = useUi((s) => s.navigate)
@@ -54,7 +56,7 @@ export function NewWorkspaceModal({
   )
   const [baseRef, setBaseRef] = useState<string | null>(null)
   const cloudState = useCloud((s) => s.status.state)
-  const [wantsCloud, setWantsCloud] = useState(false)
+  const [wantsCloud, setWantsCloud] = useState(initialLocation === 'cloud')
   const [prompt, setPrompt] = useState('')
   const [picked, setPicked] = useState<Choice | null>(null)
   const [busy, setBusy] = useState(false)
@@ -101,7 +103,7 @@ export function NewWorkspaceModal({
   const cloudOffered = cloudState !== 'off' && project !== null && project.remoteUrl !== null
   const cloudReachable = cloudState === 'connected'
   const inCloud = wantsCloud && cloudOffered && cloudReachable
-  const ready = prompt.trim() !== '' && model !== '' && !busy && project !== null
+  const ready = prompt.trim() !== '' && model !== '' && !busy && project !== null && (!wantsCloud || inCloud)
 
   async function submit() {
     if (!ready || projectId === null) return
@@ -211,11 +213,14 @@ export function NewWorkspaceModal({
         <ProjectMenu open={menuOpen} onClose={closeMenu} onPick={selectProject} onClone={openClone} />
       </div>
       <span className="spacer" />
-      {cloudOffered && (
+      {(cloudOffered || wantsCloud) && (
         <LocationSwitcher
-          value={inCloud ? 'cloud' : 'mac'}
+          value={wantsCloud ? 'cloud' : 'mac'}
           onChange={(location) => setWantsCloud(location === 'cloud')}
-          cloudDisabled={!cloudReachable}
+          cloudDisabled={!cloudReachable || !cloudOffered}
+          cloudDisabledReason={
+            !cloudReachable ? 'Reconnect to your cloud machine' : 'Choose a project with a Git remote'
+          }
           label="Where the workspace runs"
         />
       )}
@@ -247,6 +252,11 @@ export function NewWorkspaceModal({
       />
       <span className="spacer" />
       {project === null && <span className="nw-hint">Choose a project to create</span>}
+      {wantsCloud && project !== null && !inCloud && (
+        <span className="nw-hint">
+          {!cloudReachable ? 'Reconnect Cloud to create here' : 'Choose a project with a Git remote'}
+        </span>
+      )}
       {inCloud && <span className="nw-hint">Starts from what is pushed to the remote</span>}
       <button
         type="button"

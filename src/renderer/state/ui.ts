@@ -34,6 +34,8 @@ export interface ModalFlags {
   addWorkspaceFor: string | null
   /** Open the modal's project menu (open / clone / quick start) straight away. */
   projectMenu: boolean
+  /** Explicit cloud entry points keep the new workspace on that machine. */
+  workspaceLocation?: 'mac' | 'cloud'
 }
 
 export { MAX_ATTACHMENTS }
@@ -79,7 +81,7 @@ interface UiState {
   leaveSettings(): void
   openAddProject(): void
   /** null opens the modal prompt-first with no project chosen yet. */
-  openAddWorkspace(projectId: string | null): void
+  openAddWorkspace(projectId: string | null, location?: 'mac' | 'cloud'): void
   openNewSession(workspaceId: string): void
   closeModals(): void
   openPalette(): void
@@ -197,8 +199,15 @@ export const useUi = create<UiState>((set, get) => ({
       modals: { addWorkspaceFor: useProjects.getState().projects[0]?.id ?? '', projectMenu: true },
       paletteOpen: false
     }),
-  openAddWorkspace: (projectId) =>
-    set({ modals: { ...CLOSED, addWorkspaceFor: projectId ?? '' }, paletteOpen: false }),
+  openAddWorkspace: (projectId, location) =>
+    set({
+      modals: {
+        ...CLOSED,
+        addWorkspaceFor: projectId ?? '',
+        ...(location === undefined ? {} : { workspaceLocation: location })
+      },
+      paletteOpen: false
+    }),
   openNewSession: (workspaceId) => {
     // Sessions start from the composer's model picker now; the empty-sentinel
     // active id puts the workspace into compose mode.

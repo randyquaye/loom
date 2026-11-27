@@ -61,10 +61,7 @@ test('integration surfaces resolve against live GitHub and Linear', async () => 
       const list = win.locator('.nw-list')
 
       // Branches reads the fixture clone's local git, with no network involved.
-      await expect(win.getByRole('tab', { name: 'Branches' })).toHaveAttribute(
-        'aria-selected',
-        'true'
-      )
+      await expect(win.getByRole('tab', { name: 'Branches' })).toHaveAttribute('aria-selected', 'true')
       await expect(list.locator('.nw-row', { hasText: 'trunk' }).first()).toBeVisible()
 
       await win.getByRole('tab', { name: 'PRs' }).click()
@@ -87,7 +84,7 @@ test('integration surfaces resolve against live GitHub and Linear', async () => 
         await first.click()
         await expect(popover).toHaveCount(0)
         const chipLabel = await win.locator('.nw-chip .nw-chip-label').textContent()
-        expect(chipLabel?.trim(), 'the chip should show the picked PR head branch').not.toBe('HEAD')
+        expect(chipLabel?.trim(), 'the chip should show the picked PR head branch').not.toBe('Default branch')
         await win.screenshot({ animations: 'disabled', path: path.join(OUT, '03-pr-picked.png') })
         await win.locator('.nw-chip').click()
       }

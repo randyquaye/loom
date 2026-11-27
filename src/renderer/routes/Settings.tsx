@@ -26,7 +26,7 @@ const PAGE_HEAD: Record<
   shortcuts: { title: 'Shortcuts', description: 'Keyboard shortcuts available across Loom.' },
   updates: { title: 'Updates', description: 'Keep this Mac’s Loom app up to date.' },
   integrations: { title: 'Integrations', description: 'Connect GitHub and configure services used by Loom.' },
-  cloud: { title: 'Cloud', description: 'The runner your cloud workspaces live on, and your sign-in to it.' },
+  cloud: { title: 'Cloud', description: 'Your organisation, cloud machine, and connections.' },
   'org-overview': { title: 'Organization', description: 'Your organization, membership, and cloud host.' },
   'org-members': {
     title: 'Members and invites',
@@ -72,7 +72,7 @@ export function Settings() {
 
   return (
     <main className="main elevated">
-      <header className="settings-head">
+      <header className={`settings-head${page === 'cloud' ? ' settings-head-cloud' : ''}`}>
         <button type="button" className="btn btn-ghost settings-back" onClick={leaveSettings}>
           <span aria-hidden="true">←</span>
           Back
@@ -80,7 +80,7 @@ export function Settings() {
         <h1 className="settings-page-title">{head.title}</h1>
         <p className="settings-page-desc">{head.description}</p>
       </header>
-      <div className="settings-scroll">
+      <div className={`settings-scroll${page === 'cloud' ? ' settings-scroll-cloud' : ''}`}>
         {page === 'preferences' && <PreferencesPage />}
         {projectId !== null && <ProjectPage projectId={projectId} />}
         {page === 'shortcuts' && <ShortcutsPage />}

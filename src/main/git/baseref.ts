@@ -44,6 +44,52 @@ async function resolves(run: GitRunner, repoPath: string, ref: string): Promise<
   }
 }
 
+/** Refresh a workspace's remote starting branch; local-only refs keep their local commit. */
+export async function refreshBaseRef(
+  repoPath: string,
+  baseRef: string | null,
+  run: GitRunner = git
+): Promise<string | null> {
+  if (baseRef !== null) assertSafeBaseRef(baseRef)
+  if (!(await run(repoPath, ['remote'])).split('\n').includes('origin')) return baseRef
+
+  let branch = baseRef?.replace(/^(?:refs\/heads\/|refs\/remotes\/origin\/|origin\/)/, '') ?? null
+  try {
+    const refs = await run(repoPath, [
+      'ls-remote',
+      '--symref',
+      'origin',
+      branch === null ? 'HEAD' : `refs/heads/${branch}`
+    ])
+    if (branch === null) {
+      branch = refs.match(/^ref: refs\/heads\/(.+)\tHEAD$/m)?.[1] ?? null
+      if (branch === null) throw new Error('origin did not provide a default branch')
+    } else if (!refs.split('\n').some((line) => line.split('\t')[1] === `refs/heads/${branch}`)) {
+      if (baseRef?.startsWith('origin/') || baseRef?.startsWith('refs/remotes/origin/')) {
+        throw new Error('origin did not provide that branch')
+      }
+      return baseRef
+    }
+    assertSafeBaseRef(branch)
+    const remoteRef = `refs/remotes/origin/${branch}`
+    await run(repoPath, [
+      'fetch',
+      '--no-tags',
+      '--quiet',
+      '--refmap=',
+      'origin',
+      `+refs/heads/${branch}:${remoteRef}`
+    ])
+    // Pin the fetched commit so another workspace's fetch cannot move our start point.
+    return await run(repoPath, ['rev-parse', '--verify', '--quiet', `${remoteRef}^{commit}`])
+  } catch (err) {
+    throw new BaseRefUnavailableError(
+      baseRef ?? 'default branch',
+      err instanceof Error ? err.message : String(err)
+    )
+  }
+}
+
 /**
  * Resolves a base ref to something `git worktree add` can start from. A pull-request head
  * picked from GitHub usually exists only on origin, so this fetches it. The fetch writes

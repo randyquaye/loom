@@ -1,4 +1,5 @@
 import type { CloudRunner } from '../../shared/ipc-contract'
+import { z } from 'zod'
 import { isLoopbackHost } from '../auth/callback'
 import type { RunnerAuth } from './client'
 import { createCloudSession, type CloudSession } from './session'
@@ -14,6 +15,26 @@ const REFRESH_TOKEN_PREFIX = 'cloud::refresh-token::'
 /** Pre-proof releases stored arbitrary runner addresses; those sessions must sign in again. */
 const VERIFIED_HOST_PREFIX = 'cloud::verified-host::'
 const SIGN_IN_MODE_PREFIX = 'cloud::sign-in-mode::'
+const HISTORY_PREFIX = 'cloud::sign-in-history::'
+const historySchema = z.object({
+  email: z.string().trim().email().max(254).optional(),
+  organizationName: z.string().trim().min(1).max(100).optional()
+})
+
+function history(raw: string | null): CloudRunner['lastSignIn'] {
+  try {
+    const parsed = historySchema.safeParse(JSON.parse(raw ?? 'null'))
+    if (!parsed.success) return undefined
+    return {
+      ...(parsed.data.email === undefined ? {} : { email: parsed.data.email }),
+      ...(parsed.data.organizationName === undefined
+        ? {}
+        : { organizationName: parsed.data.organizationName })
+    }
+  } catch {
+    return undefined
+  }
+}
 
 /** The part of the Keychain-backed secret store the account needs. */
 export interface Vault {
@@ -47,6 +68,10 @@ export interface CloudAccount {
   /** Resolves once the person has finished in the browser. Asking again starts over. */
   signIn(expectedEmail?: string): Promise<void>
   signOut(): Promise<void>
+  cancelSignIn(): void
+  reconnect(): void
+  /** Called only with organisation details returned by the active authenticated route. */
+  rememberOrganization(address: string, name: string): Promise<void>
   join(code: string, expectedEmail?: string): Promise<CloudRunner>
   close(): void
 }
@@ -138,6 +163,7 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
   let url = fixed ?? (await vault.getRaw(RUNNER_URL_KEY))
   let mode: CloudSignInMode =
     url !== null && (await vault.getRaw(`${SIGN_IN_MODE_PREFIX}${url}`)) === 'managed' ? 'managed' : 'company'
+  let lastSignIn = url === null ? undefined : history(await vault.getRaw(`${HISTORY_PREFIX}${url}`))
   let session: CloudSession | null = null
   let following: Following | null = null
   /** The sign-in waiting on the browser, if there is one. */
@@ -204,6 +230,7 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
       url,
       fixed: fixed !== null,
       devToken: devToken !== null,
+      ...(lastSignIn === undefined || devToken !== null ? {} : { lastSignIn: { ...lastSignIn } }),
       ...(mode === 'managed' ? { mode } : {})
     }
   }
@@ -277,6 +304,9 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
         const previousProof = await vault.getRaw(proofKey)
         const modeKey = `${SIGN_IN_MODE_PREFIX}${address}`
         const previousMode = await vault.getRaw(modeKey)
+        const historyKey = `${HISTORY_PREFIX}${address}`
+        const previousHistory = await vault.getRaw(historyKey)
+        const nextHistory = { ...history(previousHistory), ...(marker === null ? {} : { email }) }
         mine.signal.throwIfAborted()
         const previousUrl = url
         try {
@@ -286,6 +316,7 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
           else await vault.setRaw(proofKey, marker)
           if (requestedMode === 'managed') await vault.setRaw(modeKey, requestedMode)
           else await vault.deleteRaw(modeKey)
+          if (marker !== null) await vault.setRaw(historyKey, JSON.stringify(nextHistory))
           mine.signal.throwIfAborted()
           await vault.setRaw(RUNNER_URL_KEY, address)
           mine.signal.throwIfAborted()
@@ -296,6 +327,8 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
           else await vault.setRaw(proofKey, previousProof)
           if (previousMode === null) await vault.deleteRaw(modeKey)
           else await vault.setRaw(modeKey, previousMode)
+          if (previousHistory === null) await vault.deleteRaw(historyKey)
+          else await vault.setRaw(historyKey, previousHistory)
           if (previousUrl === null) await vault.deleteRaw(RUNNER_URL_KEY)
           else await vault.setRaw(RUNNER_URL_KEY, previousUrl)
           throw error
@@ -305,6 +338,7 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
         session = null
         url = address
         mode = requestedMode
+        lastSignIn = marker === null ? history(previousHistory) : nextHistory
         start(tokens)
         return runner()
       })
@@ -331,6 +365,7 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
         stop('The runner address changed')
         url = null
         mode = 'company'
+        lastSignIn = undefined
         return runner()
       })
     },
@@ -343,7 +378,7 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
         )
       }
       const address = url!
-      const email = workEmail(address, expectedEmail)
+      const email = workEmail(address, expectedEmail.trim() || lastSignIn?.email || '')
       attempt?.abort(new Error('Signing in was started again'))
       const mine = new AbortController()
       attempt = mine
@@ -355,6 +390,18 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
           mine.signal.throwIfAborted()
           if (marker === null) await vault.deleteRaw(`${VERIFIED_HOST_PREFIX}${address}`)
           else await vault.setRaw(`${VERIFIED_HOST_PREFIX}${address}`, marker)
+          if (marker !== null) {
+            const key = `${HISTORY_PREFIX}${address}`
+            const previous = await vault.getRaw(key)
+            const next = { ...history(previous), email }
+            await vault.setRaw(key, JSON.stringify(next))
+            if (mine.signal.aborted) {
+              if (previous === null) await vault.deleteRaw(key)
+              else await vault.setRaw(key, previous)
+              mine.signal.throwIfAborted()
+            }
+            if (url === address) lastSignIn = next
+          }
         })
         mine.signal.throwIfAborted()
       } catch (error) {
@@ -375,6 +422,23 @@ export async function openCloudAccount(options: CloudAccountOptions): Promise<Cl
       })
       // Does not wait for the runner to close the connection: it may not be reachable.
       following?.reconnect()
+    },
+
+    cancelSignIn() {
+      attempt?.abort(new Error('Sign-in cancelled'))
+      attempt = null
+    },
+
+    reconnect: () => following?.reconnect(),
+
+    rememberOrganization(address, name) {
+      return change(async () => {
+        if (address !== url || !name.trim() || name.trim().length > 100) return
+        if (lastSignIn?.organizationName === name.trim()) return
+        const next = { ...lastSignIn, organizationName: name.trim() }
+        await vault.setRaw(`${HISTORY_PREFIX}${address}`, JSON.stringify(next))
+        if (address === url) lastSignIn = next
+      })
     },
 
     async join(code, expectedEmail = '') {
