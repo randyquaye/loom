@@ -116,7 +116,13 @@ async function runBash(args: unknown, ctx: ToolCtx): Promise<ToolResult> {
         HOME: process.env.HOME ?? '',
         ...Object.fromEntries(
           Object.entries(ctx.env ?? {}).filter(([key]) =>
-            ['LOOM_WORKSPACE_PATH', 'LOOM_WORKSPACE_ID', 'LOOM_SESSION_ID'].includes(key)
+            [
+              'LOOM_WORKSPACE_PATH',
+              'LOOM_WORKSPACE_ID',
+              'LOOM_SESSION_ID',
+              'LOOM_MESSAGE_URL',
+              'LOOM_MESSAGE_TOKEN'
+            ].includes(key)
           )
         )
       }

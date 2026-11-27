@@ -2,7 +2,12 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
-import { renderEventForSearch, type AgentEvent, type QuestionAnswer } from '../../shared/events'
+import {
+  renderEventForSearch,
+  type AgentEvent,
+  type QuestionAnswer,
+  type SessionMessageOrigin
+} from '../../shared/events'
 import { openTurn } from '../../shared/turn-state'
 import { questionAnswerText, validateQuestionAnswers, visibleQuestionAnswers } from '../../shared/questions'
 import {
@@ -50,13 +55,29 @@ import {
   workspaceEnv
 } from '../workspace/bootstrap'
 import { eventsToMarkdown } from '../export/markdown'
-import { prepareWorktreeTool, WORKTREE_TOOL_INSTRUCTIONS } from '../workspace/worktree-tool'
+import {
+  prepareWorktreeTool,
+  WORKTREE_TOOL_INSTRUCTIONS,
+  MESSAGE_TOOL_INSTRUCTIONS
+} from '../workspace/worktree-tool'
+import type { SessionMessaging } from './messaging'
 
 type Sink = (push: NumberedSessionEventPush) => void
 
 let sink: Sink | null = null
 type TurnStartGuard = (workspaceId: string, actorId?: string) => void
 let turnStartGuard: TurnStartGuard | null = null
+let sessionMessaging: SessionMessaging | null = null
+
+export function setSessionMessaging(messaging: SessionMessaging | null): void {
+  sessionMessaging = messaging
+}
+
+function assertPeerDelivery(sessionId: string, input: PreparedTurn): void {
+  if (input.peer === undefined) return
+  if (sessionMessaging === null) throw new Error('Session messaging is unavailable')
+  sessionMessaging.assertDelivery(sessionId, input.peer)
+}
 
 /** The runner pauses new turns for maintenance; already running turns keep their stream. */
 export function setTurnStartGuard(guard: TurnStartGuard | null): void {
@@ -110,6 +131,7 @@ export interface PreparedTurn {
   messageId?: string
   /** The human requesting execution; retained when an accepted message waits or restarts. */
   actorId?: string
+  peer?: SessionMessageOrigin
 }
 
 export class SessionLimitError extends Error {}
@@ -481,6 +503,18 @@ function pushQueue(sessionId: string, db?: Database.Database, messageId?: string
   queueSink?.({ sessionId, items: sessionQueue(sessionId) })
 }
 
+function enqueueTurn(db: Database.Database, sessionId: string, input: PreparedTurn): void {
+  const previous = queues.get(sessionId)
+  queues.set(sessionId, [...(previous ?? []), { ...input, id: input.messageId ?? randomUUID() }])
+  try {
+    pushQueue(sessionId, db, input.messageId)
+  } catch (error) {
+    if (previous === undefined) queues.delete(sessionId)
+    else queues.set(sessionId, previous)
+    throw error
+  }
+}
+
 type TitleSink = (push: SessionTitlePush) => void
 
 let titleSink: TitleSink | null = null
@@ -643,6 +677,7 @@ function drainQueue(db: Database.Database, sessionId: string): void {
   if (first === undefined) return
   try {
     assertSessionTurnAllowed(db, sessionId, first.actorId)
+    assertPeerDelivery(sessionId, first)
   } catch {
     // Revoked requests stay waiting, rather than running as the next controller.
     return
@@ -670,6 +705,7 @@ export async function steerQueued(
 ): Promise<QueuedMessage[]> {
   const queue = queues.get(sessionId) ?? []
   const input = queue.find((item) => item.id === messageId)
+  if (input?.peer !== undefined) throw new Error('Peer messages are delivered between turns')
   const session = live.get(sessionId)
   if (input === undefined || !busyTurns.has(sessionId) || session?.steer === undefined)
     throw new Error('The message or running turn is no longer available for steering')
@@ -690,6 +726,16 @@ export async function steerQueued(
   }
   if (promotion.drain && !busyTurns.has(sessionId)) drainQueue(db, sessionId)
   return sessionQueue(sessionId)
+}
+
+/** Accepted peer input bypasses attachment expansion and cannot interrupt a running turn. */
+export function receiveSessionMessage(db: Database.Database, sessionId: string, input: PreparedTurn): void {
+  // A failed or recovered queue waits for its human; peers cannot release that work.
+  if (queues.get(sessionId)?.length) {
+    enqueueTurn(db, sessionId, input)
+    return
+  }
+  sendDetached(db, sessionId, input, 'peer.message')
 }
 
 export function sendTurn(
@@ -758,16 +804,7 @@ async function sendPreparedTurn(
   // A turn already in flight: queue the message instead of spawning a second
   // process against the same provider session.
   if (busyTurns.has(sessionId)) {
-    const previous = queues.get(sessionId)
-    const queue = [...(previous ?? []), { ...input, id: input.messageId ?? randomUUID() }]
-    queues.set(sessionId, queue)
-    try {
-      pushQueue(sessionId, db, input.messageId)
-    } catch (error) {
-      if (previous === undefined) queues.delete(sessionId)
-      else queues.set(sessionId, previous)
-      throw error
-    }
+    enqueueTurn(db, sessionId, input)
     return
   }
   const turnId = randomUUID()
@@ -779,7 +816,9 @@ async function sendPreparedTurn(
     const isFirstPrompt =
       (
         db
-          .prepare('SELECT COUNT(*) AS n FROM events WHERE session_id = ? AND type = ?')
+          .prepare(
+            "SELECT COUNT(*) AS n FROM events WHERE session_id = ? AND type = ? AND json_extract(payload, '$.peer') IS NULL"
+          )
           .get(sessionId, 'user.text') as { n: number }
       ).n === 0
 
@@ -790,13 +829,14 @@ async function sendPreparedTurn(
         type: 'user.text',
         turnId,
         text: input.displayText ?? body,
-        ...(input.actorId === undefined ? {} : { actorId: input.actorId })
+        ...(input.actorId === undefined ? {} : { actorId: input.actorId }),
+        ...(input.peer === undefined ? {} : { peer: input.peer })
       },
       input.messageId
     )
     recorded = true
     // Titles and checkpoints describe what the user asked, not the inlined files.
-    if (isFirstPrompt) {
+    if (isFirstPrompt && input.peer === undefined) {
       const asked = input.promptText ?? input.displayText ?? body
       // An excerpt at once, so the list is never blank; the model's name follows.
       setTitle(db, sessionId, excerptTitle(asked))
@@ -883,6 +923,9 @@ async function sendPreparedTurn(
       await runtime.ensureRunning()
       if (!current()) return
       let env = await workspaceEnv(db, row.workspace_id)
+      delete env.LOOM_MESSAGE_URL
+      delete env.LOOM_MESSAGE_TOKEN
+      const messagingEnv = sessionMessaging?.environment(sessionId) ?? {}
       try {
         env = await prepareWorktreeTool(
           runtime,
@@ -896,9 +939,20 @@ async function sendPreparedTurn(
           advertised.length <= MAX_SESSION_INSTRUCTION_CHARS
         )
           systemPromptAppend = advertised
+        if (messagingEnv.LOOM_MESSAGE_TOKEN !== undefined) {
+          const withMessaging = systemPromptAppend.includes(MESSAGE_TOOL_INSTRUCTIONS)
+            ? systemPromptAppend
+            : `${systemPromptAppend}\n\n${MESSAGE_TOOL_INSTRUCTIONS}`
+          if (withMessaging.length <= MAX_SESSION_INSTRUCTION_CHARS) {
+            systemPromptAppend = withMessaging
+            env = { ...env, ...messagingEnv }
+          }
+        }
       } catch {
         // An optional helper must not block existing agents or follow an unsafe .context symlink.
-        systemPromptAppend = baseInstructions.replace(WORKTREE_TOOL_INSTRUCTIONS, '')
+        systemPromptAppend = baseInstructions
+          .replace(WORKTREE_TOOL_INSTRUCTIONS, '')
+          .replace(MESSAGE_TOOL_INSTRUCTIONS, '')
       }
       if (row.instruction_snapshot === '') {
         db.prepare('UPDATE sessions SET instruction_snapshot = ? WHERE id = ?').run(
@@ -929,6 +983,7 @@ async function sendPreparedTurn(
       void pump(db, sessionId, session)
     }
     turnStartGuard?.(gate.id, input.actorId)
+    assertPeerDelivery(sessionId, input)
     if (input.images.length === 0) await session.send(body)
     else await session.send(body, input.images)
     if (!databaseIsLive(db)) return
@@ -1137,6 +1192,7 @@ export async function answerQuestion(
 }
 
 export function closeSession(sessionId: string): void {
+  sessionMessaging?.revoke(sessionId)
   promotions.delete(sessionId)
   preparing.get(sessionId)?.controller.abort()
   preparing.delete(sessionId)

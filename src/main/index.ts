@@ -24,9 +24,12 @@ import {
   closeAllSessions,
   closeInterruptedTurns,
   setLoomDataRoot,
+  persistQueues,
   setQueueSink,
   setTitleSink
 } from './sessions/service'
+import { sqliteQueueStore } from './sessions/queue-store'
+import { startLocalSessionMessaging } from './sessions/local-messaging'
 import { openExternalSafe } from './shell/open'
 import { openDesktopUpdater } from './updates'
 import type { DesktopUpdater } from './updates/service'
@@ -49,6 +52,8 @@ let cloud: CloudRoute | null = null
 let account: CloudAccount | null = null
 let updates: DesktopUpdater | null = null
 let updateTimer: ReturnType<typeof setInterval> | null = null
+let sessionDb: ReturnType<typeof openDb> | undefined
+let stopLocalMessaging: (() => void) | undefined
 
 function toWindow(channel: string, payload: unknown): void {
   if (mainWindow !== null && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
@@ -187,7 +192,9 @@ if (!app.requestSingleInstanceLock()) {
       const dataDir = process.env.LOOM_DATA_DIR ?? app.getPath('userData')
       setTrustedOrigin(app.isPackaged ? 'file://' : (process.env.ELECTRON_RENDERER_URL ?? 'file://'))
       const db = openDb(path.join(dataDir, 'loom.db'))
+      sessionDb = db
       closeInterruptedTurns(db)
+      persistQueues(sqliteQueueStore(db))
       const secrets = createSecretStore(path.join(dataDir, 'secrets.enc'), safeStorageCipher(safeStorage))
       setEnvSecretStore(secrets)
       setLoomDataRoot(dataDir)
@@ -200,6 +207,11 @@ if (!app.requestSingleInstanceLock()) {
       registerIpc({ db, secrets, dataRoot: dataDir, updates })
       registerBackends(secrets)
       wireLiveUpdates()
+      try {
+        stopLocalMessaging = await startLocalSessionMessaging(db)
+      } catch (error) {
+        console.warn('[loom] Session messaging is unavailable:', error)
+      }
       await openCloud(db, dataDir, secrets)
       if (!app.isPackaged) {
         const missing = missingChannelHandlers()
@@ -230,7 +242,8 @@ if (!app.requestSingleInstanceLock()) {
   app.on('will-quit', () => {
     if (updateTimer !== null) clearInterval(updateTimer)
     updates?.close()
-    closeAllSessions()
+    stopLocalMessaging?.()
+    closeAllSessions(sessionDb)
     destroyAllTerminals()
     // Only the connection ends: what runs on the runner keeps running.
     account?.close()

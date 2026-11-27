@@ -36,6 +36,26 @@ cannot be protected from that code by hiding settings. Human sessions never rece
 org-wide values, an owner's included. See [LoomBots](bots.md) for configuration, sharing,
 revocation and recovery behavior.
 
+## Session messages
+
+Peer messaging connects open sessions within one desktop instance or one cloud runner,
+including different workspaces and projects. Cloud sessions must share the same human
+owner; desktop sessions use local instance ownership without an organization account.
+Desktop and cloud sessions are separate messaging scopes. Bots and cross-owner messaging
+are excluded. The desktop hosts its endpoint on `127.0.0.1` at an OS-assigned port.
+A Loom-issued capability permits only recipient discovery and sending or replying to
+messages; it cannot call desktop session controls. Capabilities live in provider process
+environments and are revoked when sessions close. The operating-system/workspace access
+boundary still applies: credentials available to workspace code are not isolated from
+other code with equivalent access.
+
+The receiving agent evaluates attributed peer input under its own instructions and
+permissions. Busy sessions queue it without interruption; idle sessions can start a turn.
+Peer input never supplies human consent or answers a permission prompt. A stored receipt
+confirms durable input acceptance, not execution or understanding. Restarts restore
+waiting input without executing it at startup. Reply chains share a bounded exchange
+budget; a new human turn starts a new budget.
+
 ## Identity and invitations
 
 Google Workspace identity is bound to Google's immutable subject, not an email address.

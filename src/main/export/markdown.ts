@@ -18,7 +18,10 @@ export function eventsToMarkdown(meta: SessionMeta, events: AgentEvent[]): strin
   ]
   for (const block of deriveBlocks(events)) {
     if (block.kind === 'user') {
-      lines.push(`**you:** ${block.text}`, '')
+      lines.push(
+        `**${block.peer === undefined ? 'you' : `session ${block.peer.sessionId}`}:** ${block.text}`,
+        ''
+      )
     } else if (block.kind === 'text') {
       lines.push(block.text, '')
     } else if (block.kind === 'reasoning') {

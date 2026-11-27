@@ -70,10 +70,13 @@ import {
   setSessionSink,
   setTitleSink,
   setTurnStartGuard,
+  setSessionMessaging,
+  receiveSessionMessage,
   sessionActivity,
   stopSessionWork,
   suspendWorkspaceSessions
 } from '../sessions/service'
+import { createSessionMessaging } from '../sessions/messaging'
 import { setRemoteAccess, setWorkspaceStateSink } from '../workspace/bootstrap'
 import type { WorkspacePlacement } from '../workspace/placement'
 import { createIdlePrompts } from '../workspace/idle-prompt'
@@ -637,6 +640,31 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
           onSignInEnded: closeConnectionsOf
         })
   const pages = new Hono()
+  let messagingPort = config.port
+  const messaging = createSessionMessaging({
+    db,
+    url(sessionId) {
+      const workspace = db
+        .prepare('SELECT w.runtime FROM sessions s JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=?')
+        .get(sessionId) as { runtime: string } | undefined
+      if (workspace?.runtime === 'container') return config.signIn?.publicUrl
+      const host = ['0.0.0.0', '::'].includes(config.host) ? '127.0.0.1' : config.host
+      return `http://${host.includes(':') ? `[${host}]` : host}:${messagingPort}`
+    },
+    isAdmitted(ownerId) {
+      if (ownerId === null) return false
+      try {
+        admission.assertNewWork(ownerId)
+        return isAdmitted(ownerId)
+      } catch {
+        return false
+      }
+    },
+    active: (sessionId) => sessionActivity().bySession[sessionId] !== undefined,
+    receive: (sessionId, input) => receiveSessionMessage(db, sessionId, input)
+  })
+  setSessionMessaging(messaging)
+  pages.route('/', messaging.routes)
   if (signInPages !== undefined) pages.route('/', signInPages)
   if (logins?.githubRoutes !== undefined) pages.route('/', logins.githubRoutes)
   pages.route(
@@ -734,6 +762,7 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
     }
   })
   connectedUsers = () => server.connectedUsers()
+  messagingPort = server.port
   forwardedWorkspaces = () => server.forwardedWorkspaces()
   pushNotification = (notification) => server.sendTo(notification.ownerId, NOTIFICATION_CHANNEL, notification)
   closeForwards = (id) => server.closeWorkspaceForwards(id)
@@ -788,6 +817,7 @@ export async function startRunner(config: RunnerConfig): Promise<Runner> {
       await cleanup.close()
       await power.close()
       closeAllSessions(db)
+      setSessionMessaging(null)
       await server.close()
       await logins?.close()
       setContainerLogins(null)

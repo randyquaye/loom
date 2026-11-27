@@ -36,11 +36,15 @@ export const questionAnswer = z.object({
 })
 export type QuestionAnswer = z.infer<typeof questionAnswer>
 
-/**
- * The normalization layer: both execution paths (CLI adapters and the own agent
- * loop) emit exactly these events, so UI, export and search never see
- * provider-specific shapes.
- */
+export const sessionMessageOrigin = z.object({
+  messageId: z.string(),
+  sessionId: z.string(),
+  workspaceId: z.string(),
+  rootId: z.string()
+})
+export type SessionMessageOrigin = z.infer<typeof sessionMessageOrigin>
+
+/** Both execution paths emit these events; UI, export and search remain provider-independent. */
 export const agentEvent = z.discriminatedUnion('type', [
   questionRequest,
   questionAnswer.extend({ type: z.literal('question.answered'), turnId: z.string() }),
@@ -49,7 +53,8 @@ export const agentEvent = z.discriminatedUnion('type', [
     type: z.literal('user.text'),
     turnId: z.string(),
     text: z.string(),
-    actorId: z.string().optional()
+    actorId: z.string().optional(),
+    peer: sessionMessageOrigin.optional()
   }),
   z.object({
     type: z.literal('user.steer'),
