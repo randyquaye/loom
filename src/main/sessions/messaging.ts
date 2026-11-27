@@ -143,7 +143,9 @@ export function createSessionMessaging(options: Options) {
       messageId: input.id,
       sessionId: from,
       workspaceId: source.workspaceId,
-      rootId
+      rootId,
+      title: source.title,
+      body: input.text
     }
     const displayText = `Message from session ${from} (${source.title}):\n${input.text}`
     const prepared: PreparedTurn = {

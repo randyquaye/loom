@@ -46,6 +46,10 @@
 
 /* ---------- workspace chrome ---------- */
 
+.tabs-row {
+  min-height: 48px;
+}
+
 .workspace-topbar.topbar {
   flex: none;
   flex-wrap: wrap;
@@ -129,7 +133,7 @@ body[data-modality='keyboard'] .workspace-topbar button:focus-visible {
   font-family: var(--mono);
 }
 
-/* ---------- session tabs: 40px strip ---------- */
+/* ---------- session tabs: 48px strip ---------- */
 
 .tabs.session-tabs {
   overflow-x: auto;
