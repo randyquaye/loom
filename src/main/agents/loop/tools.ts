@@ -9,6 +9,7 @@ import { toolName, type ToolName } from '../../../shared/events'
 import { globToRegex } from '../../fs/glob'
 import { SKIPPED_DIRS } from '../../fs/tree'
 import { contain } from '../../security/contain'
+import { git } from '../../git/run'
 
 const execFileAsync = promisify(execFile)
 const MAX_OUTPUT = 200_000
@@ -18,6 +19,7 @@ const MAX_GREP_LINES = 200
 export interface ToolCtx {
   worktreePath: string
   signal: AbortSignal
+  env?: Record<string, string> | undefined
 }
 
 export interface ToolResult {
@@ -73,7 +75,7 @@ const SANDBOX_EXEC = '/usr/bin/sandbox-exec'
  * outside system paths + worktree + tmp, so a compromised model stream cannot
  * read ~/.ssh or ~/.aws even though bash runs with the user's privileges.
  */
-function sandboxProfile(worktree: string): string {
+function sandboxProfile(worktree: string, commonGitDir?: string): string {
   return `(version 1)
 (deny default)
 (allow process-exec)
@@ -83,6 +85,7 @@ function sandboxProfile(worktree: string): string {
 (allow network*)
 (allow file-read* (subpath "/usr") (subpath "/private/usr") (subpath "/System") (subpath "/Library") (subpath "/dev") (subpath "/opt") (subpath "${worktree}") (subpath "/tmp") (subpath "/private/tmp"))
 (allow file-write* (subpath "${worktree}") (subpath "/tmp") (subpath "/private/tmp"))
+${commonGitDir === undefined ? '' : `(allow file-read* file-write* (subpath ${JSON.stringify(commonGitDir)}))`}
 `
 }
 
@@ -92,9 +95,15 @@ async function runBash(args: unknown, ctx: ToolCtx): Promise<ToolResult> {
   let argv: string[] = ['/bin/bash', '-c', parsed.command]
   let profileDir: string | null = null
   if (existsSync(SANDBOX_EXEC)) {
+    // Linked worktrees keep the Git metadata needed to create a checkout outside their root.
+    const common = ctx.env?.LOOM_SESSION_ID
+      ? await git(worktree, ['rev-parse', '--path-format=absolute', '--git-common-dir']).catch(
+          () => undefined
+        )
+      : undefined
     profileDir = await mkdtemp(path.join(tmpdir(), 'loom-sbx-'))
     const profilePath = path.join(profileDir, 'profile.sb')
-    await writeFile(profilePath, sandboxProfile(worktree), 'utf8')
+    await writeFile(profilePath, sandboxProfile(worktree, common), 'utf8')
     argv = [SANDBOX_EXEC, '-f', profilePath, '/bin/bash', '-c', parsed.command]
   }
   try {
@@ -102,7 +111,15 @@ async function runBash(args: unknown, ctx: ToolCtx): Promise<ToolResult> {
       cwd: ctx.worktreePath,
       signal: ctx.signal,
       maxBuffer: MAX_OUTPUT * 2,
-      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '' }
+      env: {
+        PATH: ctx.env?.PATH ?? process.env.PATH ?? '/usr/bin:/bin',
+        HOME: process.env.HOME ?? '',
+        ...Object.fromEntries(
+          Object.entries(ctx.env ?? {}).filter(([key]) =>
+            ['LOOM_WORKSPACE_PATH', 'LOOM_WORKSPACE_ID', 'LOOM_SESSION_ID'].includes(key)
+          )
+        )
+      }
     })
     return { ok: true, output: cap(stdout + stderr) }
   } catch (error) {

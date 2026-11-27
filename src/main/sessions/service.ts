@@ -50,6 +50,7 @@ import {
   workspaceEnv
 } from '../workspace/bootstrap'
 import { eventsToMarkdown } from '../export/markdown'
+import { prepareWorktreeTool, WORKTREE_TOOL_INSTRUCTIONS } from '../workspace/worktree-tool'
 
 type Sink = (push: NumberedSessionEventPush) => void
 
@@ -867,9 +868,10 @@ async function sendPreparedTurn(
           )
         }
       }
-      const systemPromptAppend =
+      const baseInstructions =
         row.instruction_snapshot ||
         (await instructionPrompt(db, row.workspace_id, row.backend === 'gemini' || row.backend === 'qwen'))
+      let systemPromptAppend = baseInstructions
       if (!current()) return
       if (systemPromptAppend.length > MAX_SESSION_INSTRUCTION_CHARS) {
         throw new Error(
@@ -877,16 +879,33 @@ async function sendPreparedTurn(
             'Shorten the instance or project instructions before retrying.'
         )
       }
+      const runtime = runtimeFor(gate, loomDataRoot)
+      await runtime.ensureRunning()
+      if (!current()) return
+      let env = await workspaceEnv(db, row.workspace_id)
+      try {
+        env = await prepareWorktreeTool(
+          runtime,
+          { id: row.workspace_id, worktreePath: worktree.worktree_path, runtime: gate.runtime },
+          sessionId,
+          env
+        )
+        const advertised = `${baseInstructions}\n\n${WORKTREE_TOOL_INSTRUCTIONS}`
+        if (
+          !baseInstructions.includes(WORKTREE_TOOL_INSTRUCTIONS) &&
+          advertised.length <= MAX_SESSION_INSTRUCTION_CHARS
+        )
+          systemPromptAppend = advertised
+      } catch {
+        // An optional helper must not block existing agents or follow an unsafe .context symlink.
+        systemPromptAppend = baseInstructions.replace(WORKTREE_TOOL_INSTRUCTIONS, '')
+      }
       if (row.instruction_snapshot === '') {
         db.prepare('UPDATE sessions SET instruction_snapshot = ? WHERE id = ?').run(
           systemPromptAppend,
           sessionId
         )
       }
-      const runtime = runtimeFor(gate, loomDataRoot)
-      await runtime.ensureRunning()
-      if (!current()) return
-      const env = await workspaceEnv(db, row.workspace_id)
       if (!current()) return
       turnStartGuard?.(gate.id, input.actorId)
       session = await backend.startSession(

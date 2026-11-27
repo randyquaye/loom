@@ -93,7 +93,7 @@ const api: LoomApi = {
   },
   github: {
     prs: (projectId, query, cloud) => invoke('github:prs', { projectId, query: query ?? null, cloud }),
-    workspacePr: (workspaceId) => invoke('github:workspacePr', { workspaceId }),
+    workspacePr: (workspaceId, refresh) => invoke('github:workspacePr', { workspaceId, refresh }),
     branchPrs: (projectId, cloud) => invoke('github:branchPrs', { projectId, cloud })
   },
   linear: {

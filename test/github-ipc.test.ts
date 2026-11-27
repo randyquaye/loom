@@ -6,6 +6,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 type Handler = (event: unknown, input: unknown) => unknown
 const handlers = new Map<string, Handler>()
+const { indexPrs, detailPr, branches } = vi.hoisted(() => ({
+  indexPrs: vi.fn(),
+  detailPr: vi.fn(),
+  branches: vi.fn()
+}))
+vi.mock('../src/main/integrations/github/repository-prs', () => ({
+  createRepositoryPrCache: () => ({ list: indexPrs, detail: detailPr })
+}))
+vi.mock('../src/main/workspace/worktree-tracking', () => ({ refreshWorkspaceBranches: branches }))
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -17,7 +26,7 @@ vi.mock('electron', () => ({
 }))
 
 // Both integration modules are replaced so no test ever shells out to gh or the network.
-vi.mock('../src/main/integrations/github/gh', () => ({ ghAuthState: vi.fn() }))
+vi.mock('../src/main/integrations/github/gh', () => ({ ghAuthState: vi.fn(), ghExec: vi.fn() }))
 vi.mock('../src/main/integrations/github/prs', () => ({
   listPullRequests: vi.fn(),
   findPullRequestForBranch: vi.fn()
@@ -29,20 +38,20 @@ import { openDb } from '../src/main/db'
 import { currentBranch } from '../src/main/git/branches'
 import { GhNotAuthenticatedError, GhNotInstalledError } from '../src/main/integrations/github/errors'
 import { ghAuthState } from '../src/main/integrations/github/gh'
-import { findPullRequestForBranch, listPullRequests } from '../src/main/integrations/github/prs'
+import { listPullRequests } from '../src/main/integrations/github/prs'
 import { registerIpc, setTrustedOrigin } from '../src/main/ipc/index'
 import { aesGcmCipher, createSecretStore } from '../src/main/secrets'
 import type { IntegrationsStatus, PullRequestListResult, WorkspacePrResult } from '../src/shared/ipc-contract'
 
 const listPrs = vi.mocked(listPullRequests)
-const findPr = vi.mocked(findPullRequestForBranch)
+const findPr = detailPr
 const headBranch = vi.mocked(currentBranch)
 const authState = vi.mocked(ghAuthState)
 
 const PR = {
   number: 42,
   title: 'Fix the flux capacitor',
-  headRefName: 'randy/fix-flux',
+  headRefName: 'loom/fix-flux',
   baseRefName: 'main',
   state: 'open' as const,
   isDraft: false,
@@ -73,6 +82,11 @@ beforeEach(() => {
   handlers.clear()
   listPrs.mockReset()
   findPr.mockReset()
+  indexPrs.mockReset().mockResolvedValue([{ ...PR, headRepository: 'octocat/hello-world' }])
+  branches.mockReset().mockImplementation(async (_db, workspace) => {
+    const branch = await currentBranch(workspace.worktreePath)
+    return branch ? [{ branch, path: workspace.worktreePath, sessionId: '', source: 'workspace' }] : []
+  })
   headBranch.mockReset()
   headBranch.mockResolvedValue('loom/fix-flux')
   authState.mockReset()
@@ -196,24 +210,31 @@ describe('github:workspacePr', () => {
     headBranch.mockResolvedValue('loom/fix-flux')
     findPr.mockResolvedValue(DETAIL)
 
-    await expect(workspacePr('w-github')).resolves.toEqual({ kind: 'ok', pullRequest: DETAIL })
+    await expect(workspacePr('w-github')).resolves.toMatchObject({
+      kind: 'ok',
+      pullRequest: DETAIL,
+      state: 'open'
+    })
     expect(headBranch).toHaveBeenCalledWith('/tmp/wt/fix-flux')
-    expect(findPr).toHaveBeenCalledWith({ owner: 'octocat', repo: 'hello-world' }, 'loom/fix-flux')
+    expect(indexPrs).toHaveBeenCalledTimes(1)
   })
 
   it('reports no PR as ok with null, not as a failure', async () => {
-    findPr.mockResolvedValue(null)
+    indexPrs.mockResolvedValue([])
 
-    await expect(workspacePr('w-github')).resolves.toEqual({ kind: 'ok', pullRequest: null })
+    await expect(workspacePr('w-github')).resolves.toMatchObject({
+      kind: 'ok',
+      pullRequest: null,
+      pullRequests: []
+    })
   })
 
   it('reports no PR for a detached HEAD without inventing one', async () => {
     headBranch.mockResolvedValue(null)
     findPr.mockResolvedValue(null)
 
-    await expect(workspacePr('w-github')).resolves.toEqual({ kind: 'ok', pullRequest: null })
-    // The handler must still hand the null branch to the lookup rather than guessing.
-    expect(findPr).toHaveBeenCalledWith({ owner: 'octocat', repo: 'hello-world' }, null)
+    await expect(workspacePr('w-github')).resolves.toMatchObject({ kind: 'ok', pullRequest: null })
+    expect(findPr).not.toHaveBeenCalled()
   })
 
   it('reports a project whose origin is not on github.com as no-remote', async () => {
@@ -239,5 +260,24 @@ describe('github:workspacePr', () => {
 
   it('rejects an unknown workspace id', async () => {
     await expect(workspacePr('nope')).rejects.toThrow()
+  })
+
+  it('finds a PR from another registered session branch, keeping the original merged PR', async () => {
+    branches.mockResolvedValue([
+      { branch: 'loom/fix-flux', sessionId: '' },
+      { branch: 'task/pr7', sessionId: 's1' }
+    ])
+    indexPrs.mockResolvedValue([
+      { ...PR, state: 'merged', headRepository: 'octocat/hello-world' },
+      { ...PR, number: 7, headRefName: 'task/pr7', headRepository: 'octocat/hello-world' }
+    ])
+    findPr.mockResolvedValue({ ...DETAIL, number: 7, headRefName: 'task/pr7' })
+    const result = await workspacePr('w-github')
+    expect(result).toMatchObject({
+      kind: 'ok',
+      state: 'open',
+      pullRequest: { number: 7 },
+      pullRequests: [{ number: 7, sessionIds: ['s1'] }, { number: 42 }]
+    })
   })
 })

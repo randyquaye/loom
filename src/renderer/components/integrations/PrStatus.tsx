@@ -7,6 +7,7 @@ import type {
   WorkspacePrResult
 } from '../../../shared/ipc-contract'
 import { clampInWindow, useCloseOnAnchorMove, WINDOW_EDGE } from '../ui/anchor'
+import { useSessions } from '../../state/sessions'
 import './pr-status.css'
 
 type Tone = 'ok' | 'warn' | 'danger' | 'default'
@@ -27,7 +28,7 @@ const CHECK: Record<PrCheck['state'], { glyph: string; tone: Tone; count: string
   skipped: { glyph: '–', tone: 'default', count: 'skipped' }
 }
 
-const POLL_MS = 60_000
+const POLL_MS = 120_000
 
 /** Gap between the chip and the popover. */
 const GAP = 8
@@ -88,6 +89,8 @@ export function PrStatus({ workspaceId, ready }: { workspaceId: string; ready: b
   // Ids the newest request; cleared when that one settles, so a superseded request cannot clear it.
   const inFlight = useRef<number | null>(null)
   const requests = useRef(0)
+  const forceNext = useRef(false)
+  const sessions = useSessions((state) => state.sessionsByWorkspace[workspaceId])
   // What the last answer was, so background refreshes can skip hopeless cases.
   const lastKind = useRef<WorkspacePrResult['kind'] | null>(null)
 
@@ -97,8 +100,10 @@ export function PrStatus({ workspaceId, ready }: { workspaceId: string; ready: b
     let disposed = false
     const request = ++requests.current
     inFlight.current = request
+    const force = forceNext.current
+    forceNext.current = false
     window.loom.github
-      .workspacePr(workspaceId)
+      .workspacePr(workspaceId, force)
       .then((result) => {
         lastKind.current = result.kind
         if (!disposed) setFetched({ workspaceId, attempt, result })
@@ -117,6 +122,7 @@ export function PrStatus({ workspaceId, ready }: { workspaceId: string; ready: b
 
   const refresh = useCallback((force: boolean) => {
     if (!force && inFlight.current !== null) return
+    forceNext.current = force
     setAttempt((n) => n + 1)
   }, [])
 
@@ -135,15 +141,26 @@ export function PrStatus({ workspaceId, ready }: { workspaceId: string; ready: b
     const timer = window.setInterval(() => tick(false), POLL_MS)
     const onFocus = () => tick(true)
     window.addEventListener('focus', onFocus)
+    let settled: ReturnType<typeof setTimeout> | undefined
+    const unsubscribe = window.loom.onSessionEvent((push) => {
+      if (push.event.type !== 'turn.done' || !sessions?.some((session) => session.id === push.sessionId))
+        return
+      clearTimeout(settled)
+      settled = setTimeout(() => tick(false), 500)
+    })
     return () => {
       window.clearInterval(timer)
       window.removeEventListener('focus', onFocus)
+      unsubscribe()
+      clearTimeout(settled)
     }
-  }, [ready, refresh])
+  }, [ready, refresh, sessions])
 
   const current = fetched?.workspaceId === workspaceId ? fetched : null
   const loading = current === null || current.attempt !== attempt
   const pr: PullRequestDetail | null = current?.result.kind === 'ok' ? current.result.pullRequest : null
+  const related = current?.result.kind === 'ok' ? (current.result.pullRequests ?? []) : []
+  const merged = current?.result.kind === 'ok' && current.result.state === 'merged'
   const popoverOpen = openFor === workspaceId && pr !== null
 
   // Portalled to body: inside the topbar the glass .main's stacking context would keep it under
@@ -189,7 +206,7 @@ export function PrStatus({ workspaceId, ready }: { workspaceId: string; ready: b
     return (
       <span
         className="badge pr-status-none"
-        title="This branch has no open pull request yet. Loom never pushes branches."
+        title="No pull request found for this workspace’s known branches and worktrees."
       >
         No PR
       </span>
@@ -199,7 +216,10 @@ export function PrStatus({ workspaceId, ready }: { workspaceId: string; ready: b
   const agg = AGGREGATE[aggregate(pr.checks)]
   const review = reviewLabel(pr.reviewDecision)
   const chipLabel = [
-    `Pull request #${pr.number}`,
+    related.length > 1
+      ? `${related.length} workspace pull requests; showing #${pr.number}`
+      : `Pull request #${pr.number}`,
+    ...(merged ? ['merged'] : []),
     agg.label,
     ...(review === null ? [] : [review.text]),
     ...(pr.isDraft ? ['draft'] : [])
@@ -228,7 +248,15 @@ export function PrStatus({ workspaceId, ready }: { workspaceId: string; ready: b
           }
         }}
       >
-        <span className="pr-status-number">#{pr.number}</span>
+        <span className="pr-status-number">
+          {related.length > 1 ? `${related.length} PRs` : `#${pr.number}`}
+        </span>
+        {merged && (
+          <span className="pr-status-review" data-tone="ok">
+            Merged
+          </span>
+        )}
+        {!merged && pr.state === 'closed' && <span className="muted">Closed</span>}
         <span className="pr-status-glyph" data-tone={agg.tone} aria-hidden="true">
           {agg.glyph}
         </span>
@@ -263,6 +291,39 @@ export function PrStatus({ workspaceId, ready }: { workspaceId: string; ready: b
                 {pr.headRefName} → {pr.baseRefName}
               </div>
             </div>
+            {related.length > 1 && (
+              <ul className="pr-status-checks" aria-label="Workspace pull requests">
+                {related.map((item) => (
+                  <li key={item.number} className="pr-status-check">
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      title={item.title}
+                      onClick={() => {
+                        if (item.url.startsWith('https://')) void window.loom.shell.openExternal(item.url)
+                      }}
+                    >
+                      #{item.number} · {item.state}
+                    </button>
+                    <span className="pr-status-check-name" title={item.headRefName}>
+                      {item.headRefName}
+                      {item.sessionIds.length > 0 && (
+                        <span className="muted">
+                          {' '}
+                          ·{' '}
+                          {item.sessionIds
+                            .map(
+                              (id) =>
+                                sessions?.find((session) => session.id === id)?.title ?? 'Earlier session'
+                            )
+                            .join(', ')}
+                        </span>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
             <div className="pr-status-line">
               {review === null ? (
                 <span className="muted">No review decision</span>

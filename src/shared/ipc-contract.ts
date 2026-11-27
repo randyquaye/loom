@@ -298,7 +298,13 @@ export type PullRequestListResult = { kind: 'ok'; pullRequests: PullRequestSumma
 export type BranchPrState = 'open' | 'merged'
 
 /** Keyed by head branch name. */
-export type BranchPrsResult = { kind: 'ok'; byBranch: Record<string, BranchPrState> } | IntegrationBlocker
+export type BranchPrsResult =
+  | {
+      kind: 'ok'
+      byBranch: Record<string, BranchPrState>
+      byWorkspace?: Record<string, BranchPrState | null>
+    }
+  | IntegrationBlocker
 
 /** One CI check, normalised from GitHub's two statusCheckRollup shapes (check runs and commit statuses). */
 export interface PrCheck {
@@ -316,7 +322,15 @@ export interface PullRequestDetail extends PullRequestSummary {
 }
 
 /** `pullRequest: null` means this branch has no open PR yet, which is not an error. */
-export type WorkspacePrResult = { kind: 'ok'; pullRequest: PullRequestDetail | null } | IntegrationBlocker
+export type WorkspaceRelatedPr = PullRequestSummary & { sessionIds: string[] }
+export type WorkspacePrResult =
+  | {
+      kind: 'ok'
+      pullRequest: PullRequestDetail | null
+      pullRequests?: WorkspaceRelatedPr[]
+      state?: BranchPrState | null
+    }
+  | IntegrationBlocker
 
 export type GithubStatus =
   | { state: 'ready'; account: string }
@@ -402,7 +416,7 @@ export interface IpcContract {
     in: { projectId: string; query: string | null; cloud?: boolean | undefined }
     out: PullRequestListResult
   }
-  'github:workspacePr': { in: { workspaceId: string }; out: WorkspacePrResult }
+  'github:workspacePr': { in: { workspaceId: string; refresh?: boolean | undefined }; out: WorkspacePrResult }
   'github:branchPrs': { in: { projectId: string; cloud?: boolean | undefined }; out: BranchPrsResult }
 
   'linear:hasKey': { in: void; out: SecretPresence }
@@ -641,7 +655,7 @@ export const ipcSchemas = {
     query: z.string().max(200).nullable(),
     cloud: z.boolean().optional()
   }),
-  'github:workspacePr': z.object({ workspaceId: id }),
+  'github:workspacePr': z.object({ workspaceId: id, refresh: z.boolean().optional() }),
   'github:branchPrs': z.object({ projectId: id, cloud: z.boolean().optional() }),
   'linear:hasKey': z.undefined(),
   'linear:setKey': z.object({ value: z.string().min(1).max(4096) }),
@@ -982,7 +996,7 @@ export interface LoomApi {
   }
   github: {
     prs(projectId: string, query?: string | null, cloud?: boolean): Promise<PullRequestListResult>
-    workspacePr(workspaceId: string): Promise<WorkspacePrResult>
+    workspacePr(workspaceId: string, refresh?: boolean): Promise<WorkspacePrResult>
     branchPrs(projectId: string, cloud?: boolean): Promise<BranchPrsResult>
   }
   linear: {

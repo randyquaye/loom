@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { createHash } from 'node:crypto'
 import { GhNotAuthenticatedError, GhNotInstalledError, GhRequestError, isAuthFailure } from './errors'
 
 const execFileAsync = promisify(execFile)
@@ -33,7 +34,7 @@ function detail(err: unknown, key: string): string {
 }
 
 /** Injected in tests so no suite ever shells out to a real gh or the network. */
-export type GhExec = (args: readonly string[]) => Promise<string>
+export type GhExec = ((args: readonly string[]) => Promise<string>) & { cacheKey?: string }
 
 async function runGh(args: readonly string[], env: NodeJS.ProcessEnv): Promise<string> {
   try {
@@ -45,6 +46,8 @@ async function runGh(args: readonly string[], env: NodeJS.ProcessEnv): Promise<s
     })
     return stdout
   } catch (err) {
+    const stdout = detail(err, 'stdout')
+    if (args[0] === 'api' && /^HTTP\/\S+\s+304\b/.test(stdout)) return stdout
     const stderr = detail(err, 'stderr') || detail(err, 'message') || 'failed'
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw new GhNotInstalledError()
     if (isAuthFailure(stderr)) throw new GhNotAuthenticatedError(stderr.split('\n')[0])
@@ -56,7 +59,11 @@ export const ghExec: GhExec = (args) => runGh(args, ghEnv())
 
 /** The runner supplies the caller's App token through the child environment only. */
 export function ghWithToken(accessToken: string): GhExec {
-  return (args) => runGh(args, { ...ghEnv(), GH_TOKEN: accessToken, GITHUB_TOKEN: accessToken })
+  return Object.assign(
+    (args: readonly string[]) =>
+      runGh(args, { ...ghEnv(), GH_TOKEN: accessToken, GITHUB_TOKEN: accessToken }),
+    { cacheKey: createHash('sha256').update(accessToken).digest('hex') }
+  )
 }
 
 export interface GhAuthState {

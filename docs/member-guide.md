@@ -49,3 +49,31 @@ The same Google account can recover retained files within the retention window. 
 Google account given someone else's former email address cannot inherit their files.
 Google Workspace suspension alone does not revoke a Loom session: ask an owner to remove
 that person from Loom too. Snapshots can retain deleted files for seven further days.
+
+## Additional task branches and pull requests
+
+Sessions share the workspace's original checkout. For a separate task branch, agents can
+run `loom worktree create --branch task/login --base origin/main` through their shell tool.
+Loom supplies this helper and its instructions when starting or resuming an agent process.
+The JSON response contains the new checkout path; subsequent task commands run there.
+Creation uses existing local refs, leaves the original branch and files unchanged, and
+does not fetch, push, commit, or copy dependencies. The helper runs with the agent's
+existing permissions, including its normal Git metadata access requirements.
+
+`loom worktree register --path DIRECTORY` associates an existing worktree from the same
+repository with the session. `loom worktree list` lists registrations. Managed checkouts
+and registration files live in the workspace's ignored `.context/worktrees/` directory.
+Registrations describe task relationships; they do not grant access or change ownership.
+
+The workspace PR badge and sidebar consider registered branches and worktrees discovered
+inside the workspace. Observed branch relationships survive removal of the extra checkout.
+The badge lists related PRs and known sessions. An open PR takes precedence in the sidebar;
+the merged icon appears only when every related PR is merged. A closed, unmerged PR does
+not count as merged. Worktrees outside the workspace require explicit registration.
+
+GitHub results are shared per repository and credential owner for two minutes. Conditional
+requests reuse unchanged results, concurrent reads share one request, and failures back off.
+Visible windows also check after completed turns and on focus. Newly observed branch
+relationships can trigger an earlier refresh, with a ten-second minimum between forced
+requests. Detection is best effort and covers the repository's 100 most recently updated
+PRs. The PR popover's Refresh action requests fresh results within those limits.
