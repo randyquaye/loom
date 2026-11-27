@@ -61,22 +61,25 @@ function ProjectActions({ project, onRemove }: { project: ProjectRow; onRemove: 
 }
 
 /** gh is a subprocess per call, so badges refresh on a slow poll and when the window regains focus. */
-const PR_POLL_MS = 60_000
+const PR_POLL_MS = 120_000
+type ProjectPrs = {
+  byBranch: Record<string, BranchPrState>
+  byWorkspace?: Record<string, BranchPrState | null> | undefined
+}
 
 /**
  * Open/merged PR per head branch, per project: one `gh pr list` per project rather than one per
  * workspace. Projects without a GitHub remote, or without gh, simply show plain branch icons.
  */
-function useBranchPrs(
-  targets: Array<{ projectId: string; cloud: boolean }>
-): Record<string, Record<string, BranchPrState>> {
-  const [byProject, setByProject] = useState<Record<string, Record<string, BranchPrState>>>({})
+function useBranchPrs(targets: Array<{ projectId: string; cloud: boolean }>): Record<string, ProjectPrs> {
+  const [byProject, setByProject] = useState<Record<string, ProjectPrs>>({})
   const key = JSON.stringify(targets)
   const cloudState = useCloud((state) => state.status.state)
   useEffect(() => {
     let active = true
     const ids = JSON.parse(key) as Array<{ projectId: string; cloud: boolean }>
     const refresh = () => {
+      if (document.visibilityState !== 'visible') return
       void Promise.all(
         ids.map(async ({ projectId, cloud }) => {
           const result =
@@ -85,7 +88,9 @@ function useBranchPrs(
               : await window.loom.github.branchPrs(projectId, cloud).catch(() => null)
           return [
             `${projectId}:${cloud ? 'cloud' : 'mac'}`,
-            result?.kind === 'ok' ? result.byBranch : {}
+            result?.kind === 'ok'
+              ? { byBranch: result.byBranch, byWorkspace: result.byWorkspace }
+              : { byBranch: {} }
           ] as const
         })
       ).then((entries) => {
@@ -95,10 +100,18 @@ function useBranchPrs(
     refresh()
     const timer = setInterval(refresh, PR_POLL_MS)
     window.addEventListener('focus', refresh)
+    let settled: ReturnType<typeof setTimeout> | undefined
+    const unsubscribe = window.loom.onSessionEvent(({ event }) => {
+      if (event.type !== 'turn.done') return
+      clearTimeout(settled)
+      settled = setTimeout(refresh, 500)
+    })
     return () => {
       active = false
       clearInterval(timer)
       window.removeEventListener('focus', refresh)
+      unsubscribe()
+      clearTimeout(settled)
     }
   }, [key, cloudState])
   return byProject
@@ -140,6 +153,12 @@ export function Sidebar() {
         .map((cloud) => ({ projectId: project.id, cloud }))
     })
   )
+  const workspacePrState = (workspace: WorkspaceRow) => {
+    const prs = prsByProject[`${workspace.projectId}:${workspace.cloud ? 'cloud' : 'mac'}`]
+    return prs?.byWorkspace && workspace.id in prs.byWorkspace
+      ? (prs.byWorkspace[workspace.id] ?? undefined)
+      : prs?.byBranch[workspace.branch]
+  }
 
   // Stored as the collapsed set so every project, including newly added ones, starts expanded.
   const toggleCollapsed = (projectId: string) =>
@@ -271,7 +290,7 @@ export function Sidebar() {
                             key={ws.id}
                             workspace={ws}
                             active={ws.id === activeWorkspaceId}
-                            pr={prsByProject[`${project.id}:${ws.cloud ? 'cloud' : 'mac'}`]?.[ws.branch]}
+                            pr={workspacePrState(ws)}
                             onDelete={() => setDeleting(ws)}
                           />
                         ))}
@@ -295,7 +314,7 @@ export function Sidebar() {
                           key={ws.id}
                           workspace={ws}
                           active={ws.id === activeWorkspaceId}
-                          pr={prsByProject[`${project.id}:${ws.cloud ? 'cloud' : 'mac'}`]?.[ws.branch]}
+                          pr={workspacePrState(ws)}
                           onDelete={() => setDeleting(ws)}
                         />
                       ))}

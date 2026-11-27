@@ -360,12 +360,16 @@ export function registerRunnerHandlers(deps: IpcDeps, options: RunnerHandlerOpti
     if (logins === null) throw new Error('This runner does not keep agent logins')
     return logins
   }
-  registerGithubIpc(deps, (caller, workspaceId) =>
-    keeper().githubExec(
-      workspaceId === undefined
-        ? signedIn(caller).userId
-        : (getWorkspaceOrThrow(db, workspaceId).ownerId ?? signedIn(caller).userId)
-    )
+  registerGithubIpc(
+    deps,
+    (caller, workspaceId) =>
+      keeper().githubExec(
+        workspaceId === undefined
+          ? signedIn(caller).userId
+          : (getWorkspaceOrThrow(db, workspaceId).ownerId ?? signedIn(caller).userId)
+      ),
+    (caller, workspaceId) =>
+      options.access.mayViewWorkspace(caller.userId, workspaceId, caller.capabilities ?? [])
   )
   handle('logins:status', (_input, caller) =>
     logins === null

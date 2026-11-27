@@ -310,7 +310,7 @@ export function createLoopBackend(backend: LoopBackendId, deps: LoopDeps): Agent
 
           if (parser instanceof GeminiStreamParser) history.push(parser.assistantContent())
           else appendQwenAssistant(history, parser.accumulatedText(), tools)
-          const ctx: ToolCtx = { worktreePath: opts.worktreePath, signal: controller.signal }
+          const ctx: ToolCtx = { worktreePath: opts.worktreePath, signal: controller.signal, env: opts.env }
           for (const tc of tools) {
             if (cancelled) break
             let result
