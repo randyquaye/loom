@@ -14,6 +14,8 @@ artifactName: Loom-${version}-${arch}.${ext}
 mac:
   category: public.app-category.developer-tools
   hardenedRuntime: true
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.plist
   notarize: true
   extendInfo:
     NSMicrophoneUsageDescription: Loom uses the microphone only while you hold the Talk button to dictate a message.
