@@ -35,6 +35,8 @@ embeds the website URL and Apple team, and notarizes the app before creating its
 The workflow then notarizes and staples the DMG. It verifies the app and installer
 signatures, expected Apple team, stapled tickets, and Gatekeeper acceptance. Missing
 credentials or failed verification stop that build; it never switches to unsigned.
+The final ZIP's app and capture helper must also retain the audio-input entitlement;
+the workflow checks both so hardened runtime cannot silently disable microphone capture.
 Both modes produce Apple Silicon DMG and ZIP assets with the same naming scheme.
 
 ## Validate without publishing

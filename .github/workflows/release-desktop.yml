@@ -128,6 +128,10 @@ jobs:
           APP="$RUNNER_TEMP/desktop-zip/Loom.app"
           codesign --verify --deep --strict "$APP"
           test "$(codesign -dvv "$APP" 2>&1 | sed -n 's/^TeamIdentifier=//p')" = "$APPLE_TEAM_ID"
+          for BUNDLE in "$APP" "$APP/Contents/Frameworks/Loom Helper.app"; do
+            codesign -d --entitlements - --xml "$BUNDLE" > "$RUNNER_TEMP/desktop-entitlements.plist"
+            test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.audio-input' "$RUNNER_TEMP/desktop-entitlements.plist")" = true
+          done
           xcrun stapler validate "$APP"
           spctl --assess --type execute "$APP"
       - name: Preserve notarization input and submission IDs
